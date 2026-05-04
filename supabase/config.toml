@@ -1,5 +1,22 @@
 project_id = "nztnctrkmfrgclrnflfa"
 
+[auth]
+site_url = "https://infiniteprofit-saas.onrender.com"
+additional_redirect_urls = [
+  "http://localhost:5173/**",
+  "http://127.0.0.1:5173/**",
+  "https://infiniteprofit-saas.onrender.com/**",
+]
+
+[auth.email]
+enable_confirmations = true
+max_frequency = "1m0s"
+otp_length = 8
+
+[auth.mfa.totp]
+enroll_enabled = true
+verify_enabled = true
+
 [functions.insights]
 verify_jwt = true
 

@@ -29,7 +29,10 @@ npm install
 VITE_SUPABASE_URL=https://<project-ref>.supabase.co
 VITE_SUPABASE_PUBLISHABLE_KEY=<publishable-key>
 VITE_SUPABASE_PROJECT_ID=<project-ref>
+VITE_ENABLE_GOOGLE_AUTH=false
 ```
+
+Deixe `VITE_ENABLE_GOOGLE_AUTH=false` até configurar o provider Google no Supabase.
 
 3. Aplique as migrations e publique as functions.
 
@@ -127,6 +130,38 @@ Cada projeto gera uma URL opaca neste formato:
 - `kiwify`
 
 O secret do provedor fica em `workspace_integrations.gateway_webhook_secret`.
+
+## Produção: Auth + Render
+
+O deploy atual de produção está em:
+
+- `https://infiniteprofit-saas.onrender.com`
+
+O `supabase/config.toml` já foi alinhado com:
+
+- `auth.site_url = https://infiniteprofit-saas.onrender.com`
+- redirects extras para `localhost:5173`, `127.0.0.1:5173` e o próprio domínio do Render
+
+Depois de alterar esse bloco, publique no projeto remoto:
+
+```bash
+supabase config push --project-ref nztnctrkmfrgclrnflfa --yes
+```
+
+Para o Render:
+
+- o serviço está conectado ao repositório GitHub
+- cada `git push` na branch `main` dispara novo deploy
+- o site precisa de uma rewrite `/* -> /index.html` para o `react-router`
+
+A rewrite já foi criada na produção atual. Se precisar recriar em outro serviço Render, use a API:
+
+```bash
+curl -X POST "https://api.render.com/v1/services/<service-id>/routes" \
+  -H "Authorization: Bearer <render-api-key>" \
+  -H "Content-Type: application/json" \
+  -d '{"type":"rewrite","source":"/*","destination":"/index.html"}'
+```
 
 ## Functions relevantes
 

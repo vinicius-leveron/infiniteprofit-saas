@@ -17,6 +17,7 @@ export default function Auth() {
   const [busy, setBusy] = useState(false);
   const nextPath = sanitizeNextPath(searchParams.get("next"), "/projects");
   const redirectUrl = `${window.location.origin}${nextPath}`;
+  const googleAuthEnabled = import.meta.env.VITE_ENABLE_GOOGLE_AUTH === "true";
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -153,7 +154,7 @@ export default function Auth() {
             </Button>
           </form>
 
-          {mode !== "forgot" && (
+          {mode !== "forgot" && googleAuthEnabled && (
             <>
               <div className="relative my-5">
                 <div className="absolute inset-0 flex items-center">
