@@ -1,0 +1,28 @@
+project_id = "nztnctrkmfrgclrnflfa"
+
+[functions.insights]
+verify_jwt = true
+
+[functions.ai-settings]
+verify_jwt = true
+
+[functions.pull-sheet]
+verify_jwt = true
+
+[functions.webhook-gateway]
+verify_jwt = false
+
+[functions.meta-pull]
+verify_jwt = false
+
+[functions.aggregate-daily]
+verify_jwt = false
+
+[functions.meta-test]
+verify_jwt = true
+
+[functions.vturb-pull]
+verify_jwt = false
+
+[functions.vturb-test]
+verify_jwt = true

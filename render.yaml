@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: infiniteprofit-saas
+    runtime: static
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./dist
+    envVars:
+      - key: VITE_SUPABASE_URL
+        value: https://nztnctrkmfrgclrnflfa.supabase.co
+      - key: VITE_SUPABASE_PUBLISHABLE_KEY
+        value: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im56dG5jdHJrbWZyZ2Nscm5mbGZhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc4NDEyNzEsImV4cCI6MjA5MzQxNzI3MX0.GpBf50JXc8sorlE29_W2ej0zNEeYpAuv3Fg3JiBQ-U4
+      - key: VITE_SUPABASE_PROJECT_ID
+        value: nztnctrkmfrgclrnflfa
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

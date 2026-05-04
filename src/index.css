@@ -1,0 +1,124 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Infinite Profit — Dark KPI Dashboard Design System
+   All colors HSL. Tokens consumed via tailwind.config.ts. */
+
+@layer base {
+  :root {
+    /* Surfaces */
+    --background: 222 39% 9%;
+    --foreground: 213 27% 89%;
+
+    --card: 217 33% 11%;
+    --card-foreground: 213 27% 89%;
+
+    --popover: 217 33% 12%;
+    --popover-foreground: 213 27% 89%;
+
+    /* Brand — green/emerald primary like the original logo */
+    --primary: 158 64% 52%;
+    --primary-foreground: 222 39% 9%;
+
+    --secondary: 217 33% 16%;
+    --secondary-foreground: 213 27% 89%;
+
+    --muted: 217 33% 14%;
+    --muted-foreground: 215 16% 60%;
+
+    --accent: 239 84% 67%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 65%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 217 25% 20%;
+    --input: 217 25% 18%;
+    --ring: 158 64% 52%;
+
+    --radius: 0.875rem;
+
+    /* Semantic data palette (HSL) */
+    --kpi-blue: 217 91% 60%;
+    --kpi-indigo: 239 84% 67%;
+    --kpi-violet: 258 90% 76%;
+    --kpi-purple: 262 83% 67%;
+    --kpi-green: 158 64% 52%;
+    --kpi-emerald: 160 84% 45%;
+    --kpi-yellow: 43 96% 56%;
+    --kpi-orange: 25 95% 60%;
+    --kpi-red: 0 84% 65%;
+    --kpi-pink: 330 81% 70%;
+    --kpi-cyan: 199 89% 60%;
+
+    --surface-elevated: 217 33% 13%;
+    --surface-subtle: 217 33% 11%;
+
+    /* Gradients */
+    --gradient-brand: linear-gradient(135deg, hsl(158 64% 52%), hsl(160 84% 45%));
+    --gradient-blue: linear-gradient(135deg, hsl(217 91% 60%), hsl(239 84% 67%));
+    --gradient-violet: linear-gradient(135deg, hsl(258 90% 76%), hsl(262 83% 67%));
+    --gradient-warm: linear-gradient(135deg, hsl(25 95% 60%), hsl(0 84% 65%));
+    --gradient-bg: radial-gradient(circle at 0% 0%, hsl(239 84% 67% / 0.08), transparent 50%),
+                   radial-gradient(circle at 100% 0%, hsl(158 64% 52% / 0.06), transparent 50%);
+
+    /* Shadows */
+    --shadow-card: 0 1px 0 0 hsl(0 0% 100% / 0.04) inset, 0 8px 24px -12px hsl(222 39% 4% / 0.6);
+    --shadow-glow: 0 0 40px -10px hsl(158 64% 52% / 0.4);
+
+    /* Sidebar (kept for shadcn defaults) */
+    --sidebar-background: 217 33% 10%;
+    --sidebar-foreground: 213 27% 89%;
+    --sidebar-primary: 158 64% 52%;
+    --sidebar-primary-foreground: 222 39% 9%;
+    --sidebar-accent: 217 33% 14%;
+    --sidebar-accent-foreground: 213 27% 89%;
+    --sidebar-border: 217 25% 18%;
+    --sidebar-ring: 158 64% 52%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html, body, #root {
+    min-height: 100vh;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'DM Sans', system-ui, sans-serif;
+    background-image: var(--gradient-bg);
+    background-attachment: fixed;
+  }
+}
+
+@layer components {
+  .kpi-card {
+    @apply rounded-[var(--radius)] border border-border/60 bg-card p-5 transition-all;
+    box-shadow: var(--shadow-card);
+  }
+  .kpi-card:hover {
+    @apply border-border;
+    transform: translateY(-1px);
+  }
+  .section-card {
+    @apply rounded-[var(--radius)] border border-border/60 bg-card p-6;
+    box-shadow: var(--shadow-card);
+  }
+  .gradient-text-brand {
+    background: var(--gradient-brand);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .gradient-text-blue {
+    background: var(--gradient-blue);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+}

@@ -1,0 +1,4 @@
+ALTER TABLE public.projects
+  ADD COLUMN IF NOT EXISTS sheet_url TEXT,
+  ADD COLUMN IF NOT EXISTS sync_token TEXT,
+  ADD COLUMN IF NOT EXISTS last_synced_at TIMESTAMPTZ;
