@@ -77,22 +77,22 @@ export default function Welcome() {
     setSubmitting(true);
     try {
       let organizationId = activeOrganizationId;
+      const workspaceId = crypto.randomUUID();
 
       if (shouldCreateOrganization) {
-        const { data: organization, error: orgError } = await supabase
+        organizationId = crypto.randomUUID();
+
+        const { error: orgError } = await supabase
           .from("organizations")
           .insert({
+            id: organizationId,
             name: organizationName.trim(),
             created_by: user.id,
-          })
-          .select("id")
-          .single();
-        if (orgError || !organization) throw orgError ?? new Error("Falha ao criar organização");
-
-        organizationId = organization.id;
+          });
+        if (orgError) throw orgError;
 
         const { error: memberError } = await supabase.from("organization_members").insert({
-          organization_id: organization.id,
+          organization_id: organizationId,
           user_id: user.id,
           role: "owner",
         });
@@ -101,30 +101,27 @@ export default function Welcome() {
 
       if (!organizationId) throw new Error("Organização inválida");
 
-      const { data: workspace, error: workspaceError } = await supabase
+      const { error: workspaceError } = await supabase
         .from("workspaces")
         .insert({
+          id: workspaceId,
           organization_id: organizationId,
           name: workspaceName.trim(),
           created_by: user.id,
-        })
-        .select("id")
-        .single();
-      if (workspaceError || !workspace) {
-        throw workspaceError ?? new Error("Falha ao criar workspace");
-      }
+        });
+      if (workspaceError) throw workspaceError;
 
       const { error: workspaceMemberError } = await supabase
         .from("workspace_members")
         .insert({
-          workspace_id: workspace.id,
+          workspace_id: workspaceId,
           user_id: user.id,
           role: "owner",
         });
       if (workspaceMemberError) throw workspaceMemberError;
 
       await refreshAccess();
-      setCurrentWorkspaceId(workspace.id);
+      setCurrentWorkspaceId(workspaceId);
       toast.success("Ambiente criado");
       navigate("/projects", { replace: true });
     } catch (error) {
