@@ -7,6 +7,9 @@ import { TrafficPanel } from "@/components/TrafficPanel";
 import { FunnelPanel } from "@/components/FunnelPanel";
 import { BumpsPanel } from "@/components/BumpsPanel";
 import { DiagnosticsPanel } from "@/components/DiagnosticsPanel";
+import { AdsPanel } from "@/components/AdsPanel";
+import { AttributionPanel } from "@/components/AttributionPanel";
+import { ExecutiveReportPanel } from "@/components/ExecutiveReportPanel";
 import { SimulatorPanel } from "@/components/SimulatorPanel";
 import { SaveProjectDialog } from "@/components/SaveProjectDialog";
 import { PeriodFilter, type Period } from "@/components/PeriodFilter";
@@ -46,10 +49,13 @@ import {
   Sliders,
   RefreshCw,
   Settings2,
+  Megaphone,
+  Map,
+  FileText,
 } from "lucide-react";
 import { toast } from "sonner";
 
-type Tab = "geral" | "trafego" | "funil" | "bumps" | "diagnostico" | "simulador";
+type Tab = "geral" | "trafego" | "funil" | "bumps" | "anuncios" | "atribuicao" | "relatorio" | "diagnostico" | "simulador";
 
 const Index = () => {
   const navigate = useNavigate();
@@ -361,8 +367,8 @@ const Index = () => {
 
       if (isTyping) return;
 
-      if (e.key >= "1" && e.key <= "5") {
-        const map: Tab[] = ["geral", "trafego", "funil", "bumps", "diagnostico", "simulador"];
+      if (e.key >= "1" && e.key <= "9") {
+        const map: Tab[] = ["geral", "trafego", "funil", "bumps", "anuncios", "atribuicao", "relatorio", "diagnostico", "simulador"];
         const idx = parseInt(e.key, 10) - 1;
         if (map[idx]) setTab(map[idx]);
       }
@@ -423,6 +429,9 @@ const Index = () => {
     { id: "trafego", label: "Tráfego", icon: Radio },
     { id: "funil", label: "Funil VSL", icon: Target },
     { id: "bumps", label: "Bumps & Upsell", icon: Gift },
+    { id: "anuncios", label: "Anúncios", icon: Megaphone },
+    { id: "atribuicao", label: "Atribuição", icon: Map },
+    { id: "relatorio", label: "Relatório", icon: FileText },
     { id: "diagnostico", label: "Diagnóstico", icon: Stethoscope },
     { id: "simulador", label: "Simulador", icon: Sliders },
   ];
@@ -624,6 +633,12 @@ const Index = () => {
               <FunnelPanel rows={filtered} />
             ) : tab === "bumps" ? (
               <BumpsPanel rows={filtered} />
+            ) : tab === "anuncios" ? (
+              <AdsPanel projectId={currentProjectId} />
+            ) : tab === "atribuicao" ? (
+              <AttributionPanel rows={filtered} />
+            ) : tab === "relatorio" ? (
+              <ExecutiveReportPanel current={filtered} previous={previous} />
             ) : tab === "diagnostico" ? (
               <DiagnosticsPanel current={filtered} previous={previous} />
             ) : (

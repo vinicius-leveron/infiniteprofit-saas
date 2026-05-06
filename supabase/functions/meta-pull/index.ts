@@ -30,6 +30,8 @@ type MetaAccountBinding = {
   label: string | null;
 };
 
+type MetaInsightLevel = "account" | "campaign" | "adset" | "ad";
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -157,44 +159,29 @@ async function pullForAccount(
   const untilStr = ymd(new Date());
   const accountId = normalizeMetaAccountId(account.account_id);
 
-  const url = new URL(`https://graph.facebook.com/v21.0/${accountId}/insights`);
-  url.searchParams.set("level", "account");
-  url.searchParams.set("time_increment", "1");
-  url.searchParams.set("time_range", JSON.stringify({ since: sinceStr, until: untilStr }));
-  url.searchParams.set("fields", "spend,impressions,clicks,cpm,ctr,cpc,date_start");
-  url.searchParams.set("access_token", account.access_token);
-
-  const response = await fetch(url.toString());
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Meta API ${response.status}: ${text.slice(0, 300)}`);
-  }
-
-  const data = await response.json();
-  const insights = Array.isArray(data?.data) ? data.data : [];
   const dates = new Set<string>();
+  const insertedByLevel: Record<MetaInsightLevel | "legacy", number> = {
+    account: 0,
+    campaign: 0,
+    adset: 0,
+    ad: 0,
+    legacy: 0,
+  };
 
-  for (const insight of insights) {
-    const dateStr = String(insight?.date_start ?? "").slice(0, 10);
-    if (!dateStr) continue;
-    dates.add(dateStr);
-    const externalId = `${accountId}-${dateStr}`;
-    const { error } = await sb.from("raw_events").upsert(
-      {
-        project_id: project.id,
-        workspace_id: project.workspace_id,
-        user_id: project.user_id,
-        source: "meta",
-        event_type: "insight",
-        event_date: dateStr,
-        external_id: externalId,
-        account_id: accountId,
-        payload: insight,
-      },
-      { onConflict: "project_id,source,event_type,external_id" },
-    );
-    if (error) {
-      throw new Error(error.message);
+  for (const level of ["account", "campaign", "adset", "ad"] as MetaInsightLevel[]) {
+    const insights = await fetchInsights(accountId, account.access_token, level, sinceStr, untilStr);
+    insertedByLevel[level] = insights.length;
+
+    for (const insight of insights) {
+      const dateStr = String(insight?.date_start ?? "").slice(0, 10);
+      if (!dateStr) continue;
+      dates.add(dateStr);
+      await upsertMetaInsight(sb, project, accountId, level, insight, dateStr);
+
+      if (level === "account") {
+        await upsertLegacyAccountInsight(sb, project, accountId, insight, dateStr);
+        insertedByLevel.legacy += 1;
+      }
     }
   }
 
@@ -212,7 +199,102 @@ async function pullForAccount(
     });
   }
 
-  return { inserted: insights.length, dates: [...dates] };
+  return { inserted: insertedByLevel.legacy, inserted_by_level: insertedByLevel, dates: [...dates] };
+}
+
+async function fetchInsights(
+  accountId: string,
+  accessToken: string,
+  level: MetaInsightLevel,
+  sinceStr: string,
+  untilStr: string,
+) {
+  const url = new URL(`https://graph.facebook.com/v21.0/${accountId}/insights`);
+  url.searchParams.set("level", level);
+  url.searchParams.set("time_increment", "1");
+  url.searchParams.set("time_range", JSON.stringify({ since: sinceStr, until: untilStr }));
+  url.searchParams.set("fields", fieldsForLevel(level));
+  url.searchParams.set("access_token", accessToken);
+  url.searchParams.set("limit", "500");
+
+  const insights: any[] = [];
+  let nextUrl: string | null = url.toString();
+  while (nextUrl) {
+    const response = await fetch(nextUrl);
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Meta API ${response.status}: ${text.slice(0, 300)}`);
+    }
+    const data = await response.json();
+    if (Array.isArray(data?.data)) insights.push(...data.data);
+    nextUrl = typeof data?.paging?.next === "string" ? data.paging.next : null;
+  }
+  return insights;
+}
+
+async function upsertMetaInsight(
+  sb: ReturnType<typeof createClient>,
+  project: ProjectContext,
+  accountId: string,
+  level: MetaInsightLevel,
+  insight: any,
+  dateStr: string,
+) {
+  const entityId = entityIdForLevel(level, insight) ?? accountId;
+  const { error } = await sb.from("raw_events").upsert(
+    {
+      project_id: project.id,
+      workspace_id: project.workspace_id,
+      user_id: project.user_id,
+      source: "meta",
+      event_type: `insight_${level}`,
+      event_date: dateStr,
+      external_id: `${level}-${accountId}-${entityId}-${dateStr}`,
+      account_id: accountId,
+      payload: insight,
+    },
+    { onConflict: "project_id,source,event_type,external_id" },
+  );
+  if (error) throw new Error(error.message);
+}
+
+async function upsertLegacyAccountInsight(
+  sb: ReturnType<typeof createClient>,
+  project: ProjectContext,
+  accountId: string,
+  insight: any,
+  dateStr: string,
+) {
+  const { error } = await sb.from("raw_events").upsert(
+    {
+      project_id: project.id,
+      workspace_id: project.workspace_id,
+      user_id: project.user_id,
+      source: "meta",
+      event_type: "insight",
+      event_date: dateStr,
+      external_id: `${accountId}-${dateStr}`,
+      account_id: accountId,
+      payload: insight,
+    },
+    { onConflict: "project_id,source,event_type,external_id" },
+  );
+  if (error) throw new Error(error.message);
+}
+
+function fieldsForLevel(level: MetaInsightLevel) {
+  const base = "spend,impressions,clicks,cpm,ctr,cpc,date_start";
+  if (level === "campaign") return `${base},campaign_id,campaign_name`;
+  if (level === "adset") return `${base},campaign_id,campaign_name,adset_id,adset_name`;
+  if (level === "ad") return `${base},campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name`;
+  return base;
+}
+
+function entityIdForLevel(level: MetaInsightLevel, insight: any) {
+  if (level === "campaign") return stringOrNull(insight?.campaign_id);
+  if (level === "adset") return stringOrNull(insight?.adset_id);
+  if (level === "ad") return stringOrNull(insight?.ad_id);
+  return null;
 }
 
 async function resolveCaller(req: Request): Promise<Caller | null> {

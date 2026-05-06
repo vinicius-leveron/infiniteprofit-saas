@@ -6,7 +6,7 @@ import { buildAutomationHeaders } from "../_shared/automation.ts";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-hotmart-hottok, x-hub-signature, x-hub-signature-256, x-kiwify-signature, x-signature",
+    "authorization, x-client-info, apikey, content-type, x-hotmart-hottok, x-hub-signature, x-hub-signature-256, x-hubla-token, x-hubla-sandbox, x-hubla-idempotency, x-kiwify-signature, x-signature",
 };
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -251,6 +251,9 @@ async function validateSignature(
   }
 
   if (provider === "hubla") {
+    const token = headers.get("x-hubla-token") ?? "";
+    if (safeEqual(token, secret)) return true;
+
     const signature =
       headers.get("x-hub-signature-256") ?? headers.get("x-hub-signature") ?? "";
     const expected = `sha256=${await hmacHex("SHA-256", secret, body)}`;
@@ -375,9 +378,10 @@ function normalizeHubla(raw: any): NormalizedEvent[] {
   const eventType = String(raw?.type ?? raw?.event_type ?? raw?.event ?? "").toLowerCase();
   const event = raw?.event ?? raw?.data ?? raw;
   const invoice = event?.invoice ?? event;
-  const total = num(invoice?.amount ?? invoice?.total ?? invoice?.value ?? 0) /
-    (invoice?.amount && invoice.amount > 1000 ? 100 : 1);
-  const net = num(invoice?.net_amount ?? invoice?.net ?? total);
+  const total = hublaMoney(invoice?.amount ?? invoice?.total ?? invoice?.value ?? 0);
+  const net = invoice?.net_amount != null || invoice?.net != null
+    ? hublaMoney(invoice?.net_amount ?? invoice?.net)
+    : total;
   const method = String(invoice?.payment_method ?? invoice?.method ?? "").toLowerCase();
   const tsRaw = invoice?.paid_at ?? invoice?.created_at ?? event?.created_at ?? Date.now();
   const ts = typeof tsRaw === "number" && tsRaw < 1e12 ? tsRaw * 1000 : tsRaw;
@@ -396,7 +400,7 @@ function normalizeHubla(raw: any): NormalizedEvent[] {
     return {
       external_id: itemId,
       name: item?.name ?? itemId,
-      price: num(item?.amount ?? item?.price ?? 0),
+      price: hublaMoney(item?.amount ?? item?.price ?? 0),
       type: isBump ? "orderbump" : "main",
       is_bump: isBump,
     };
@@ -423,6 +427,11 @@ function normalizeHubla(raw: any): NormalizedEvent[] {
       is_front: !invoice?.is_upsell && !invoice?.upsell_id,
     },
   }];
+}
+
+function hublaMoney(value: any) {
+  const amount = num(value);
+  return amount > 1000 ? amount / 100 : amount;
 }
 
 function normalizeKiwify(raw: any): NormalizedEvent[] {

@@ -9,6 +9,9 @@ import Index from "./pages/Index.tsx";
 import Auth from "./pages/Auth.tsx";
 import Projects from "./pages/Projects.tsx";
 import Connections from "./pages/Connections.tsx";
+import Diagnostics from "./pages/Diagnostics.tsx";
+import SetupOperation from "./pages/SetupOperation.tsx";
+import PublicShare from "./pages/PublicShare.tsx";
 import NotFound from "./pages/NotFound.tsx";
 import ResetPassword from "./pages/ResetPassword.tsx";
 import Welcome from "./pages/Welcome.tsx";
@@ -29,12 +32,15 @@ const App = () => (
             <Route path="/auth" element={<Auth />} />
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/accept-invite" element={<AcceptInvite />} />
+            <Route path="/share/:token" element={<PublicShare />} />
             <Route element={<AppShell />}>
               <Route path="/" element={<Navigate to="/projects" replace />} />
               <Route path="/welcome" element={<Welcome />} />
               <Route path="/projects" element={<Projects />} />
               <Route path="/dashboard" element={<Index />} />
               <Route path="/connections" element={<Connections />} />
+              <Route path="/diagnostics" element={<Diagnostics />} />
+              <Route path="/setup-operation" element={<SetupOperation />} />
               <Route path="/organization-settings" element={<OrganizationSettings />} />
               <Route path="/workspace-settings" element={<WorkspaceSettings />} />
             </Route>

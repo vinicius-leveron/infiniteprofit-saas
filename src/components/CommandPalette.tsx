@@ -22,6 +22,9 @@ import {
   LogOut,
   Settings,
   Users,
+  Megaphone,
+  Map,
+  FileText,
 } from "lucide-react";
 import type { Period } from "./PeriodFilter";
 import { useWorkspace } from "@/hooks/useWorkspace";
@@ -36,7 +39,7 @@ interface Props {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   /** Quando passado, mostra ações específicas do dashboard */
-  onSelectTab?: (tab: "geral" | "trafego" | "funil" | "bumps" | "diagnostico") => void;
+  onSelectTab?: (tab: "geral" | "trafego" | "funil" | "bumps" | "anuncios" | "atribuicao" | "relatorio" | "diagnostico" | "simulador") => void;
   onSelectPeriod?: (p: Period) => void;
 }
 
@@ -91,10 +94,25 @@ export const CommandPalette = ({ open, onOpenChange, onSelectTab, onSelectPeriod
                 Bumps &amp; Upsell
                 <span className="ml-auto text-[10px] text-muted-foreground">4</span>
               </CommandItem>
+              <CommandItem onSelect={run(() => onSelectTab("anuncios"))}>
+                <Megaphone className="w-4 h-4 mr-2" />
+                Anúncios
+                <span className="ml-auto text-[10px] text-muted-foreground">5</span>
+              </CommandItem>
+              <CommandItem onSelect={run(() => onSelectTab("atribuicao"))}>
+                <Map className="w-4 h-4 mr-2" />
+                Atribuição
+                <span className="ml-auto text-[10px] text-muted-foreground">6</span>
+              </CommandItem>
+              <CommandItem onSelect={run(() => onSelectTab("relatorio"))}>
+                <FileText className="w-4 h-4 mr-2" />
+                Relatório
+                <span className="ml-auto text-[10px] text-muted-foreground">7</span>
+              </CommandItem>
               <CommandItem onSelect={run(() => onSelectTab("diagnostico"))}>
                 <Stethoscope className="w-4 h-4 mr-2" />
                 Diagnóstico
-                <span className="ml-auto text-[10px] text-muted-foreground">5</span>
+                <span className="ml-auto text-[10px] text-muted-foreground">8</span>
               </CommandItem>
             </CommandGroup>
             <CommandSeparator />

@@ -1,5 +1,5 @@
-import { Outlet, useLocation, useNavigate, Navigate } from "react-router-dom";
-import { Building2, ChevronsUpDown, FolderKanban, LogOut, Settings, Users } from "lucide-react";
+import { Outlet, useLocation, useNavigate, useSearchParams, Navigate } from "react-router-dom";
+import { Building2, ChevronsUpDown, FolderKanban, LogOut, Plus, Settings, Settings2, Stethoscope, Users } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,8 @@ import { supabase } from "@/integrations/supabase/client";
 export function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const projectId = searchParams.get("project");
   const { user, loading: authLoading } = useAuth();
   const {
     loading,
@@ -98,6 +100,24 @@ export function AppShell() {
               <FolderKanban className="w-4 h-4" />
               <span className="hidden sm:inline">Projetos</span>
             </Button>
+
+            <Button variant="ghost" size="sm" onClick={() => navigate("/setup-operation")} className="gap-2">
+              <Plus className="w-4 h-4" />
+              <span className="hidden sm:inline">Nova Operacao</span>
+            </Button>
+
+            {projectId && (
+              <>
+                <Button variant="ghost" size="sm" onClick={() => navigate(`/diagnostics?project=${projectId}`)} className="gap-2">
+                  <Stethoscope className="w-4 h-4" />
+                  <span className="hidden sm:inline">Diagnostico</span>
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => navigate(`/connections?project=${projectId}`)} className="gap-2">
+                  <Settings2 className="w-4 h-4" />
+                  <span className="hidden sm:inline">Conexoes</span>
+                </Button>
+              </>
+            )}
 
             {showWorkspacePicker && (
               <Button

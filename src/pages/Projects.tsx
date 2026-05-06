@@ -25,6 +25,8 @@ import {
   Calendar,
   Command as CommandIcon,
   Plug,
+  Share2,
+  Stethoscope,
   Settings,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -49,7 +51,6 @@ export default function Projects() {
   const [toDelete, setToDelete] = useState<ProjectRow | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [creatingApi, setCreatingApi] = useState(false);
 
   useEffect(() => {
     if (!authLoading && !user) navigate("/auth", { replace: true });
@@ -102,32 +103,6 @@ export default function Projects() {
     }
   };
 
-  const handleCreateApi = async () => {
-    if (!user || !currentWorkspace?.id) return;
-    setCreatingApi(true);
-    try {
-      const { data: proj, error } = await supabase
-        .from("projects")
-        .insert({
-          user_id: user.id,
-          workspace_id: currentWorkspace.id,
-          name: `Novo projeto API · ${format(new Date(), "dd/MM HH:mm", { locale: ptBR })}`,
-          source: "api",
-          csv_content: null,
-        })
-        .select("id")
-        .single();
-      if (error || !proj) throw error ?? new Error("Falha ao criar projeto");
-
-      toast.success("Projeto criado — configure as conexões");
-      navigate(`/connections?project=${proj.id}`);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Erro ao criar projeto");
-    } finally {
-      setCreatingApi(false);
-    }
-  };
-
   if (authLoading || workspaceLoading) {
     return (
       <main className="min-h-screen flex items-center justify-center">
@@ -171,9 +146,9 @@ export default function Projects() {
               <Plus className="w-4 h-4" />
               Novo
             </Button>
-            <Button onClick={handleCreateApi} disabled={creatingApi} variant="secondary" className="gap-2">
-              {creatingApi ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plug className="w-4 h-4" />}
-              Novo via API
+            <Button onClick={() => navigate("/setup-operation")} variant="secondary" className="gap-2">
+              <Plug className="w-4 h-4" />
+              Nova operação
             </Button>
           </div>
         </header>
@@ -229,20 +204,58 @@ export default function Projects() {
                     {format(new Date(p.updated_at), "dd 'de' MMM 'às' HH:mm", { locale: ptBR })}
                   </div>
                 </button>
-                <div className="mt-3 pt-3 border-t border-border/40 flex justify-between">
+                <div className="mt-3 pt-3 border-t border-border/40 flex justify-between gap-2">
                   {p.source === "api" ? (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-8 gap-1.5 text-xs"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        navigate(`/connections?project=${p.id}`);
-                      }}
-                    >
-                      <Settings className="w-3.5 h-3.5" />
-                      Conexões
-                    </Button>
+                    <div className="flex flex-wrap gap-1">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 gap-1.5 text-xs"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/dashboard?project=${p.id}`);
+                        }}
+                      >
+                        <BarChart3 className="w-3.5 h-3.5" />
+                        Dashboard
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 gap-1.5 text-xs"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/diagnostics?project=${p.id}`);
+                        }}
+                      >
+                        <Stethoscope className="w-3.5 h-3.5" />
+                        Diagnostico
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 gap-1.5 text-xs"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/connections?project=${p.id}`);
+                        }}
+                      >
+                        <Settings className="w-3.5 h-3.5" />
+                        Conexoes
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 gap-1.5 text-xs"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/connections?project=${p.id}#sharing`);
+                        }}
+                      >
+                        <Share2 className="w-3.5 h-3.5" />
+                        Compartilhar
+                      </Button>
+                    </div>
                   ) : <span />}
                   <Button
                     size="sm"

@@ -43,3 +43,9 @@ verify_jwt = false
 
 [functions.vturb-test]
 verify_jwt = true
+
+[functions.public-share]
+verify_jwt = false
+
+[functions.generate-alerts]
+verify_jwt = false

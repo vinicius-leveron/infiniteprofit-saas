@@ -196,6 +196,7 @@ function aggregateOneDay(events: Array<{ source: string; event_type: string; pay
   const playRate = pageviews > 0 ? (plays / pageviews) * 100 : null;
   const retPitch = plays > 0 ? (chegaramPitch / plays) * 100 : null;
   const passChk = pageviews > 0 ? (checkouts / pageviews) * 100 : null;
+  const taxaCarreg = cliques > 0 ? (pageviews / cliques) * 100 : null;
   const pitchChk = chegaramPitch > 0 ? (checkouts / chegaramPitch) * 100 : null;
   const pitchVenda = chegaramPitch > 0 ? (vendasFront / chegaramPitch) * 100 : null;
   const chkVenda = checkouts > 0 ? (vendasFront / checkouts) * 100 : null;
@@ -236,7 +237,7 @@ function aggregateOneDay(events: Array<{ source: string; event_type: string; pay
     checkouts: orNull(checkouts),
     custo_pageview: custoPageview,
     custo_ic: custoIC,
-    taxa_carreg: null,
+    taxa_carreg: taxaCarreg,
     pass_chk: passChk,
     pitch_chk: pitchChk,
     pitch_venda: pitchVenda,
@@ -281,6 +282,7 @@ function extractVturbMetrics(eventType: string, payload: any) {
       "page_views_count",
       "landing_page_views",
       "visits",
+      "total",
     ]);
     const plays = firstNumber(payload, [
       "plays",
@@ -289,12 +291,17 @@ function extractVturbMetrics(eventType: string, payload: any) {
       "video_starts",
       "video_started",
       "viewed",
+      "total_uniq_sessions",
+      "total_uniq_device",
+      "total",
     ]);
     const viewsUnicas = firstNumber(payload, [
       "views_unicas",
       "unique_views",
       "unique_viewers",
       "visitors",
+      "total_uniq_sessions",
+      "total_uniq_device",
     ]) || plays;
     const chegaramPitch = firstNumber(payload, [
       "pitch_reached",

@@ -90,8 +90,10 @@ Deno.serve(async (req) => {
 
         const endDate = new Date();
         const startDate = new Date(endDate.getTime() - days * 24 * 60 * 60 * 1000);
-        const startStr = startDate.toISOString().slice(0, 10);
-        const endStr = endDate.toISOString().slice(0, 10);
+        const startDay = startDate.toISOString().slice(0, 10);
+        const endDay = endDate.toISOString().slice(0, 10);
+        const startStr = `${startDay} 00:00:00 -0300`;
+        const endStr = `${endDay} 23:59:59 -0300`;
         const projectResults: Array<Record<string, unknown>> = [];
         let projectSyncedAt: string | null = null;
 
@@ -104,6 +106,8 @@ Deno.serve(async (req) => {
               playerRowId: player.id,
               startStr,
               endStr,
+              startDay,
+              endDay,
             });
             projectResults.push({
               project_id: project.id,
@@ -182,9 +186,11 @@ async function pullOnePlayer(
     playerRowId: string;
     startStr: string;
     endStr: string;
+    startDay: string;
+    endDay: string;
   },
 ) {
-  const { apiKey, project, playerId, playerRowId, startStr, endStr } = args;
+  const { apiKey, project, playerId, playerRowId, startStr, endStr, startDay, endDay } = args;
 
   const eventsResp = await vturbPost(apiKey, "/events/total_by_company_players", {
     events: ["started", "viewed", "finished"],
@@ -223,8 +229,8 @@ async function pullOnePlayer(
           user_id: project.user_id,
           source: "vturb",
           event_type: `${eventName}_total`,
-          event_date: endStr,
-          external_id: `${playerId}-${eventName}-${startStr}-${endStr}`,
+          event_date: endDay,
+          external_id: `${playerId}-${eventName}-${startDay}-${endDay}`,
           account_id: playerId,
           payload: event,
         },
@@ -233,7 +239,7 @@ async function pullOnePlayer(
 
       if (!error) {
         inserted++;
-        datesTouched.add(endStr);
+        datesTouched.add(endDay);
       }
     }
   }
@@ -273,17 +279,17 @@ async function pullOnePlayer(
         user_id: project.user_id,
         source: "vturb",
         event_type: "retention_curve",
-        event_date: endStr,
-        external_id: `${playerId}-retention-${startStr}-${endStr}`,
+        event_date: endDay,
+        external_id: `${playerId}-retention-${startDay}-${endDay}`,
         account_id: playerId,
-        payload: { grouped_timed: groupedTimed, range: { startStr, endStr } },
+        payload: { grouped_timed: groupedTimed, range: { start_date: startStr, end_date: endStr } },
       },
       { onConflict: "project_id,source,event_type,external_id" },
     );
 
     if (!error) {
       inserted++;
-      datesTouched.add(endStr);
+      datesTouched.add(endDay);
     }
   }
 

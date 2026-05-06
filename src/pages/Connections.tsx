@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
@@ -8,6 +8,7 @@ import {
   Copy,
   CreditCard,
   Inbox,
+  Link as LinkIcon,
   Loader2,
   Megaphone,
   PlayCircle,
@@ -97,6 +98,17 @@ interface ProjectVturbSelectionRow {
   vturb_player_id: string;
 }
 
+interface ProjectPublicLinkRow {
+  id: string;
+  project_id: string;
+  token: string;
+  enabled: boolean;
+  label: string | null;
+  last_accessed_at: string | null;
+  expires_at: string | null;
+  created_at: string;
+}
+
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 
 function humanizeMetaError(err: string) {
@@ -132,6 +144,7 @@ export default function Connections() {
   const [vturbPlayers, setVturbPlayers] = useState<VturbPlayerRow[]>([]);
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<string[]>([]);
   const [checkoutBinding, setCheckoutBinding] = useState<ProjectCheckoutBindingRow | null>(null);
+  const [publicLinks, setPublicLinks] = useState<ProjectPublicLinkRow[]>([]);
   const [events, setEvents] = useState<RawEventRow[]>([]);
   const [eventsLoading, setEventsLoading] = useState(false);
   const [eventFilter, setEventFilter] = useState<EventSource | "all">("all");
@@ -177,6 +190,7 @@ export default function Connections() {
         { data: playerRows },
         { data: selectedPlayerRows },
         { data: checkoutRow },
+        { data: publicLinkRows },
       ] = await Promise.all([
         supabase
           .from("workspace_integrations")
@@ -206,6 +220,11 @@ export default function Connections() {
           .select("project_id, webhook_token, enabled")
           .eq("project_id", projectData.id)
           .maybeSingle(),
+        supabase
+          .from("project_public_links" as never)
+          .select("id, project_id, token, enabled, label, last_accessed_at, expires_at, created_at")
+          .eq("project_id", projectData.id)
+          .order("created_at", { ascending: false }),
       ]);
 
       setWorkspaceIntegration((integrationRow ?? null) as WorkspaceIntegrationRow | null);
@@ -224,11 +243,45 @@ export default function Connections() {
           enabled: true,
         }) as ProjectCheckoutBindingRow,
       );
+      setPublicLinks((publicLinkRows ?? []) as unknown as ProjectPublicLinkRow[]);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Falha ao carregar conexões");
       navigate("/projects", { replace: true });
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function createPublicLink() {
+    if (!project?.id || !user) return;
+    try {
+      const token = crypto.getRandomValues(new Uint8Array(24)).reduce((acc, value) => acc + value.toString(16).padStart(2, "0"), "");
+      const { error } = await supabase.from("project_public_links" as never).insert({
+        project_id: project.id,
+        token,
+        enabled: true,
+        label: "Cliente",
+        created_by: user.id,
+      } as never);
+      if (error) throw error;
+      toast.success("Link público criado");
+      await load();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Falha ao criar link");
+    }
+  }
+
+  async function togglePublicLink(link: ProjectPublicLinkRow) {
+    try {
+      const { error } = await supabase
+        .from("project_public_links" as never)
+        .update({ enabled: !link.enabled } as never)
+        .eq("id", link.id);
+      if (error) throw error;
+      toast.success(link.enabled ? "Link desativado" : "Link ativado");
+      await load();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Falha ao atualizar link");
     }
   }
 
@@ -403,10 +456,16 @@ export default function Connections() {
     workspaceIntegration?.gateway_provider && checkoutBinding?.webhook_token
       ? `${SUPABASE_URL}/functions/v1/webhook-gateway/${workspaceIntegration.gateway_provider}/${checkoutBinding.webhook_token}`
       : "";
+  const publicOrigin = typeof window !== "undefined" ? window.location.origin : "";
 
   const selectedMetaAccounts = metaAccounts.filter((account) => selectedMetaIds.includes(account.id));
   const selectedPlayers = vturbPlayers.filter((player) => selectedPlayerIds.includes(player.id));
   const filteredEvents = eventFilter === "all" ? events : events.filter((event) => event.source === eventFilter);
+
+  // Fallback: redirect to projects if no project param
+  if (!projectId) {
+    return <Navigate to="/projects" replace />;
+  }
 
   if (authLoading || loading) {
     return (
@@ -661,6 +720,86 @@ export default function Connections() {
               )}
             </div>
           )}
+        </ConnectionCard>
+
+        {/* Separador visual - seção de compartilhamento */}
+        <div className="border-t border-border/60 pt-6 mt-6" id="sharing">
+          <h2 className="text-lg font-semibold mb-1">Compartilhamento</h2>
+          <p className="text-xs text-muted-foreground mb-4">
+            Crie links para clientes visualizarem o dashboard sem login.
+          </p>
+        </div>
+
+        <ConnectionCard
+          icon={<LinkIcon className="w-5 h-5" />}
+          title="Link Publico"
+          subtitle="Dashboard somente leitura para cliente"
+          connected={publicLinks.some((link) => link.enabled)}
+          lastEvent={publicLinks.reduce<string | null>(
+            (latest, link) =>
+              link.last_accessed_at && (!latest || link.last_accessed_at > latest)
+                ? link.last_accessed_at
+                : latest,
+            null,
+          )}
+        >
+          <div className="space-y-3">
+            {publicLinks.length === 0 ? (
+              <EmptyState text="Nenhum link público criado. Gere um link para enviar dashboard e relatório ao cliente sem expor conexões." />
+            ) : (
+              publicLinks.map((link) => {
+                const shareUrl = `${publicOrigin}/share/${link.token}`;
+                return (
+                  <div key={link.id} className="rounded-lg border border-border/40 p-3 space-y-3 bg-background/40">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium">{link.label || "Cliente"}</div>
+                        <div className="text-xs text-muted-foreground font-mono truncate">{shareUrl}</div>
+                        <div className="text-[10px] text-muted-foreground mt-1">
+                          {link.last_accessed_at
+                            ? `Último acesso: ${format(new Date(link.last_accessed_at), "dd/MM HH:mm", { locale: ptBR })}`
+                            : "Ainda não acessado"}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={() => {
+                            navigator.clipboard.writeText(shareUrl);
+                            toast.success("Link copiado");
+                          }}
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                        </Button>
+                        {isWorkspaceAdmin && (
+                          <Button
+                            type="button"
+                            variant={link.enabled ? "secondary" : "outline"}
+                            size="sm"
+                            onClick={() => togglePublicLink(link)}
+                          >
+                            {link.enabled ? "Desativar" : "Ativar"}
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                    <div className={`text-[10px] px-2 py-1 rounded w-fit ${link.enabled ? "bg-green-500/10 text-green-600" : "bg-amber-500/10 text-amber-600"}`}>
+                      {link.enabled ? "ativo" : "desativado"}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+
+            {isWorkspaceAdmin && (
+              <Button type="button" variant="secondary" size="sm" onClick={createPublicLink} className="gap-2">
+                <LinkIcon className="w-4 h-4" />
+                Criar link público
+              </Button>
+            )}
+          </div>
         </ConnectionCard>
 
         {isWorkspaceAdmin && (

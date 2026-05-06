@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Copy, Loader2, Plus, Save, Trash2, UserPlus, Users } from "lucide-react";
+import { Copy, Loader2, Plus, Save, Search, Trash2, UserPlus, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -42,6 +42,11 @@ interface VturbPlayerRow {
   last_synced_at: string | null;
 }
 
+interface VturbPlayerMetadata {
+  id: string;
+  name: string | null;
+}
+
 interface WorkspaceMemberRow {
   user_id: string;
   role: WorkspaceRole;
@@ -70,6 +75,7 @@ export default function WorkspaceSettings() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<WorkspaceRole>("member");
   const [savingInvite, setSavingInvite] = useState(false);
+  const [resolvingVturbNames, setResolvingVturbNames] = useState(false);
 
   const gatewayWebhookBase = useMemo(() => {
     if (!workspaceIntegration?.gateway_provider || !workspaceIntegration.gateway_webhook_token) return "";
@@ -212,6 +218,52 @@ export default function WorkspaceSettings() {
       toast.success("Player removido");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Falha ao remover player");
+    }
+  }
+
+  async function resolveVturbPlayerNames() {
+    const apiKey = workspaceIntegration?.vturb_api_key?.trim();
+    if (!apiKey) {
+      toast.error("Informe a API key da VTurb antes de buscar os nomes");
+      return;
+    }
+
+    const playerIds = vturbPlayers.map((player) => player.player_id.trim()).filter(Boolean);
+    if (playerIds.length === 0) {
+      toast.error("Adicione pelo menos um player ID");
+      return;
+    }
+
+    setResolvingVturbNames(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("vturb-test", {
+        body: { api_key: apiKey },
+      });
+      if (error) throw error;
+
+      const players = ((data?.players ?? []) as VturbPlayerMetadata[])
+        .filter((player) => player.id && player.name);
+      const namesById = new Map(players.map((player) => [player.id, player.name as string]));
+      let found = 0;
+
+      setVturbPlayers((current) =>
+        current.map((player) => {
+          const name = namesById.get(player.player_id.trim());
+          if (!name) return player;
+          found += 1;
+          return { ...player, label: name };
+        }),
+      );
+
+      if (found === 0) {
+        toast.error("Nenhum desses IDs apareceu na lista de players da VTurb");
+      } else {
+        toast.success(`${found} nome${found === 1 ? "" : "s"} preenchido${found === 1 ? "" : "s"}`);
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Falha ao buscar nomes dos players");
+    } finally {
+      setResolvingVturbNames(false);
     }
   }
 
@@ -392,19 +444,31 @@ export default function WorkspaceSettings() {
               <div className="flex items-center justify-between">
                 <h3 className="font-medium">Players VTurb disponíveis</h3>
                 {isWorkspaceAdmin && (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      setVturbPlayers((current) => [
-                        ...current,
-                        { player_id: "", label: "", last_synced_at: null },
-                      ])
-                    }
-                  >
-                    <Plus className="w-4 h-4" />
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={resolveVturbPlayerNames}
+                      disabled={resolvingVturbNames}
+                    >
+                      {resolvingVturbNames ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                      <span className="ml-2">Buscar nomes</span>
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        setVturbPlayers((current) => [
+                          ...current,
+                          { player_id: "", label: "", last_synced_at: null },
+                        ])
+                      }
+                    >
+                      <Plus className="w-4 h-4" />
+                    </Button>
+                  </div>
                 )}
               </div>
               {vturbPlayers.map((player, index) => (
