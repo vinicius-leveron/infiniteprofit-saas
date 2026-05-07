@@ -362,19 +362,19 @@ export default function Diagnostics() {
           <div className="grid md:grid-cols-2 gap-2">
             {operationalAlerts.map((alert) => (
               <div key={alert.id} className={cn(
-                "rounded-md border px-3 py-2",
+                "rounded-md border px-3 py-2 overflow-hidden",
                 alert.severity === "critical" ? "border-red-500/30 bg-red-500/5" : "border-amber-500/25 bg-amber-500/5",
               )}>
                 <div className="flex items-center justify-between gap-2 mb-1">
-                  <span className="text-xs font-semibold">{alert.title}</span>
+                  <span className="text-xs font-semibold truncate">{alert.title}</span>
                   <span className={cn(
-                    "rounded px-1.5 py-0.5 text-[10px] font-semibold",
+                    "rounded px-1.5 py-0.5 text-[10px] font-semibold shrink-0",
                     alert.severity === "critical" ? "bg-red-500/10 text-red-600" : "bg-amber-500/10 text-amber-600",
                   )}>
                     {alert.severity}
                   </span>
                 </div>
-                <p className="text-xs text-muted-foreground">{alert.message}</p>
+                <p className="text-xs text-muted-foreground line-clamp-2 break-words">{alert.message}</p>
                 <p className="text-[10px] text-muted-foreground mt-1">
                   atualizado {formatDistanceToNow(new Date(alert.last_seen_at), { addSuffix: true, locale: ptBR })}
                 </p>
