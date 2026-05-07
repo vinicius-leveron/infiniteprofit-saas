@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
-import { Upload, FileSpreadsheet, X, Loader2, FileText } from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { Upload, FileSpreadsheet, X, Loader2, FileText, Plug, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
@@ -32,6 +33,9 @@ function mergeCsvTexts(texts: string[]): string {
 }
 
 export const CsvUpload = ({ onFile }: Props) => {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const projectId = searchParams.get("project");
   const [drag, setDrag] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<File[]>([]);
@@ -104,9 +108,37 @@ export const CsvUpload = ({ onFile }: Props) => {
         <h1 className="text-3xl md:text-4xl font-extrabold gradient-text-brand mb-2">
           Infinite Profit
         </h1>
-        <p className="text-muted-foreground text-sm mb-8">
-          Importe sua(s) planilha(s) CSV de KPIs para visualizar o dashboard completo
+        <p className="text-muted-foreground text-sm mb-6">
+          Escolha como deseja importar seus dados
         </p>
+
+        {/* Opção de conectar operação */}
+        <div
+          className="rounded-[var(--radius)] border border-border bg-card/50 px-6 py-5 mb-4 cursor-pointer transition-all hover:border-primary/60 hover:bg-card group"
+          onClick={() => navigate(projectId ? `/connections?project=${projectId}` : "/connections")}
+        >
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-500/20 to-emerald-600/20 flex items-center justify-center group-hover:from-emerald-500/30 group-hover:to-emerald-600/30 transition-colors">
+              <Plug className="w-6 h-6 text-emerald-500" />
+            </div>
+            <div className="text-left flex-1">
+              <p className="text-sm font-semibold text-foreground flex items-center gap-2">
+                Conectar operação
+                <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400">Recomendado</span>
+              </p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Meta Ads, Hotmart, Hubla, Kiwify, VTurb — dados em tempo real
+              </p>
+            </div>
+            <Zap className="w-5 h-5 text-muted-foreground group-hover:text-emerald-500 transition-colors" />
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3 mb-4">
+          <div className="flex-1 h-px bg-border" />
+          <span className="text-xs text-muted-foreground">ou importe manualmente</span>
+          <div className="flex-1 h-px bg-border" />
+        </div>
 
         <div
           className={cn(
@@ -126,12 +158,12 @@ export const CsvUpload = ({ onFile }: Props) => {
             if (files.length) pickFiles(files);
           }}
         >
-          <Upload className="w-12 h-12 mx-auto mb-3 text-muted-foreground" strokeWidth={1.5} />
+          <Upload className="w-10 h-10 mx-auto mb-3 text-muted-foreground" strokeWidth={1.5} />
           <p className="text-sm font-medium text-foreground/90">
             Arraste seu(s) CSV(s) aqui ou clique para selecionar
           </p>
           <p className="text-xs text-muted-foreground mt-1.5">
-            Selecione vários arquivos (um por mês) — serão unificados automaticamente
+            Planilha de KPIs exportada manualmente
           </p>
         </div>
 
