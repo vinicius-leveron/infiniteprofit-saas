@@ -300,41 +300,29 @@ export const SimulatorPanel = ({ rows }: Props) => {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* Header */}
-      <div className="section-card">
-        <div className="flex items-start justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-brand flex items-center justify-center shadow-glow">
-              <Sliders className="w-5 h-5 text-primary-foreground" strokeWidth={2.4} />
-            </div>
-            <div>
-              <h2 className="text-base font-semibold text-foreground">Simulador de Cenários</h2>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Ajuste tickets, investimento e taxas do funil. O resultado é recalculado em tempo real.
-              </p>
-            </div>
-          </div>
-          <div className="flex gap-2 flex-wrap">
-            <Button variant="outline" size="sm" onClick={openHistory} className="gap-1.5">
-              <History className="w-3.5 h-3.5" />
-              Histórico
-            </Button>
-            <Button variant="outline" size="sm" onClick={reset} className="gap-1.5">
-              <RotateCcw className="w-3.5 h-3.5" />
-              Aplicar valores do período
-            </Button>
-            <Button size="sm" onClick={() => setSaveOpen(true)} className="gap-1.5">
-              <Save className="w-3.5 h-3.5" />
-              Salvar simulação
-            </Button>
-          </div>
-        </div>
-      </div>
-
       <div className="grid lg:grid-cols-[minmax(0,1fr)_420px] gap-6">
         {/* Inputs */}
         <div className="space-y-4">
-          <SectionCard title="Tickets" subtitle="Valor médio por venda">
+          <SectionCard
+            title="Tickets"
+            subtitle="Valor medio por venda"
+            right={
+              <div className="flex items-center gap-1.5">
+                <Button variant="ghost" size="sm" onClick={openHistory} className="gap-1.5 h-8">
+                  <History className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Historico</span>
+                </Button>
+                <Button variant="ghost" size="sm" onClick={reset} className="gap-1.5 h-8">
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Resetar</span>
+                </Button>
+                <Button size="sm" onClick={() => setSaveOpen(true)} className="gap-1.5 h-8">
+                  <Save className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Salvar</span>
+                </Button>
+              </div>
+            }
+          >
             <div className="grid sm:grid-cols-3 gap-3">
               <NumberField
                 label="Ticket Front" prefix="R$" value={inputs.ticketFront} step={1}

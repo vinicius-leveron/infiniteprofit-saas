@@ -34,8 +34,14 @@ import {
 } from "@/components/ui/collapsible";
 import { buildAuthRedirect } from "@/lib/authRedirect";
 import { supabase } from "@/integrations/supabase/client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
+import { BarChart3 as ProjectIcon } from "lucide-react";
+
+interface SidebarProject {
+  id: string;
+  name: string;
+}
 
 type Tab = "geral" | "trafego" | "funil" | "bumps" | "anuncios" | "atribuicao" | "relatorio" | "diagnostico" | "simulador";
 
@@ -68,7 +74,24 @@ export function AppShell() {
     isOrganizationAdmin,
     setCurrentWorkspaceId,
   } = useWorkspace();
-  const [configOpen, setConfigOpen] = useState(true);
+  const [configOpen, setConfigOpen] = useState(false);
+  const [projectsOpen, setProjectsOpen] = useState(true);
+  const [projects, setProjects] = useState<SidebarProject[]>([]);
+
+  // Fetch projects for sidebar
+  useEffect(() => {
+    if (!currentWorkspaceId) {
+      setProjects([]);
+      return;
+    }
+    supabase
+      .from("projects")
+      .select("id, name")
+      .eq("workspace_id", currentWorkspaceId)
+      .order("updated_at", { ascending: false })
+      .limit(10)
+      .then(({ data }) => setProjects(data ?? []));
+  }, [currentWorkspaceId]);
 
   if (authLoading || loading) {
     return (
@@ -92,7 +115,7 @@ export function AppShell() {
   }
 
   const showWorkspacePicker = hasWorkspaces && location.pathname !== "/welcome";
-  const isOnDashboard = location.pathname === "/" && projectId;
+  const isOnDashboard = location.pathname === "/dashboard" && projectId;
 
   const isActive = (path: string) => location.pathname === path;
 
@@ -132,7 +155,7 @@ export function AppShell() {
   const handleTabClick = (tabId: Tab) => {
     const params = new URLSearchParams(searchParams);
     params.set("tab", tabId);
-    navigate(`/?${params.toString()}`);
+    navigate(`/dashboard?${params.toString()}`);
   };
 
   return (
@@ -182,21 +205,62 @@ export function AppShell() {
 
         {/* Navigation */}
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-          <NavItem
-            icon={FolderKanban}
-            label="Projetos"
-            onClick={() => navigate("/projects")}
-            active={isActive("/projects")}
-          />
-
-          <Button
-            size="sm"
-            onClick={() => navigate("/setup-operation")}
-            className="w-full gap-2 mt-2"
-          >
-            <Plus className="w-4 h-4" />
-            Novo Projeto
-          </Button>
+          {/* Projetos Collapsible */}
+          <Collapsible open={projectsOpen} onOpenChange={setProjectsOpen}>
+            <CollapsibleTrigger className="w-full flex items-center justify-between px-3 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors rounded-lg hover:bg-muted">
+              <div className="flex items-center gap-3">
+                <FolderKanban className="w-4 h-4" />
+                <span>Projetos</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigate("/setup-operation");
+                  }}
+                  className="p-1 hover:bg-muted-foreground/20 rounded"
+                  title="Novo projeto"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                </button>
+                <ChevronDown
+                  className={cn(
+                    "w-4 h-4 transition-transform",
+                    projectsOpen && "rotate-180"
+                  )}
+                />
+              </div>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="space-y-0.5 mt-1">
+              {projects.length === 0 ? (
+                <div className="px-3 py-2 text-xs text-muted-foreground">
+                  Nenhum projeto
+                </div>
+              ) : (
+                projects.map((p) => (
+                  <button
+                    key={p.id}
+                    onClick={() => navigate(`/dashboard?project=${p.id}`)}
+                    className={cn(
+                      "w-full flex items-center gap-2 px-3 py-1.5 pl-9 rounded-lg text-sm transition-colors truncate",
+                      projectId === p.id
+                        ? "bg-primary/10 text-primary font-medium"
+                        : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                    )}
+                  >
+                    <ProjectIcon className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">{p.name}</span>
+                  </button>
+                ))
+              )}
+              <button
+                onClick={() => navigate("/projects")}
+                className="w-full flex items-center gap-2 px-3 py-1.5 pl-9 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+              >
+                Ver todos
+              </button>
+            </CollapsibleContent>
+          </Collapsible>
 
           {/* Dashboard tabs - aparecem quando projeto selecionado */}
           {isOnDashboard && (

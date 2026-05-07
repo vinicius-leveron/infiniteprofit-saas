@@ -165,7 +165,7 @@ export default function SetupOperation() {
             Projetos
           </Button>
           <div>
-            <h1 className="text-xl font-bold">Nova Operacao</h1>
+            <h1 className="text-xl font-bold">Novo Projeto</h1>
             <p className="text-xs text-muted-foreground">Configure suas fontes de dados em poucos passos.</p>
           </div>
         </div>

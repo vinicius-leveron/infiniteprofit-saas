@@ -21,9 +21,9 @@ export function AttributionPanel({ rows }: AttributionPanelProps) {
           Agregado diario
         </span>
       </div>
-      <div className="overflow-x-auto">
+      <div className="overflow-auto max-h-[400px]">
         <table className="w-full text-sm">
-          <thead className="text-xs text-muted-foreground border-b border-border/50">
+          <thead className="text-xs text-muted-foreground border-b border-border/50 sticky top-0 bg-card">
             <tr>
               <th className="text-left py-2 pr-3">Dia</th>
               <th className="text-right py-2 pr-3">Gasto</th>

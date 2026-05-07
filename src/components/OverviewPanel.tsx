@@ -114,11 +114,6 @@ export const OverviewPanel = ({ rows, previous, onDayClick }: Props) => {
 
   return (
     <div className={`space-y-6 animate-fade-in ${onDayClick ? "[&_.recharts-bar-rectangle]:cursor-pointer [&_.recharts-active-dot]:cursor-pointer" : ""}`}>
-      {onDayClick && (
-        <div className="text-[11px] text-muted-foreground -mb-2 ml-1">
-          💡 Clique em um dia nos gráficos para ver todos os detalhes
-        </div>
-      )}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <KpiCard
           featured

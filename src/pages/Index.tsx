@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { format } from "date-fns";
+import { format, formatDistanceToNow } from "date-fns";
+import { ptBR } from "date-fns/locale";
 import { CsvUpload } from "@/components/CsvUpload";
 import { OverviewPanel } from "@/components/OverviewPanel";
 import { TrafficPanel } from "@/components/TrafficPanel";
@@ -38,17 +39,14 @@ import { cn } from "@/lib/utils";
 import {
   BarChart3,
   Radio,
-  FileUp,
   Target,
   Gift,
   Stethoscope,
   Save,
-  ArrowLeft,
   Download,
-  Command as CommandIcon,
+  Search,
   Sliders,
   RefreshCw,
-  Settings2,
   Megaphone,
   Map,
   FileText,
@@ -56,6 +54,18 @@ import {
 import { toast } from "sonner";
 
 type Tab = "geral" | "trafego" | "funil" | "bumps" | "anuncios" | "atribuicao" | "relatorio" | "diagnostico" | "simulador";
+
+const TAB_INFO: Record<Tab, { label: string; description: string; icon: React.ElementType }> = {
+  geral: { label: "Visao Geral", description: "KPIs principais e performance consolidada", icon: BarChart3 },
+  trafego: { label: "Trafego", description: "Metricas de aquisicao e custo por clique", icon: Radio },
+  funil: { label: "Funil VSL", description: "Taxas de conversao em cada etapa do video", icon: Target },
+  bumps: { label: "Bumps & Upsell", description: "Receita incremental e take-rate de ofertas", icon: Gift },
+  anuncios: { label: "Anuncios", description: "Performance por campanha, adset e criativo", icon: Megaphone },
+  atribuicao: { label: "Atribuicao", description: "Cruzamento diario entre fontes de dados", icon: Map },
+  relatorio: { label: "Relatorio Executivo", description: "Resumo para tomada de decisao", icon: FileText },
+  diagnostico: { label: "Diagnostico", description: "Qualidade dos dados e alertas da operacao", icon: Stethoscope },
+  simulador: { label: "Simulador", description: "Projecoes e analise de sensibilidade", icon: Sliders },
+};
 
 const Index = () => {
   const navigate = useNavigate();
@@ -87,7 +97,7 @@ const Index = () => {
   const setTab = (t: Tab) => {
     const params = new URLSearchParams(searchParams);
     params.set("tab", t);
-    navigate(`/?${params.toString()}`, { replace: true });
+    navigate(`/dashboard?${params.toString()}`, { replace: true });
   };
   const [period, setPeriod] = useState<Period>("all");
   const [customFrom, setCustomFrom] = useState<string>("");
@@ -437,149 +447,113 @@ const Index = () => {
   return (
     <main className="min-h-screen">
       {/* Sticky header */}
-      <div className="sticky top-0 z-30 bg-background/85 backdrop-blur-md border-b border-border/60">
-        <div className="max-w-[1400px] mx-auto px-4 md:px-6 py-3">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3 min-w-0">
-              <button
-                onClick={() => navigate("/projects")}
-                className="w-10 h-10 rounded-xl bg-gradient-brand flex items-center justify-center shadow-glow shrink-0 hover:opacity-90 transition-opacity"
-                title="Voltar para projetos"
-              >
-                <BarChart3 className="w-5 h-5 text-primary-foreground" strokeWidth={2.4} />
-              </button>
-              <div className="min-w-0">
-                <h1 className="text-lg md:text-xl font-extrabold gradient-text-brand leading-none truncate">
-                  {projectName || "Infinite Profit"}
-                </h1>
-                <p className="text-[11px] text-muted-foreground mt-1 truncate max-w-[260px] md:max-w-[600px]">
-                  {fileName} · {periodLabel}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setPaletteOpen(true)}
-                className="h-9 gap-1.5 hidden md:inline-flex text-xs text-muted-foreground hover:text-foreground"
-                title="Abrir busca rápida (⌘K)"
-              >
-                <CommandIcon className="w-3.5 h-3.5" />
-                <span className="hidden lg:inline">Buscar</span>
-                <kbd className="hidden lg:inline-flex items-center px-1.5 py-0.5 rounded bg-secondary text-[10px] font-mono">
-                  ⌘K
-                </kbd>
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleExportPdf}
-                className="gap-2 hidden sm:inline-flex"
-                title="Exportar dashboard em PDF"
-              >
-                <Download className="w-4 h-4" />
-                <span className="hidden md:inline">PDF</span>
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => navigate("/projects")}
-                className="gap-2 hidden sm:inline-flex"
-              >
-                <ArrowLeft className="w-4 h-4" />
-                Projetos
-              </Button>
-              {currentProjectId && (
-                <>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleQuickSync}
-                    disabled={syncingNow}
-                    className="gap-2 hidden sm:inline-flex"
-                    title={
-                      sheetUrl
-                        ? "Sincronizar planilha agora"
-                        : "Configurar sincronização com Google Sheets"
-                    }
-                  >
-                    <RefreshCw className={`w-4 h-4 ${syncingNow ? "animate-spin" : ""}`} />
-                    <span className="hidden md:inline">
-                      {sheetUrl ? "Sync" : "Conectar planilha"}
-                    </span>
-                  </Button>
-                  {sheetUrl && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setSyncDialogOpen(true)}
-                      className="gap-2 hidden sm:inline-flex"
-                      title="Configurar / regenerar script"
-                    >
-                      <Settings2 className="w-4 h-4" />
-                    </Button>
-                  )}
-                </>
+      {/* Sticky header - Estilo SaaS */}
+      <div className="sticky top-0 z-30 bg-background/95 backdrop-blur-sm border-b border-border/60">
+        <div className="max-w-[1400px] mx-auto px-4 md:px-6 h-14 flex items-center justify-between">
+          {/* Contexto do projeto */}
+          <div className="min-w-0">
+            <h1 className="text-base font-semibold text-foreground truncate">
+              {projectName || "Dashboard"}
+            </h1>
+            <p className="text-xs text-muted-foreground">
+              {periodLabel}
+              {lastSyncedAt && (
+                <span className="ml-1.5">
+                  · Sync {formatDistanceToNow(new Date(lastSyncedAt), { locale: ptBR })}
+                </span>
               )}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setRows(null);
-                  setFileName("");
-                  setCsvText("");
-                  setProjectName("");
-                  setCurrentProjectId(null);
-                  setSheetUrl(null);
-                  setSyncToken(null);
-                  setLastSyncedAt(null);
-                }}
-                className="gap-2 hidden sm:inline-flex"
-              >
-                <FileUp className="w-4 h-4" />
-                Novo CSV
-              </Button>
-              <Button size="sm" onClick={() => setSaveDialogOpen(true)} className="gap-2">
-                <Save className="w-4 h-4" />
-                <span className="hidden sm:inline">{currentProjectId ? "Salvar" : "Salvar projeto"}</span>
-              </Button>
-            </div>
+            </p>
           </div>
 
+          {/* Acoes */}
+          <div className="flex items-center gap-2 shrink-0">
+            {/* Search */}
+            <button
+              onClick={() => setPaletteOpen(true)}
+              className="hidden md:flex items-center gap-2 h-8 px-3 rounded-md border border-border bg-muted/30 hover:bg-muted/50 transition-colors text-sm text-muted-foreground"
+            >
+              <Search className="w-4 h-4" />
+              <span>Buscar...</span>
+            </button>
+
+            {/* Acoes secundarias */}
+            <div className="flex items-center gap-1">
+              {currentProjectId && sheetUrl && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={handleQuickSync}
+                  disabled={syncingNow}
+                  title="Sincronizar dados"
+                >
+                  <RefreshCw className={cn("w-4 h-4", syncingNow && "animate-spin")} />
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={handleExportPdf}
+                title="Exportar PDF"
+              >
+                <Download className="w-4 h-4" />
+              </Button>
+            </div>
+
+            {/* Acao primaria */}
+            <Button size="sm" onClick={() => setSaveDialogOpen(true)}>
+              <Save className="w-4 h-4 mr-1.5" />
+              Salvar
+            </Button>
+          </div>
         </div>
       </div>
 
       <div className="max-w-[1400px] mx-auto px-4 md:px-6 py-6 md:py-8">
-        {/* Period filter */}
-        <div className="mb-6 flex flex-wrap items-end gap-3">
-          <PeriodFilter
-            period={period}
-            customFrom={customFrom}
-            customTo={customTo}
-            onPeriodChange={handlePeriodChange}
-            onCustomChange={handleCustomChange}
-          />
-          {projectSource === "api" && metaAccounts.length > 0 && (
-            <div className="flex flex-col gap-1">
-              <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-medium">
-                Conta Meta
-              </span>
-              <Select value={accountFilter} onValueChange={setAccountFilter}>
-                <SelectTrigger className="h-9 min-w-[180px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todas as contas</SelectItem>
-                  {metaAccounts.map((a) => (
-                    <SelectItem key={a.account_id} value={a.account_id}>
-                      {a.label || a.account_id}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
+        {/* Tab Header + Period filter */}
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+          {/* Tab title */}
+          {(() => {
+            const info = TAB_INFO[tab];
+            return (
+              <div>
+                <h2 className="text-base font-semibold text-foreground">{info.label}</h2>
+                <p className="text-xs text-muted-foreground">{info.description}</p>
+              </div>
+            );
+          })()}
+
+          {/* Filters */}
+          <div className="flex flex-wrap items-end gap-3">
+            <PeriodFilter
+              period={period}
+              customFrom={customFrom}
+              customTo={customTo}
+              onPeriodChange={handlePeriodChange}
+              onCustomChange={handleCustomChange}
+            />
+            {projectSource === "api" && metaAccounts.length > 0 && (
+              <div className="flex flex-col gap-1">
+                <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-medium">
+                  Conta Meta
+                </span>
+                <Select value={accountFilter} onValueChange={setAccountFilter}>
+                  <SelectTrigger className="h-9 min-w-[180px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todas as contas</SelectItem>
+                    {metaAccounts.map((a) => (
+                      <SelectItem key={a.account_id} value={a.account_id}>
+                        {a.label || a.account_id}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </div>
         </div>
 
         {filtered.length === 0 ? (
@@ -597,7 +571,6 @@ const Index = () => {
           </div>
         ) : (
           <div ref={dashboardRef} className="space-y-6">
-
             {tab === "geral" ? (
               <OverviewPanel rows={filtered} previous={previous} onDayClick={setDrilldownRow} />
             ) : tab === "trafego" ? (
