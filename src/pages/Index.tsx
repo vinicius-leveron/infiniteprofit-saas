@@ -82,7 +82,13 @@ const Index = () => {
   const [metaAccounts, setMetaAccounts] = useState<Array<{ account_id: string; label: string | null }>>([]);
   const [accountFilter, setAccountFilter] = useState<string>("all");
 
-  const [tab, setTab] = useState<Tab>("geral");
+  // Tab vem do query param (sincronizado com sidebar)
+  const tab = (searchParams.get("tab") as Tab) || "geral";
+  const setTab = (t: Tab) => {
+    const params = new URLSearchParams(searchParams);
+    params.set("tab", t);
+    navigate(`/?${params.toString()}`, { replace: true });
+  };
   const [period, setPeriod] = useState<Period>("all");
   const [customFrom, setCustomFrom] = useState<string>("");
   const [customTo, setCustomTo] = useState<string>("");
@@ -424,17 +430,6 @@ const Index = () => {
     );
   };
 
-  const tabs: { id: Tab; label: string; icon: typeof BarChart3 }[] = [
-    { id: "geral", label: "Visão Geral", icon: BarChart3 },
-    { id: "trafego", label: "Tráfego", icon: Radio },
-    { id: "funil", label: "Funil VSL", icon: Target },
-    { id: "bumps", label: "Bumps & Upsell", icon: Gift },
-    { id: "anuncios", label: "Anúncios", icon: Megaphone },
-    { id: "atribuicao", label: "Atribuição", icon: Map },
-    { id: "relatorio", label: "Relatório", icon: FileText },
-    { id: "diagnostico", label: "Diagnóstico", icon: Stethoscope },
-    { id: "simulador", label: "Simulador", icon: Sliders },
-  ];
 
   // Refetch key para insights — muda sempre que projeto/período muda
   const insightsKey = `${currentProjectId ?? "local"}|${period}|${customFrom}|${customTo}|${filtered.length}`;
@@ -552,28 +547,6 @@ const Index = () => {
             </div>
           </div>
 
-          {/* Tabs */}
-          <div className="flex flex-wrap gap-1 mt-3 -mb-px">
-            {tabs.map(({ id, label, icon: Icon }, i) => (
-              <button
-                key={id}
-                onClick={() => setTab(id)}
-                className={cn(
-                  "px-3.5 py-2 text-sm font-medium flex items-center gap-2 border-b-2 transition-colors",
-                  tab === id
-                    ? "border-primary text-foreground"
-                    : "border-transparent text-muted-foreground hover:text-foreground",
-                )}
-                title={`${label} (atalho: ${i + 1})`}
-              >
-                <Icon className="w-4 h-4" />
-                <span className="hidden md:inline">{label}</span>
-                <span className="hidden lg:inline-flex items-center px-1 py-0.5 rounded bg-secondary text-[9px] font-mono opacity-60">
-                  {i + 1}
-                </span>
-              </button>
-            ))}
-          </div>
         </div>
       </div>
 

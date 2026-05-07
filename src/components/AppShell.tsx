@@ -1,5 +1,22 @@
 import { Outlet, useLocation, useNavigate, useSearchParams, Navigate } from "react-router-dom";
-import { Building2, ChevronDown, FolderKanban, LogOut, Settings, Users } from "lucide-react";
+import {
+  BarChart3,
+  Building2,
+  ChevronDown,
+  FileText,
+  FolderKanban,
+  Gift,
+  LogOut,
+  Map,
+  Megaphone,
+  Plus,
+  Radio,
+  Settings,
+  Sliders,
+  Stethoscope,
+  Target,
+  Users,
+} from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { Button } from "@/components/ui/button";
@@ -20,15 +37,30 @@ import { supabase } from "@/integrations/supabase/client";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 
+type Tab = "geral" | "trafego" | "funil" | "bumps" | "anuncios" | "atribuicao" | "relatorio" | "diagnostico" | "simulador";
+
+const DASHBOARD_TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
+  { id: "geral", label: "Visao Geral", icon: BarChart3 },
+  { id: "trafego", label: "Trafego", icon: Radio },
+  { id: "funil", label: "Funil VSL", icon: Target },
+  { id: "bumps", label: "Bumps & Upsell", icon: Gift },
+  { id: "anuncios", label: "Anuncios", icon: Megaphone },
+  { id: "atribuicao", label: "Atribuicao", icon: Map },
+  { id: "relatorio", label: "Relatorio", icon: FileText },
+  { id: "diagnostico", label: "Diagnostico", icon: Stethoscope },
+  { id: "simulador", label: "Simulador", icon: Sliders },
+];
+
 export function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
+  const projectId = searchParams.get("project");
+  const currentTab = (searchParams.get("tab") as Tab) || "geral";
   const { user, loading: authLoading } = useAuth();
   const {
     loading,
     workspaces,
-    currentWorkspace,
     currentWorkspaceId,
     currentOrganization,
     hasWorkspaces,
@@ -60,6 +92,7 @@ export function AppShell() {
   }
 
   const showWorkspacePicker = hasWorkspaces && location.pathname !== "/welcome";
+  const isOnDashboard = location.pathname === "/" && projectId;
 
   const isActive = (path: string) => location.pathname === path;
 
@@ -69,27 +102,38 @@ export function AppShell() {
     onClick,
     active,
     indent,
+    shortcut,
   }: {
     icon: React.ElementType;
     label: string;
     onClick: () => void;
     active?: boolean;
     indent?: boolean;
+    shortcut?: string;
   }) => (
     <button
       onClick={onClick}
       className={cn(
         "w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors",
-        indent && "pl-9",
+        indent && "pl-6",
         active
           ? "bg-primary/10 text-primary font-medium"
           : "text-muted-foreground hover:bg-muted hover:text-foreground"
       )}
     >
       <Icon className="w-4 h-4 shrink-0" />
-      <span className="truncate">{label}</span>
+      <span className="truncate flex-1 text-left">{label}</span>
+      {shortcut && (
+        <span className="text-[10px] font-mono opacity-50">{shortcut}</span>
+      )}
     </button>
   );
+
+  const handleTabClick = (tabId: Tab) => {
+    const params = new URLSearchParams(searchParams);
+    params.set("tab", tabId);
+    navigate(`/?${params.toString()}`);
+  };
 
   return (
     <div className="min-h-screen bg-background flex">
@@ -136,18 +180,43 @@ export function AppShell() {
           </div>
         )}
 
-        {/* Navigation - Top */}
-        <nav className="p-3 space-y-1">
+        {/* Navigation */}
+        <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
           <NavItem
             icon={FolderKanban}
             label="Projetos"
             onClick={() => navigate("/projects")}
             active={isActive("/projects")}
           />
-        </nav>
 
-        {/* Spacer */}
-        <div className="flex-1" />
+          <Button
+            size="sm"
+            onClick={() => navigate("/setup-operation")}
+            className="w-full gap-2 mt-2"
+          >
+            <Plus className="w-4 h-4" />
+            Novo Projeto
+          </Button>
+
+          {/* Dashboard tabs - aparecem quando projeto selecionado */}
+          {isOnDashboard && (
+            <div className="mt-4 pt-4 border-t border-border/40 space-y-1">
+              <div className="px-3 py-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                Dashboard
+              </div>
+              {DASHBOARD_TABS.map(({ id, label, icon }, index) => (
+                <NavItem
+                  key={id}
+                  icon={icon}
+                  label={label}
+                  onClick={() => handleTabClick(id)}
+                  active={currentTab === id}
+                  shortcut={String(index + 1)}
+                />
+              ))}
+            </div>
+          )}
+        </nav>
 
         {/* Bottom Section: Configuracoes + Sair */}
         <div className="border-t border-border/40">
