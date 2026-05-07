@@ -1,5 +1,5 @@
 import { Outlet, useLocation, useNavigate, useSearchParams, Navigate } from "react-router-dom";
-import { Building2, ChevronsUpDown, FolderKanban, LogOut, Plus, Settings, Settings2, Stethoscope, Users } from "lucide-react";
+import { Building2, ChevronDown, FolderKanban, LogOut, Plus, Settings, Settings2, Stethoscope, Users } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { Button } from "@/components/ui/button";
@@ -10,8 +10,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { buildAuthRedirect } from "@/lib/authRedirect";
 import { supabase } from "@/integrations/supabase/client";
+import { useState } from "react";
+import { cn } from "@/lib/utils";
 
 export function AppShell() {
   const navigate = useNavigate();
@@ -30,6 +37,7 @@ export function AppShell() {
     isOrganizationAdmin,
     setCurrentWorkspaceId,
   } = useWorkspace();
+  const [configOpen, setConfigOpen] = useState(true);
 
   if (authLoading || loading) {
     return (
@@ -54,107 +62,181 @@ export function AppShell() {
 
   const showWorkspacePicker = hasWorkspaces && location.pathname !== "/welcome";
 
+  const isActive = (path: string) => location.pathname === path;
+  const isActiveWithProject = (path: string) =>
+    location.pathname === path && location.search.includes(`project=${projectId}`);
+
+  const NavItem = ({
+    icon: Icon,
+    label,
+    onClick,
+    active,
+    indent,
+  }: {
+    icon: React.ElementType;
+    label: string;
+    onClick: () => void;
+    active?: boolean;
+    indent?: boolean;
+  }) => (
+    <button
+      onClick={onClick}
+      className={cn(
+        "w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors",
+        indent && "pl-9",
+        active
+          ? "bg-primary/10 text-primary font-medium"
+          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+      )}
+    >
+      <Icon className="w-4 h-4 shrink-0" />
+      <span className="truncate">{label}</span>
+    </button>
+  );
+
   return (
-    <div className="min-h-screen bg-background">
-      <div className="border-b border-border/60 bg-background/90 backdrop-blur-md">
-        <div className="max-w-[1400px] mx-auto px-4 md:px-6 py-3 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3 min-w-0">
-            <button
-              onClick={() => navigate("/projects")}
-              className="w-10 h-10 rounded-xl bg-gradient-brand flex items-center justify-center shadow-glow shrink-0 hover:opacity-90 transition-opacity"
-              title="Ir para projetos"
-            >
+    <div className="min-h-screen bg-background flex">
+      {/* Sidebar */}
+      <aside className="w-64 border-r border-border/60 bg-background/95 backdrop-blur-sm flex flex-col shrink-0">
+        {/* Logo & Org */}
+        <div className="p-4 border-b border-border/40">
+          <button
+            onClick={() => navigate("/projects")}
+            className="flex items-center gap-3 w-full"
+          >
+            <div className="w-10 h-10 rounded-xl bg-gradient-brand flex items-center justify-center shadow-glow shrink-0">
               <Building2 className="w-5 h-5 text-primary-foreground" />
-            </button>
-            <div className="min-w-0">
+            </div>
+            <div className="min-w-0 text-left">
               <div className="text-sm font-semibold text-foreground truncate">
                 {currentOrganization?.name ?? "Infinite Profit"}
               </div>
               <div className="text-[11px] text-muted-foreground truncate">
-                {showWorkspacePicker ? currentWorkspace?.name ?? "Selecione um workspace" : user.email}
+                {user.email}
               </div>
             </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {/* Workspace Picker */}
-            {showWorkspacePicker && (
-              <Select
-                value={currentWorkspaceId ?? ""}
-                onValueChange={(value) => setCurrentWorkspaceId(value)}
-              >
-                <SelectTrigger className="w-[200px] hidden md:flex">
-                  <ChevronsUpDown className="w-4 h-4 mr-2 text-muted-foreground" />
-                  <SelectValue placeholder="Selecione um workspace" />
-                </SelectTrigger>
-                <SelectContent>
-                  {workspaces.map((workspace) => (
-                    <SelectItem key={workspace.id} value={workspace.id}>
-                      {workspace.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-
-            {/* Grupo Principal */}
-            <div className="flex items-center gap-1 pr-3 border-r border-border/40">
-              <Button variant="ghost" size="sm" onClick={() => navigate("/projects")} className="gap-2">
-                <FolderKanban className="w-4 h-4" />
-                <span className="hidden sm:inline">Projetos</span>
-              </Button>
-              {showWorkspacePicker && (
-                <Button variant="ghost" size="sm" onClick={() => navigate("/workspace-settings")} className="gap-2">
-                  <Users className="w-4 h-4" />
-                  <span className="hidden sm:inline">Equipe</span>
-                </Button>
-              )}
-              {isOrganizationAdmin && (
-                <Button variant="ghost" size="sm" onClick={() => navigate("/organization-settings")} className="gap-2">
-                  <Settings className="w-4 h-4" />
-                  <span className="hidden lg:inline">Org</span>
-                </Button>
-              )}
-            </div>
-
-            {/* Grupo Projeto (contextual) */}
-            {projectId && (
-              <div className="flex items-center gap-1 pr-3 border-r border-border/40">
-                <Button variant="ghost" size="sm" onClick={() => navigate(`/diagnostics?project=${projectId}`)} className="gap-2">
-                  <Stethoscope className="w-4 h-4" />
-                  <span className="hidden sm:inline">Saude</span>
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => navigate(`/connections?project=${projectId}`)} className="gap-2">
-                  <Settings2 className="w-4 h-4" />
-                  <span className="hidden sm:inline">Fontes</span>
-                </Button>
-              </div>
-            )}
-
-            {/* CTA Principal */}
-            <Button size="sm" onClick={() => navigate("/setup-operation")} className="gap-2">
-              <Plus className="w-4 h-4" />
-              <span className="hidden sm:inline">Novo</span>
-            </Button>
-
-            {/* Logout */}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={async () => {
-                await supabase.auth.signOut();
-                navigate("/auth", { replace: true });
-              }}
-              className="gap-2"
-            >
-              <LogOut className="w-4 h-4" />
-              <span className="hidden sm:inline">Sair</span>
-            </Button>
-          </div>
+          </button>
         </div>
-      </div>
 
-      <Outlet />
+        {/* Workspace Picker */}
+        {showWorkspacePicker && (
+          <div className="p-3 border-b border-border/40">
+            <Select
+              value={currentWorkspaceId ?? ""}
+              onValueChange={(value) => setCurrentWorkspaceId(value)}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Selecione um workspace" />
+              </SelectTrigger>
+              <SelectContent>
+                {workspaces.map((workspace) => (
+                  <SelectItem key={workspace.id} value={workspace.id}>
+                    {workspace.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        {/* Navigation */}
+        <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
+          {/* Main */}
+          <NavItem
+            icon={FolderKanban}
+            label="Projetos"
+            onClick={() => navigate("/projects")}
+            active={isActive("/projects")}
+          />
+
+          <Button
+            size="sm"
+            onClick={() => navigate("/setup-operation")}
+            className="w-full gap-2 mt-2 mb-4"
+          >
+            <Plus className="w-4 h-4" />
+            Novo Projeto
+          </Button>
+
+          {/* Contextual: Projeto Selecionado */}
+          {projectId && (
+            <div className="space-y-1 pb-4 mb-4 border-b border-border/40">
+              <div className="px-3 py-1 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                Projeto Atual
+              </div>
+              <NavItem
+                icon={Stethoscope}
+                label="Saude"
+                onClick={() => navigate(`/diagnostics?project=${projectId}`)}
+                active={isActiveWithProject("/diagnostics")}
+              />
+              <NavItem
+                icon={Settings2}
+                label="Fontes"
+                onClick={() => navigate(`/connections?project=${projectId}`)}
+                active={isActiveWithProject("/connections")}
+              />
+            </div>
+          )}
+
+          {/* Configuracoes */}
+          {showWorkspacePicker && (
+            <Collapsible open={configOpen} onOpenChange={setConfigOpen}>
+              <CollapsibleTrigger className="w-full flex items-center justify-between px-3 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
+                <div className="flex items-center gap-3">
+                  <Settings className="w-4 h-4" />
+                  <span>Configuracoes</span>
+                </div>
+                <ChevronDown
+                  className={cn(
+                    "w-4 h-4 transition-transform",
+                    configOpen && "rotate-180"
+                  )}
+                />
+              </CollapsibleTrigger>
+              <CollapsibleContent className="space-y-1 mt-1">
+                <NavItem
+                  icon={Users}
+                  label="Equipe"
+                  onClick={() => navigate("/workspace-settings")}
+                  active={isActive("/workspace-settings")}
+                  indent
+                />
+                {isOrganizationAdmin && (
+                  <NavItem
+                    icon={Building2}
+                    label="Organizacao"
+                    onClick={() => navigate("/organization-settings")}
+                    active={isActive("/organization-settings")}
+                    indent
+                  />
+                )}
+              </CollapsibleContent>
+            </Collapsible>
+          )}
+        </nav>
+
+        {/* User & Logout */}
+        <div className="p-3 border-t border-border/40">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={async () => {
+              await supabase.auth.signOut();
+              navigate("/auth", { replace: true });
+            }}
+            className="w-full justify-start gap-2 text-muted-foreground hover:text-foreground"
+          >
+            <LogOut className="w-4 h-4" />
+            Sair
+          </Button>
+        </div>
+      </aside>
+
+      {/* Main Content */}
+      <main className="flex-1 overflow-auto">
+        <Outlet />
+      </main>
     </div>
   );
 }
