@@ -169,6 +169,8 @@ curl -X POST "https://api.render.com/v1/services/<service-id>/routes" \
 - `vturb-pull`: sync manual e automático da VTurb
 - `aggregate-daily`: consolidação diária
 - `webhook-gateway`: ingestão de checkout por webhook
+- `public-share`: dashboard público somente leitura por token
+- `generate-alerts`: geração de alertas operacionais
 - `pull-sheet`: ingestão via Google Sheets
 
 ## Verificação
@@ -177,4 +179,40 @@ curl -X POST "https://api.render.com/v1/services/<service-id>/routes" \
 npm run build
 npm test
 npm run lint
+```
+
+## QA E2E
+
+O checklist manual de lançamento fica em:
+
+- `docs/qa/e2e-launch-checklist.md`
+
+Instale os browsers do Playwright uma vez:
+
+```bash
+npm run e2e:install
+```
+
+Rode os testes E2E localmente após um build:
+
+```bash
+npm run build
+npm run e2e
+```
+
+Rode contra produção:
+
+```bash
+npm run qa:prod
+```
+
+Variáveis opcionais ativam os fluxos autenticados:
+
+```env
+PLAYWRIGHT_BASE_URL=https://infiniteprofit-saas.onrender.com
+E2E_EMAIL=qa-admin@example.com
+E2E_PASSWORD=senha-do-usuario-qa
+E2E_PROJECT_ID=c4f027b4-f867-4d7f-a522-dfb272c33104
+E2E_PUBLIC_SHARE_TOKEN=token-do-link-publico
+E2E_AUTOMATION_KEY=automation-key-somente-para-teste-de-edge
 ```

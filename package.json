@@ -10,6 +10,11 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "audit:coverage": "node scripts/audit-dashboard-coverage.mjs",
+    "qa": "npm run build && npm run lint && npm test && npm run e2e",
+    "qa:prod": "PLAYWRIGHT_BASE_URL=https://infiniteprofit-saas.onrender.com npm run e2e",
+    "e2e": "playwright test",
+    "e2e:ui": "playwright test --ui",
+    "e2e:install": "playwright install chromium",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -71,6 +76,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.32.0",
+    "@playwright/test": "^1.59.1",
     "@tailwindcss/typography": "^0.5.16",
     "@testing-library/jest-dom": "^6.6.0",
     "@testing-library/react": "^16.0.0",
