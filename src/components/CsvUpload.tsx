@@ -115,7 +115,7 @@ export const CsvUpload = ({ onFile }: Props) => {
         {/* Opção de conectar operação */}
         <div
           className="rounded-[var(--radius)] border border-border bg-card/50 px-6 py-5 mb-4 cursor-pointer transition-all hover:border-primary/60 hover:bg-card group"
-          onClick={() => navigate(projectId ? `/connections?project=${projectId}` : "/connections")}
+          onClick={() => navigate("/setup-operation")}
         >
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-500/20 to-emerald-600/20 flex items-center justify-center group-hover:from-emerald-500/30 group-hover:to-emerald-600/30 transition-colors">

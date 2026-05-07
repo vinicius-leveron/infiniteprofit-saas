@@ -23,7 +23,6 @@ import {
   FileSpreadsheet,
   Loader2,
   Calendar,
-  Command as CommandIcon,
   Plug,
   Share2,
   Stethoscope,
@@ -129,25 +128,8 @@ export default function Projects() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setPaletteOpen(true)}
-              className="hidden md:inline-flex gap-1.5 text-xs text-muted-foreground hover:text-foreground"
-              title="Buscar (⌘K)"
-            >
-              <CommandIcon className="w-3.5 h-3.5" />
-              <span>Buscar</span>
-              <kbd className="inline-flex items-center px-1.5 py-0.5 rounded bg-secondary text-[10px] font-mono">
-                ⌘K
-              </kbd>
-            </Button>
-            <Button onClick={() => navigate("/dashboard")} className="gap-2">
+            <Button onClick={() => navigate("/setup-operation")} className="gap-2">
               <Plus className="w-4 h-4" />
-              Novo
-            </Button>
-            <Button onClick={() => navigate("/setup-operation")} variant="secondary" className="gap-2">
-              <Plug className="w-4 h-4" />
               Nova operação
             </Button>
           </div>
@@ -157,14 +139,14 @@ export default function Projects() {
           <ProjectsSkeleton />
         ) : projects.length === 0 ? (
           <div className="section-card text-center py-16">
-            <FileSpreadsheet className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-            <h2 className="text-lg font-semibold mb-1">Nenhum projeto salvo</h2>
+            <Plug className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+            <h2 className="text-lg font-semibold mb-1">Nenhuma operação criada</h2>
             <p className="text-sm text-muted-foreground mb-5">
-              Carregue um CSV e salve para acessar depois de qualquer dispositivo
+              Conecte suas fontes de dados para começar a analisar sua operação
             </p>
-            <Button onClick={() => navigate("/dashboard")} className="gap-2">
+            <Button onClick={() => navigate("/setup-operation")} className="gap-2">
               <Plus className="w-4 h-4" />
-              Criar primeiro projeto
+              Criar primeira operação
             </Button>
           </div>
         ) : (
