@@ -301,7 +301,7 @@ export default function Diagnostics() {
             <StatusPill status="Parcial" /> {coverageSummary.Parcial}
             <StatusPill status="Faltando" /> {coverageSummary.Faltando}
           </div>
-          <p className="text-[11px] text-muted-foreground mt-3">{metrics.length} dia(s) em daily_metrics</p>
+          <p className="text-[11px] text-muted-foreground mt-3">{metrics.length} dia(s) com dados</p>
         </div>
       </div>
 
@@ -400,8 +400,8 @@ export default function Diagnostics() {
                     <tr>
                       <th className="text-left py-2 pr-3">KPI</th>
                       <th className="text-left py-2 pr-3">Fonte</th>
-                      <th className="text-right py-2 pr-3">Raw</th>
-                      <th className="text-right py-2 pr-3">Daily</th>
+                      <th className="text-right py-2 pr-3">Eventos</th>
+                      <th className="text-right py-2 pr-3">Agregado</th>
                       <th className="text-left py-2 pr-3">Status</th>
                       <th className="text-left py-2">Motivo</th>
                     </tr>

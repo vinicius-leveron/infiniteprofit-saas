@@ -165,8 +165,8 @@ export default function SetupOperation() {
             Projetos
           </Button>
           <div>
-            <h1 className="text-xl font-bold">Nova Operação via API</h1>
-            <p className="text-xs text-muted-foreground">Configure Meta, VTurb e Hubla sem SQL/manual.</p>
+            <h1 className="text-xl font-bold">Nova Operacao</h1>
+            <p className="text-xs text-muted-foreground">Configure suas fontes de dados em poucos passos.</p>
           </div>
         </div>
       </header>
@@ -284,7 +284,7 @@ export default function SetupOperation() {
                 className="gap-2"
               >
                 {testingVturb ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-                Buscar players
+                Detectar players
               </Button>
               {vturbTestResult && (
                 <span className={cn("text-xs", vturbTestResult.ok ? "text-green-600" : "text-red-600")}>

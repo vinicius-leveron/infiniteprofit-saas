@@ -295,7 +295,7 @@ export default function WorkspaceSettings() {
       <div className="flex items-center gap-3 mb-6">
         <Users className="w-5 h-5 text-primary" />
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Workspace Settings</h1>
+          <h1 className="text-2xl font-bold text-foreground">Configuracoes do Workspace</h1>
           <p className="text-sm text-muted-foreground">
             Membros e credenciais compartilhadas de {currentWorkspace.name}.
           </p>
@@ -316,7 +316,7 @@ export default function WorkspaceSettings() {
 
             <div className="space-y-4">
               <div>
-                <Label>VTurb API Key</Label>
+                <Label>Chave de API da VTurb</Label>
                 <Input
                   type="password"
                   value={workspaceIntegration?.vturb_api_key ?? ""}
@@ -353,7 +353,7 @@ export default function WorkspaceSettings() {
                   </Select>
                 </div>
                 <div>
-                  <Label>Secret do webhook</Label>
+                  <Label>Chave secreta</Label>
                   <Input
                     value={workspaceIntegration?.gateway_webhook_secret ?? ""}
                     disabled={!isWorkspaceAdmin}
@@ -546,9 +546,9 @@ export default function WorkspaceSettings() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="member">Workspace Member</SelectItem>
-                    <SelectItem value="admin">Workspace Admin</SelectItem>
-                    <SelectItem value="owner">Workspace Owner</SelectItem>
+                    <SelectItem value="member">Membro</SelectItem>
+                    <SelectItem value="admin">Admin</SelectItem>
+                    <SelectItem value="owner">Proprietario</SelectItem>
                   </SelectContent>
                 </Select>
                 <Button onClick={handleInvite} disabled={savingInvite} className="w-full">

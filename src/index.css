@@ -122,3 +122,41 @@
     -webkit-text-fill-color: transparent;
   }
 }
+
+/* PDF Export Light Mode */
+@layer utilities {
+  .pdf-light-mode,
+  .pdf-light-mode * {
+    color-scheme: light;
+  }
+
+  .pdf-light-mode .section-card,
+  .pdf-light-mode .kpi-card {
+    background: #f8fafc !important;
+    border-color: #e2e8f0 !important;
+    color: #0f172a !important;
+    box-shadow: none !important;
+  }
+
+  .pdf-light-mode .text-muted-foreground {
+    color: #64748b !important;
+  }
+
+  .pdf-light-mode .text-foreground {
+    color: #0f172a !important;
+  }
+
+  .pdf-light-mode .gradient-text-brand {
+    background: none !important;
+    -webkit-background-clip: unset !important;
+    -webkit-text-fill-color: #0f172a !important;
+  }
+
+  .space-section {
+    @apply space-y-8;
+  }
+
+  .space-cards {
+    @apply gap-4;
+  }
+}

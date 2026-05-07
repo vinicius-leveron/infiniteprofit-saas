@@ -77,12 +77,13 @@ export function AppShell() {
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Workspace Picker */}
             {showWorkspacePicker && (
               <Select
                 value={currentWorkspaceId ?? ""}
                 onValueChange={(value) => setCurrentWorkspaceId(value)}
               >
-                <SelectTrigger className="w-[240px] hidden md:flex">
+                <SelectTrigger className="w-[200px] hidden md:flex">
                   <ChevronsUpDown className="w-4 h-4 mr-2 text-muted-foreground" />
                   <SelectValue placeholder="Selecione um workspace" />
                 </SelectTrigger>
@@ -96,53 +97,47 @@ export function AppShell() {
               </Select>
             )}
 
-            <Button variant="ghost" size="sm" onClick={() => navigate("/projects")} className="gap-2">
-              <FolderKanban className="w-4 h-4" />
-              <span className="hidden sm:inline">Projetos</span>
-            </Button>
+            {/* Grupo Principal */}
+            <div className="flex items-center gap-1 pr-3 border-r border-border/40">
+              <Button variant="ghost" size="sm" onClick={() => navigate("/projects")} className="gap-2">
+                <FolderKanban className="w-4 h-4" />
+                <span className="hidden sm:inline">Projetos</span>
+              </Button>
+              {showWorkspacePicker && (
+                <Button variant="ghost" size="sm" onClick={() => navigate("/workspace-settings")} className="gap-2">
+                  <Users className="w-4 h-4" />
+                  <span className="hidden sm:inline">Equipe</span>
+                </Button>
+              )}
+              {isOrganizationAdmin && (
+                <Button variant="ghost" size="sm" onClick={() => navigate("/organization-settings")} className="gap-2">
+                  <Settings className="w-4 h-4" />
+                  <span className="hidden lg:inline">Org</span>
+                </Button>
+              )}
+            </div>
 
-            <Button variant="ghost" size="sm" onClick={() => navigate("/setup-operation")} className="gap-2">
-              <Plus className="w-4 h-4" />
-              <span className="hidden sm:inline">Nova Operacao</span>
-            </Button>
-
+            {/* Grupo Projeto (contextual) */}
             {projectId && (
-              <>
+              <div className="flex items-center gap-1 pr-3 border-r border-border/40">
                 <Button variant="ghost" size="sm" onClick={() => navigate(`/diagnostics?project=${projectId}`)} className="gap-2">
                   <Stethoscope className="w-4 h-4" />
-                  <span className="hidden sm:inline">Diagnostico</span>
+                  <span className="hidden sm:inline">Saude</span>
                 </Button>
                 <Button variant="ghost" size="sm" onClick={() => navigate(`/connections?project=${projectId}`)} className="gap-2">
                   <Settings2 className="w-4 h-4" />
-                  <span className="hidden sm:inline">Conexoes</span>
+                  <span className="hidden sm:inline">Fontes</span>
                 </Button>
-              </>
+              </div>
             )}
 
-            {showWorkspacePicker && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => navigate("/workspace-settings")}
-                className="gap-2"
-              >
-                <Users className="w-4 h-4" />
-                <span className="hidden sm:inline">Workspace</span>
-              </Button>
-            )}
+            {/* CTA Principal */}
+            <Button size="sm" onClick={() => navigate("/setup-operation")} className="gap-2">
+              <Plus className="w-4 h-4" />
+              <span className="hidden sm:inline">Novo</span>
+            </Button>
 
-            {isOrganizationAdmin && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => navigate("/organization-settings")}
-                className="gap-2"
-              >
-                <Settings className="w-4 h-4" />
-                <span className="hidden sm:inline">Organização</span>
-              </Button>
-            )}
-
+            {/* Logout */}
             <Button
               variant="outline"
               size="sm"

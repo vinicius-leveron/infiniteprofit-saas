@@ -13,8 +13,8 @@ export async function exportElementToPdf(
 ): Promise<void> {
   const toastId = toast.loading("Gerando PDF...");
   try {
-    // Background da app (mesmo do tema dark)
-    const bgColor = getComputedStyle(document.body).backgroundColor || "#0f172a";
+    // Forcar fundo branco para PDF legivel
+    const bgColor = "#ffffff";
 
     const canvas = await html2canvas(el, {
       scale: 2,
@@ -24,8 +24,22 @@ export async function exportElementToPdf(
       windowWidth: el.scrollWidth,
       windowHeight: el.scrollHeight,
       onclone: (doc) => {
-        // garante background visível na clonagem
-        doc.body.style.background = bgColor;
+        // Aplicar tema claro para PDF
+        doc.body.style.background = "#ffffff";
+        doc.body.style.color = "#0f172a";
+        doc.querySelectorAll(".section-card, .kpi-card").forEach((el) => {
+          (el as HTMLElement).style.background = "#f8fafc";
+          (el as HTMLElement).style.borderColor = "#e2e8f0";
+          (el as HTMLElement).style.color = "#0f172a";
+        });
+        doc.querySelectorAll(".text-muted-foreground").forEach((el) => {
+          (el as HTMLElement).style.color = "#64748b";
+        });
+        doc.querySelectorAll(".gradient-text-brand").forEach((el) => {
+          (el as HTMLElement).style.background = "none";
+          (el as HTMLElement).style.webkitBackgroundClip = "unset";
+          (el as HTMLElement).style.webkitTextFillColor = "#0f172a";
+        });
       },
     });
 

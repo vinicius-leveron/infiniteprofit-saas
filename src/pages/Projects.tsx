@@ -196,7 +196,7 @@ export default function Projects() {
                     {p.name}
                   </h3>
                   <p className="text-xs text-muted-foreground truncate mb-3">
-                    {p.source === "api" ? "Fonte: API (Meta · VTurb · Gateway)" : (p.file_name || "—")}
+                    {p.source === "api" ? "Integracoes conectadas" : (p.file_name || "—")}
                   </p>
                   <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                     <Calendar className="w-3 h-3" />

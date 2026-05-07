@@ -692,31 +692,33 @@ export default function Connections() {
               </label>
 
               {checkoutBinding?.enabled && (
-                <>
-                  <div>
-                    <Label className="text-xs">URL do webhook</Label>
-                    <div className="flex items-center gap-2 mt-1">
-                      <Input readOnly value={gatewayWebhookUrl} className="font-mono text-xs" />
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        onClick={() => {
-                          navigator.clipboard.writeText(gatewayWebhookUrl);
-                          toast.success("Webhook copiado");
-                        }}
-                      >
-                        <Copy className="w-3.5 h-3.5" />
-                      </Button>
-                    </div>
+                <div className="space-y-3">
+                  <p className="text-sm text-muted-foreground">
+                    Configure o {workspaceIntegration?.gateway_provider || "gateway"} para receber
+                    notificacoes de vendas automaticamente.
+                  </p>
+                  <div className="flex items-center gap-3">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        navigator.clipboard.writeText(gatewayWebhookUrl);
+                        toast.success("URL copiada! Cole no painel do seu gateway.");
+                      }}
+                      className="gap-2"
+                    >
+                      <Copy className="w-4 h-4" />
+                      Copiar URL de integracao
+                    </Button>
+                    <span className="text-xs text-muted-foreground">
+                      (URL segura gerada automaticamente)
+                    </span>
                   </div>
-                  <div className="text-[11px] text-muted-foreground">
-                    Habilite os eventos <code className="bg-secondary px-1 rounded">checkout_created</code>,{" "}
-                    <code className="bg-secondary px-1 rounded">purchase.approved</code>,{" "}
-                    <code className="bg-secondary px-1 rounded">purchase.refused</code> e{" "}
-                    <code className="bg-secondary px-1 rounded">purchase.refunded</code>.
-                  </div>
-                </>
+                  <p className="text-xs text-muted-foreground">
+                    Eventos suportados: criacao de checkout, compra aprovada, recusada e reembolsada.
+                  </p>
+                </div>
               )}
             </div>
           )}
@@ -806,7 +808,7 @@ export default function Connections() {
           <div className="flex justify-end">
             <Button onClick={saveBindings} disabled={saving} className="gap-2">
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-              Salvar bindings
+              Salvar configuracoes
             </Button>
           </div>
         )}
