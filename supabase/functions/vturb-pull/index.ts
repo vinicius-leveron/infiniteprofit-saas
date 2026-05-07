@@ -99,7 +99,7 @@ Deno.serve(async (req) => {
 
         for (const player of players) {
           try {
-            const inserted = await pullOnePlayer(sb, {
+            const result = await pullOnePlayer(sb, {
               apiKey,
               project,
               playerId: player.player_id,
@@ -112,12 +112,14 @@ Deno.serve(async (req) => {
             projectResults.push({
               project_id: project.id,
               player_id: player.player_id,
-              inserted,
+              inserted: result.inserted,
+              ...(result.warnings.length > 0 ? { warnings: result.warnings } : {}),
             });
             results.push({
               project_id: project.id,
               player_id: player.player_id,
-              inserted,
+              inserted: result.inserted,
+              ...(result.warnings.length > 0 ? { warnings: result.warnings } : {}),
             });
             projectSyncedAt = new Date().toISOString();
           } catch (error) {
@@ -192,33 +194,43 @@ async function pullOnePlayer(
 ) {
   const { apiKey, project, playerId, playerRowId, startStr, endStr, startDay, endDay } = args;
 
-  const eventsResp = await vturbPost(apiKey, "/events/total_by_company_players", {
-    events: ["started", "viewed", "finished"],
-    start_date: startStr,
-    end_date: endStr,
-    timezone: TZ,
-    players_start_date: [{ player_id: playerId, start_date: startStr }],
-  });
+  const [eventsResult, statsResult, timedResult] = await Promise.all([
+    safeVturbPost(apiKey, "/events/total_by_company_players", {
+      events: ["started", "viewed", "finished"],
+      start_date: startStr,
+      end_date: endStr,
+      timezone: TZ,
+      players_start_date: [{ player_id: playerId, start_date: startStr }],
+    }),
+    safeVturbPost(apiKey, "/conversions/stats_by_day", {
+      player_id: playerId,
+      start_date: startStr,
+      end_date: endStr,
+      timezone: TZ,
+    }),
+    safeVturbPost(apiKey, "/conversions/video_timed", {
+      player_id: playerId,
+      start_date: startStr,
+      end_date: endStr,
+      timezone: TZ,
+    }),
+  ]);
 
-  const statsByDay = await vturbPost(apiKey, "/conversions/stats_by_day", {
-    player_id: playerId,
-    start_date: startStr,
-    end_date: endStr,
-    timezone: TZ,
-  });
+  const warnings = [
+    eventsResult.error ? `total_by_company_players: ${eventsResult.error}` : null,
+    statsResult.error ? `stats_by_day: ${statsResult.error}` : null,
+    timedResult.error ? `video_timed: ${timedResult.error}` : null,
+  ].filter(Boolean) as string[];
 
-  const timedResp = await vturbPost(apiKey, "/conversions/video_timed", {
-    player_id: playerId,
-    start_date: startStr,
-    end_date: endStr,
-    timezone: TZ,
-  });
+  if (!eventsResult.data && !statsResult.data && !timedResult.data) {
+    throw new Error(warnings.join(" | ") || "Nenhum endpoint VTurb retornou dados");
+  }
 
   const datesTouched = new Set<string>();
   let inserted = 0;
 
-  if (Array.isArray(eventsResp)) {
-    for (const event of eventsResp) {
+  if (Array.isArray(eventsResult.data)) {
+    for (const event of eventsResult.data) {
       const eventName = String(event?.event ?? "").trim();
       if (!eventName) continue;
 
@@ -244,7 +256,7 @@ async function pullOnePlayer(
     }
   }
 
-  const eventsByDay = (statsByDay as any)?.events_by_day ?? [];
+  const eventsByDay = (statsResult.data as any)?.events_by_day ?? [];
   for (const dayEntry of eventsByDay) {
     const day = String(dayEntry?.day ?? "").slice(0, 10);
     if (!day) continue;
@@ -270,7 +282,7 @@ async function pullOnePlayer(
     }
   }
 
-  const groupedTimed = (timedResp as any)?.grouped_timed ?? [];
+  const groupedTimed = (timedResult.data as any)?.grouped_timed ?? [];
   if (Array.isArray(groupedTimed) && groupedTimed.length > 0) {
     const { error } = await sb.from("raw_events").upsert(
       {
@@ -307,7 +319,22 @@ async function pullOnePlayer(
     });
   }
 
-  return inserted;
+  return { inserted, warnings };
+}
+
+async function safeVturbPost(
+  apiKey: string,
+  path: string,
+  body: unknown,
+): Promise<{ data: unknown | null; error: string | null }> {
+  try {
+    return { data: await vturbPost(apiKey, path, body), error: null };
+  } catch (error) {
+    return {
+      data: null,
+      error: error instanceof Error ? error.message : `VTurb ${path}: erro inesperado`,
+    };
+  }
 }
 
 async function vturbPost(apiKey: string, path: string, body: unknown): Promise<unknown> {
