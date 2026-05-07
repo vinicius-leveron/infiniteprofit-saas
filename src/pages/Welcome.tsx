@@ -51,7 +51,7 @@ export default function Welcome() {
       setOrganizationName(defaultOrgName(user?.email));
     }
     if (!workspaceName) {
-      setWorkspaceName("Workspace principal");
+      setWorkspaceName("Minha primeira operação");
     }
     if (!selectedOrganizationId && organizations[0]?.id) {
       setSelectedOrganizationId(organizations[0].id);
@@ -66,11 +66,11 @@ export default function Welcome() {
   const handleSubmit = async () => {
     if (!user) return;
     if (!workspaceName.trim()) {
-      toast.error("Informe o nome do workspace");
+      toast.error("Informe o nome da operação");
       return;
     }
     if (shouldCreateOrganization && !organizationName.trim()) {
-      toast.error("Informe o nome da organização");
+      toast.error("Informe o nome da sua empresa ou agência");
       return;
     }
 
@@ -122,10 +122,10 @@ export default function Welcome() {
 
       await refreshAccess();
       setCurrentWorkspaceId(workspaceId);
-      toast.success("Ambiente criado");
+      toast.success("Tudo pronto! Vamos começar.");
       navigate("/projects", { replace: true });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Falha ao criar ambiente");
+      toast.error(error instanceof Error ? error.message : "Falha ao configurar conta");
     } finally {
       setSubmitting(false);
     }
@@ -147,9 +147,9 @@ export default function Welcome() {
             <Building2 className="w-6 h-6 text-primary-foreground" />
           </div>
           <div>
-            <h1 className="text-xl font-bold text-foreground">Configurar seu ambiente</h1>
+            <h1 className="text-xl font-bold text-foreground">Vamos configurar sua conta</h1>
             <p className="text-sm text-muted-foreground">
-              Crie a organização e o primeiro workspace para começar a operar.
+              Preencha os campos abaixo para começar a usar o Infinite Profit.
             </p>
           </div>
         </div>
@@ -157,7 +157,7 @@ export default function Welcome() {
         <div className="space-y-4">
           {shouldCreateOrganization ? (
             <div>
-              <Label htmlFor="organization-name">Organização</Label>
+              <Label htmlFor="organization-name">Nome da sua empresa ou agência</Label>
               <Input
                 id="organization-name"
                 value={organizationName}
@@ -165,6 +165,9 @@ export default function Welcome() {
                 placeholder="Ex: Agência Atlas"
                 className="mt-1.5"
               />
+              <p className="text-xs text-muted-foreground mt-2">
+                A organização agrupa todos os seus workspaces e equipe.
+              </p>
             </div>
           ) : (
             <div>
@@ -185,22 +188,22 @@ export default function Welcome() {
           )}
 
           <div>
-            <Label htmlFor="workspace-name">Workspace</Label>
+            <Label htmlFor="workspace-name">Nome do primeiro projeto/operação</Label>
             <Input
               id="workspace-name"
               value={workspaceName}
               onChange={(event) => setWorkspaceName(event.target.value)}
-              placeholder="Ex: Cliente Acme"
+              placeholder="Ex: Lançamento Produto X"
               className="mt-1.5"
             />
             <p className="text-xs text-muted-foreground mt-2">
-              Recomendação: use 1 workspace por cliente/operação.
+              Cada workspace representa uma operação ou cliente diferente. Você pode criar mais depois.
             </p>
           </div>
 
           <Button onClick={handleSubmit} className="w-full" disabled={submitting}>
             {submitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-            Criar ambiente
+            Começar agora
           </Button>
         </div>
       </div>
