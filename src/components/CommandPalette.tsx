@@ -111,7 +111,7 @@ export const CommandPalette = ({ open, onOpenChange, onSelectTab, onSelectPeriod
               </CommandItem>
               <CommandItem onSelect={run(() => onSelectTab("diagnostico"))}>
                 <Stethoscope className="w-4 h-4 mr-2" />
-                Diagnóstico
+                Alertas
                 <span className="ml-auto text-[10px] text-muted-foreground">8</span>
               </CommandItem>
             </CommandGroup>

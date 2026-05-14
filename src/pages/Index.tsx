@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { format, formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -43,6 +43,7 @@ import {
   Target,
   Gift,
   Stethoscope,
+  Settings2,
   Save,
   Download,
   Search,
@@ -64,7 +65,7 @@ const TAB_INFO: Record<Tab, { label: string; description: string; icon: React.El
   anuncios: { label: "Anuncios", description: "Performance por campanha, adset e criativo", icon: Megaphone },
   atribuicao: { label: "Atribuicao", description: "Cruzamento diario entre fontes de dados", icon: Map },
   relatorio: { label: "Relatorio Executivo", description: "Resumo para tomada de decisao", icon: FileText },
-  diagnostico: { label: "Diagnostico", description: "Qualidade dos dados e alertas da operacao", icon: Stethoscope },
+  diagnostico: { label: "Alertas", description: "Comparativo do periodo e variacoes relevantes do dashboard", icon: Stethoscope },
   simulador: { label: "Simulador", description: "Projecoes e analise de sensibilidade", icon: Sliders },
 };
 
@@ -95,11 +96,11 @@ const Index = () => {
 
   // Tab vem do query param (sincronizado com sidebar)
   const tab = (searchParams.get("tab") as Tab) || "geral";
-  const setTab = (t: Tab) => {
+  const setTab = useCallback((t: Tab) => {
     const params = new URLSearchParams(searchParams);
     params.set("tab", t);
     navigate(`/dashboard?${params.toString()}`, { replace: true });
-  };
+  }, [navigate, searchParams]);
   const [period, setPeriod] = useState<Period>("all");
   const [customFrom, setCustomFrom] = useState<string>("");
   const [customTo, setCustomTo] = useState<string>("");
@@ -185,7 +186,7 @@ const Index = () => {
         }
         setLoadingProject(false);
       });
-  }, [projectId, user, navigate]);
+  }, [currentWorkspace?.id, navigate, projectId, setCurrentWorkspaceId, user]);
 
   const reloadProject = async () => {
     if (!currentProjectId) return;
@@ -392,7 +393,7 @@ const Index = () => {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [setTab]);
 
   if (authLoading || loadingProject) {
     return <DashboardSkeleton />;
@@ -444,6 +445,7 @@ const Index = () => {
 
   // Refetch key para insights — muda sempre que projeto/período muda
   const insightsKey = `${currentProjectId ?? "local"}|${period}|${customFrom}|${customTo}|${filtered.length}`;
+  const showOperationalActions = tab === "diagnostico" && projectSource === "api" && !!currentProjectId;
 
   return (
     <main className="min-h-screen">
@@ -572,6 +574,40 @@ const Index = () => {
           </div>
         ) : (
           <div ref={dashboardRef} className="space-y-6">
+            {showOperationalActions && (
+              <div className="section-card border-primary/20 bg-primary/5">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div>
+                    <h3 className="text-sm font-semibold text-foreground">
+                      Esta aba mostra alertas comparativos do dashboard
+                    </h3>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Para revisar integrações, eventos recebidos e sincronizar manualmente, abra a tela operacional da operação.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => navigate(`/diagnostics?project=${currentProjectId}`)}
+                      className="gap-2"
+                    >
+                      <Stethoscope className="w-4 h-4" />
+                      Diagnóstico operacional
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => navigate(`/connections?project=${currentProjectId}`)}
+                      className="gap-2"
+                    >
+                      <Settings2 className="w-4 h-4" />
+                      Conexões / sync
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
             {tab === "geral" ? (
               <OverviewPanel rows={filtered} previous={previous} onDayClick={setDrilldownRow} />
             ) : tab === "trafego" ? (

@@ -53,7 +53,7 @@ const DASHBOARD_TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: "anuncios", label: "Anuncios", icon: Megaphone },
   { id: "atribuicao", label: "Atribuicao", icon: Map },
   { id: "relatorio", label: "Relatorio", icon: FileText },
-  { id: "diagnostico", label: "Diagnostico", icon: Stethoscope },
+  { id: "diagnostico", label: "Alertas", icon: Stethoscope },
   { id: "simulador", label: "Simulador", icon: Sliders },
 ];
 
@@ -280,13 +280,10 @@ export function AppShell() {
               ))}
             </div>
           )}
-        </nav>
 
-        {/* Bottom Section: Configuracoes + Sair */}
-        <div className="border-t border-border/40">
-          {/* Configuracoes */}
+          {/* Configuracoes + Sair */}
           {showWorkspacePicker && (
-            <div className="p-3 pb-0">
+            <div className="mt-4 pt-4 border-t border-border/40">
               <Collapsible open={configOpen} onOpenChange={setConfigOpen}>
                 <CollapsibleTrigger className="w-full flex items-center justify-between px-3 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors rounded-lg hover:bg-muted">
                   <div className="flex items-center gap-3">
@@ -322,8 +319,7 @@ export function AppShell() {
             </div>
           )}
 
-          {/* Sair */}
-          <div className="p-3">
+          <div className={cn(showWorkspacePicker ? "pt-2" : "mt-4 pt-4 border-t border-border/40")}>
             <Button
               variant="ghost"
               size="sm"
@@ -337,7 +333,7 @@ export function AppShell() {
               Sair
             </Button>
           </div>
-        </div>
+        </nav>
       </aside>
 
       {/* Main Content */}
