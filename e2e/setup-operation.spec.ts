@@ -7,18 +7,40 @@ test.describe("setup wizard smoke", () => {
     await login(page);
   });
 
-  test("wizard accepts skipped integrations and blocks empty operation name", async ({ page }) => {
+  test("wizard keeps the draft after reload and blocks empty operation name", async ({ page }) => {
+    const projectName = `QA Smoke ${Date.now()}`;
+
     await page.goto("/setup-operation");
 
-    await expect(page.getByRole("heading", { name: /Nova Operação via API/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /Nova operação/i })).toBeVisible();
     await page.getByRole("button", { name: "Próximo" }).click();
     await page.getByRole("button", { name: "Próximo" }).click();
     await page.getByRole("button", { name: "Próximo" }).click();
     await page.getByRole("button", { name: "Próximo" }).click();
 
     await expect(page.getByRole("button", { name: /Criar operação/i })).toBeDisabled();
+
     await page.getByRole("button", { name: "Operação" }).click();
-    await page.getByLabel("Nome").fill(`QA Smoke ${Date.now()}`);
+    await page.getByLabel("Nome").fill(projectName);
+    await page.getByRole("button", { name: "Meta" }).click();
+    await page.getByPlaceholder("act_123 ou 123").fill("123456789");
+    await page.getByPlaceholder("Kosmos").fill("Conta QA");
+    await page.getByPlaceholder("Cole o token Meta").fill("meta-token-qa");
+    await page.getByRole("button", { name: "VTurb" }).click();
+    await page.getByPlaceholder("Cole a API key da VTurb").fill("vturb-key-qa");
+    await page.getByPlaceholder("Um player ID por linha").fill("player-qa-1");
+
+    await page.reload();
+
+    await expect(page.getByPlaceholder("Cole a API key da VTurb")).toHaveValue("vturb-key-qa");
+    await expect(page.getByPlaceholder("Um player ID por linha")).toHaveValue("player-qa-1");
+
+    await page.getByRole("button", { name: "Operação" }).click();
+    await expect(page.getByLabel("Nome")).toHaveValue(projectName);
+    await page.getByRole("button", { name: "Meta" }).click();
+    await expect(page.getByPlaceholder("act_123 ou 123")).toHaveValue("123456789");
+    await expect(page.getByPlaceholder("Kosmos")).toHaveValue("Conta QA");
+    await expect(page.getByPlaceholder("Cole o token Meta")).toHaveValue("meta-token-qa");
     await page.getByRole("button", { name: "Revisão" }).click();
     await expect(page.getByRole("button", { name: /Criar operação/i })).toBeEnabled();
   });

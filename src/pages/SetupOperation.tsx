@@ -13,8 +13,21 @@ import { useWorkspace } from "@/hooks/useWorkspace";
 import { cn } from "@/lib/utils";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SETUP_DRAFT_STORAGE_KEY = "infiniteprofit.setupOperationDraft";
 
 type StepId = "nome" | "meta" | "vturb" | "hubla" | "final";
+type SyncSource = "meta" | "vturb";
+
+type SetupDraft = {
+  step: StepId;
+  name: string;
+  metaAccountId: string;
+  metaToken: string;
+  metaLabel: string;
+  vturbKey: string;
+  playersText: string;
+  hublaSecret: string;
+};
 
 const STEPS: Array<{ id: StepId; label: string }> = [
   { id: "nome", label: "Operação" },
@@ -30,6 +43,8 @@ export default function SetupOperation() {
   const { currentWorkspace } = useWorkspace();
   const [step, setStep] = useState<StepId>("nome");
   const [saving, setSaving] = useState(false);
+  const [savingLabel, setSavingLabel] = useState("Criar operação");
+  const [hydratedDraftKey, setHydratedDraftKey] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [metaAccountId, setMetaAccountId] = useState("");
   const [metaToken, setMetaToken] = useState("");
@@ -49,6 +64,10 @@ export default function SetupOperation() {
     if (!authLoading && !user) navigate("/auth", { replace: true });
   }, [authLoading, navigate, user]);
 
+  const draftStorageKey = useMemo(
+    () => `${SETUP_DRAFT_STORAGE_KEY}.${currentWorkspace?.id ?? "global"}`,
+    [currentWorkspace?.id],
+  );
   const currentStepIndex = STEPS.findIndex((item) => item.id === step);
   const canSubmit = name.trim().length >= 2;
   const playerIds = useMemo(
@@ -56,9 +75,59 @@ export default function SetupOperation() {
     [playersText],
   );
 
+  useEffect(() => {
+    const draft = readSetupDraft(draftStorageKey) ?? emptySetupDraft();
+    setStep(draft.step);
+    setName(draft.name);
+    setMetaAccountId(draft.metaAccountId);
+    setMetaToken(draft.metaToken);
+    setMetaLabel(draft.metaLabel);
+    setVturbKey(draft.vturbKey);
+    setPlayersText(draft.playersText);
+    setHublaSecret(draft.hublaSecret);
+    setMetaTestResult(null);
+    setVturbTestResult(null);
+    setCreatedWebhookUrl("");
+    setHydratedDraftKey(draftStorageKey);
+  }, [draftStorageKey]);
+
+  useEffect(() => {
+    if (hydratedDraftKey !== draftStorageKey) return;
+
+    const draft: SetupDraft = {
+      step,
+      name,
+      metaAccountId,
+      metaToken,
+      metaLabel,
+      vturbKey,
+      playersText,
+      hublaSecret,
+    };
+
+    if (isSetupDraftEmpty(draft)) {
+      sessionStorage.removeItem(draftStorageKey);
+      return;
+    }
+
+    sessionStorage.setItem(draftStorageKey, JSON.stringify(draft));
+  }, [
+    draftStorageKey,
+    hydratedDraftKey,
+    hublaSecret,
+    metaAccountId,
+    metaLabel,
+    metaToken,
+    name,
+    playersText,
+    step,
+    vturbKey,
+  ]);
+
   async function createOperation() {
     if (!user || !currentWorkspace?.id || !canSubmit) return;
     setSaving(true);
+    setSavingLabel("Criando operação");
     try {
       const { data: project, error: projectError } = await supabase
         .from("projects")
@@ -139,12 +208,38 @@ export default function SetupOperation() {
       const provider = hublaSecret.trim() ? "hubla" : "hubla";
       const webhookUrl = `${SUPABASE_URL}/functions/v1/webhook-gateway/${provider}/${webhookToken}`;
       setCreatedWebhookUrl(webhookUrl);
-      toast.success("Operação criada");
+
+      const syncSources: SyncSource[] = [];
+      if (metaAccountId.trim() && metaToken.trim()) syncSources.push("meta");
+      if (vturbKey.trim() && playerIds.length > 0) syncSources.push("vturb");
+
+      let syncFailures: string[] = [];
+      if (syncSources.length > 0) {
+        setSavingLabel("Sincronizando dados iniciais");
+        const syncResults = await Promise.all(
+          syncSources.map((source) => runInitialSync(project.id, source)),
+        );
+        syncFailures = syncResults
+          .filter((result) => result.errors.length > 0)
+          .map((result) => `${labelForSource(result.source)}: ${result.errors.join(" | ")}`);
+      }
+
+      sessionStorage.removeItem(draftStorageKey);
+
+      if (syncFailures.length > 0) {
+        toast.warning("Operação criada, mas a primeira sincronização precisa de atenção.");
+      } else if (syncSources.length > 0) {
+        toast.success("Operação criada e sincronização inicial concluída.");
+      } else {
+        toast.success("Operação criada");
+      }
+
       navigate(`/diagnostics?project=${project.id}`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Falha ao criar operação");
     } finally {
       setSaving(false);
+      setSavingLabel("Criar operação");
     }
   }
 
@@ -165,8 +260,10 @@ export default function SetupOperation() {
             Projetos
           </Button>
           <div>
-            <h1 className="text-xl font-bold">Novo Projeto</h1>
-            <p className="text-xs text-muted-foreground">Configure suas fontes de dados em poucos passos.</p>
+            <h1 className="text-xl font-bold">Nova operação</h1>
+            <p className="text-xs text-muted-foreground">
+              Configure suas fontes de dados em poucos passos. O rascunho fica salvo automaticamente nesta aba.
+            </p>
           </div>
         </div>
       </header>
@@ -327,6 +424,9 @@ export default function SetupOperation() {
               />
               <Review label="Hubla" value={hublaSecret ? "Secret configurado" : "Pendente"} ok={!!hublaSecret.trim()} />
             </div>
+            <p className="text-xs text-muted-foreground">
+              A primeira sincronização da Meta e da VTurb roda automaticamente ao criar a operação. Na primeira vez, pode levar alguns minutos.
+            </p>
             {createdWebhookUrl && (
               <Button
                 type="button"
@@ -357,7 +457,7 @@ export default function SetupOperation() {
           {step === "final" ? (
             <Button type="button" disabled={!canSubmit || saving} onClick={createOperation} className="gap-2">
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plug className="w-4 h-4" />}
-              Criar operação
+              {saving ? savingLabel : "Criar operação"}
             </Button>
           ) : (
             <Button type="button" onClick={() => setStep(STEPS[Math.min(STEPS.length - 1, currentStepIndex + 1)].id)}>
@@ -414,6 +514,99 @@ function Review({ label, value, ok, testStatus }: {
 function normalizeAccountId(value: string) {
   const trimmed = value.trim();
   return trimmed.startsWith("act_") ? trimmed : `act_${trimmed}`;
+}
+
+function readSetupDraft(storageKey: string) {
+  const raw = sessionStorage.getItem(storageKey);
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<SetupDraft>;
+    return {
+      step: isStepId(parsed.step) ? parsed.step : "nome",
+      name: typeof parsed.name === "string" ? parsed.name : "",
+      metaAccountId: typeof parsed.metaAccountId === "string" ? parsed.metaAccountId : "",
+      metaToken: typeof parsed.metaToken === "string" ? parsed.metaToken : "",
+      metaLabel: typeof parsed.metaLabel === "string" ? parsed.metaLabel : "",
+      vturbKey: typeof parsed.vturbKey === "string" ? parsed.vturbKey : "",
+      playersText: typeof parsed.playersText === "string" ? parsed.playersText : "",
+      hublaSecret: typeof parsed.hublaSecret === "string" ? parsed.hublaSecret : "",
+    } satisfies SetupDraft;
+  } catch {
+    sessionStorage.removeItem(storageKey);
+    return null;
+  }
+}
+
+function isStepId(value: unknown): value is StepId {
+  return typeof value === "string" && STEPS.some((step) => step.id === value);
+}
+
+function isSetupDraftEmpty(draft: SetupDraft) {
+  return (
+    draft.step === "nome" &&
+    !draft.name.trim() &&
+    !draft.metaAccountId.trim() &&
+    !draft.metaToken.trim() &&
+    !draft.metaLabel.trim() &&
+    !draft.vturbKey.trim() &&
+    !draft.playersText.trim() &&
+    !draft.hublaSecret.trim()
+  );
+}
+
+function emptySetupDraft(): SetupDraft {
+  return {
+    step: "nome",
+    name: "",
+    metaAccountId: "",
+    metaToken: "",
+    metaLabel: "",
+    vturbKey: "",
+    playersText: "",
+    hublaSecret: "",
+  };
+}
+
+async function runInitialSync(projectId: string, source: SyncSource) {
+  const { data, error } = await supabase.functions.invoke(source === "meta" ? "meta-pull" : "vturb-pull", {
+    body: { project_id: projectId, days: 30 },
+  });
+
+  return {
+    source,
+    errors: [
+      ...(error?.message ? [error.message] : []),
+      ...extractSyncErrors(data),
+    ],
+  };
+}
+
+function extractSyncErrors(payload: unknown) {
+  if (!payload || typeof payload !== "object") return [];
+
+  const errors: string[] = [];
+  const record = payload as { error?: unknown; results?: unknown[] };
+
+  if (typeof record.error === "string" && record.error.trim()) {
+    errors.push(record.error.trim());
+  }
+
+  if (Array.isArray(record.results)) {
+    for (const result of record.results) {
+      if (!result || typeof result !== "object") continue;
+      const message = (result as { error?: unknown }).error;
+      if (typeof message === "string" && message.trim()) {
+        errors.push(message.trim());
+      }
+    }
+  }
+
+  return [...new Set(errors)];
+}
+
+function labelForSource(source: SyncSource) {
+  return source === "meta" ? "Meta" : "VTurb";
 }
 
 function randomHex(length: number) {
