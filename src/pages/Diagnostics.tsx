@@ -77,6 +77,14 @@ interface OperationalAlertRow {
   last_seen_at: string;
 }
 
+interface SyncRunRow {
+  source: "meta" | "vturb";
+  status: "queued" | "running" | "succeeded" | "failed";
+  error_message: string | null;
+  details: unknown;
+  created_at: string;
+}
+
 export default function Diagnostics() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
@@ -90,6 +98,7 @@ export default function Diagnostics() {
   const [events, setEvents] = useState<RawEventRow[]>([]);
   const [metrics, setMetrics] = useState<DailyMetricRow[]>([]);
   const [operationalAlerts, setOperationalAlerts] = useState<OperationalAlertRow[]>([]);
+  const [syncRuns, setSyncRuns] = useState<SyncRunRow[]>([]);
   const [lastLoadedAt, setLastLoadedAt] = useState<Date | null>(null);
   const [bindings, setBindings] = useState<BindingState>({
     metaAccounts: 0,
@@ -135,6 +144,7 @@ export default function Diagnostics() {
         { data: checkoutRow },
         { data: integrationRow },
         { data: alertRows },
+        { data: syncRunRows },
       ] = await Promise.all([
         supabase
           .from("raw_events")
@@ -165,6 +175,13 @@ export default function Diagnostics() {
           .eq("project_id", typedProject.id)
           .eq("status", "active")
           .order("last_seen_at", { ascending: false }),
+        supabase
+          .from("sync_runs")
+          .select("source, status, error_message, details, created_at")
+          .eq("project_id", typedProject.id)
+          .in("source", ["meta", "vturb"])
+          .order("created_at", { ascending: false })
+          .limit(12),
       ]);
 
       const typedEvents = (rawRows ?? []) as RawEventRow[];
@@ -180,6 +197,7 @@ export default function Diagnostics() {
         lastGatewayEvent: integrationRow?.gateway_last_event_at ?? lastReceivedAt(typedEvents, "gateway"),
       });
       setOperationalAlerts((alertRows ?? []) as unknown as OperationalAlertRow[]);
+      setSyncRuns((syncRunRows ?? []) as SyncRunRow[]);
       setLastLoadedAt(new Date());
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Falha ao carregar diagnóstico");
@@ -214,6 +232,8 @@ export default function Diagnostics() {
       rawBySource[event.source] = (rawBySource[event.source] ?? 0) + 1;
       rawByType[event.event_type] = (rawByType[event.event_type] ?? 0) + 1;
     }
+    const latestVturbRun = syncRuns.find((run) => run.source === "vturb") ?? null;
+    const hasVturbPitchGap = detectVturbPitchGap(rawByType, metrics, latestVturbRun);
     const metricFilled: Record<string, number> = {};
     for (const row of metrics) {
       for (const [key, value] of Object.entries(row)) {
@@ -223,8 +243,23 @@ export default function Diagnostics() {
         }
       }
     }
-    return buildCoverageRows({ rawBySource, rawByType, metricFilled, totalMetricDays: metrics.length });
-  }, [events, metrics]);
+    return buildCoverageRows({ rawBySource, rawByType, metricFilled, totalMetricDays: metrics.length }).map((row) => {
+      if (!hasVturbPitchGap) return row;
+      if (row.group === "VSL VTurb" && row.kpi === "Play Rate, Retenção Pitch, Chegaram no Pitch") {
+        return {
+          ...row,
+          reason: "A VTurb retornou stats_by_day, mas não retornou video_timed/curva de retenção. Sem isso, Retenção Pitch e Chegaram no Pitch ficam vazios.",
+        };
+      }
+      if (row.group === "Derivados de funil" && row.kpi === "Pitch -> Checkout, Pitch -> Venda, Checkout -> Venda") {
+        return {
+          ...row,
+          reason: "Sem video_timed/curva de retenção da VTurb, os derivados de pitch ficam incompletos mesmo com o gateway entrando.",
+        };
+      }
+      return row;
+    });
+  }, [events, metrics, syncRuns]);
 
   const coverageSummary = summarizeCoverage(coverageRows);
   const groupedCoverage = groupBy(coverageRows, (row) => row.group);
@@ -232,7 +267,7 @@ export default function Diagnostics() {
     bindings.gatewayProvider && bindings.checkoutToken
       ? `${SUPABASE_URL}/functions/v1/webhook-gateway/${bindings.gatewayProvider}/${bindings.checkoutToken}`
       : "";
-  const alerts = buildAlerts(bindings, coverageRows);
+  const alerts = buildAlerts(bindings, coverageRows, events, syncRuns, metrics);
 
   async function sync(source: "meta" | "vturb") {
     if (!project?.id) return;
@@ -513,8 +548,20 @@ function groupBy<T, K>(items: T[], getKey: (item: T) => K) {
   return map;
 }
 
-function buildAlerts(bindings: BindingState, coverageRows: CoverageRow[]) {
+function buildAlerts(
+  bindings: BindingState,
+  coverageRows: CoverageRow[],
+  events: RawEventRow[],
+  syncRuns: SyncRunRow[],
+  metrics: DailyMetricRow[],
+) {
   const alerts: string[] = [];
+  const rawByType: Record<string, number> = {};
+  for (const event of events) {
+    rawByType[event.event_type] = (rawByType[event.event_type] ?? 0) + 1;
+  }
+  const latestVturbRun = syncRuns.find((run) => run.source === "vturb") ?? null;
+
   if (bindings.metaAccounts === 0) alerts.push("Meta sem conta vinculada neste projeto.");
   if (bindings.vturbPlayers === 0) alerts.push("VTurb sem player vinculado neste projeto.");
   if (!bindings.checkoutToken) alerts.push("Hubla sem webhook ativo para este projeto.");
@@ -524,7 +571,52 @@ function buildAlerts(bindings: BindingState, coverageRows: CoverageRow[]) {
   if (bindings.lastGatewayEvent && Date.now() - new Date(bindings.lastGatewayEvent).getTime() > 24 * 60 * 60 * 1000) {
     alerts.push("Hubla sem evento nas últimas 24h.");
   }
+  if (detectVturbPitchGap(rawByType, metrics, latestVturbRun)) {
+    alerts.push("VTurb sem dados de pitch: a API não retornou video_timed/curva de retenção para os players deste projeto. Retenção Pitch, Chegaram no Pitch, Pitch -> Checkout e Pitch -> Venda podem ficar vazios.");
+  }
+  if (runText(latestVturbRun).includes("rate limit exceeded")) {
+    alerts.push("VTurb atingiu rate limit na sincronização mais recente. Parte dos players pode atrasar alguns minutos para aparecer.");
+  }
   const missing = coverageRows.filter((row) => row.status === "Faltando").slice(0, 3);
   for (const row of missing) alerts.push(`${row.group}: ${row.kpi} está faltando.`);
   return alerts;
+}
+
+function detectVturbPitchGap(
+  rawByType: Record<string, number>,
+  metrics: DailyMetricRow[],
+  latestVturbRun: SyncRunRow | null,
+) {
+  const hasStatsByDay = (rawByType.stats_by_day ?? 0) > 0;
+  const hasRetentionCurve = (rawByType.retention_curve ?? 0) > 0;
+  const hasPitchMetric = metrics.some((row) => {
+    const chegaramPitch = numericValue(row.chegaram_pitch);
+    const pitchCheckout = numericValue(row.pitch_chk);
+    const pitchVenda = numericValue(row.pitch_venda);
+    return chegaramPitch > 0 || pitchCheckout > 0 || pitchVenda > 0;
+  });
+
+  if (!hasStatsByDay || hasRetentionCurve || hasPitchMetric) return false;
+  const vturbText = runText(latestVturbRun);
+  return vturbText.includes("video_timed") || vturbText.includes("public analytics api");
+}
+
+function runText(run: SyncRunRow | null) {
+  if (!run) return "";
+  const detailsText =
+    typeof run.details === "string"
+      ? run.details
+      : run.details == null
+        ? ""
+        : JSON.stringify(run.details);
+  return `${run.error_message ?? ""} ${detailsText}`.toLowerCase();
+}
+
+function numericValue(value: unknown) {
+  if (typeof value === "number") return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
 }
