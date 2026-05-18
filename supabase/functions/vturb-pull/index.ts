@@ -13,10 +13,11 @@ const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const VTURB_BASE = "https://analytics.vturb.net";
 const TZ = "America/Sao_Paulo";
-const VTURB_MIN_REQUEST_INTERVAL_MS = 350;
+const VTURB_MIN_REQUEST_INTERVAL_MS = 1050;
 const VTURB_MAX_RATE_LIMIT_RETRIES = 3;
-const VTURB_DEFAULT_RETRY_AFTER_MS = 1500;
-const VTURB_MAX_RETRY_AFTER_MS = 30000;
+const VTURB_DEFAULT_RETRY_AFTER_MS = 5000;
+const VTURB_MAX_RETRY_AFTER_MS = 60000;
+const VTURB_RUNNING_SYNC_TIMEOUT_MS = 30 * 60 * 1000;
 
 type Caller =
   | { kind: "service" }
@@ -42,8 +43,7 @@ type PlayerBinding = {
 
 type VturbPath =
   | "/sessions/stats_by_day"
-  | "/conversions/stats_by_day"
-  | "/sessions/by_source";
+  | "/conversions/stats_by_day";
 
 type PlayerMetadata = {
   duration: number | null;
@@ -53,8 +53,6 @@ type PlayerMetadata = {
 type VturbRuntime = {
   lastRequestAt: number;
   nextRequestAt: number;
-  skipOptionalPaths: boolean;
-  disabledPaths: Map<VturbPath, string>;
 };
 
 Deno.serve(async (req) => {
@@ -78,6 +76,7 @@ Deno.serve(async (req) => {
     }
 
     const sb = createClient(SUPABASE_URL, SERVICE_KEY);
+    await failStaleRunningSyncRuns(sb);
     const projects = targetProjectId
       ? [await getProjectOrThrow(sb, targetProjectId)]
       : await loadSchedulableProjects(sb);
@@ -87,6 +86,15 @@ Deno.serve(async (req) => {
     for (const project of projects) {
       if (caller.kind === "user") {
         await assertWorkspaceAdmin(sb, project.workspace_id, caller.userId);
+      }
+
+      const activeRun = await findActiveSyncRun(sb, project.id);
+      if (activeRun) {
+        results.push({
+          project_id: project.id,
+          skipped: `Sync VTurb já em andamento desde ${activeRun.started_at}`,
+        });
+        continue;
       }
 
       const runId = await createSyncRun(sb, {
@@ -116,6 +124,7 @@ Deno.serve(async (req) => {
         const startStr = `${startDay} 00:00:00 -0300`;
         const endStr = `${endDay} 23:59:59 -0300`;
         const projectResults: Array<Record<string, unknown>> = [];
+        const projectDatesTouched = new Set<string>();
         let projectSyncedAt: string | null = null;
         const vturbRuntime = createVturbRuntime();
         const playerMetadata = await loadPlayerMetadataMap(apiKey, vturbRuntime);
@@ -140,6 +149,9 @@ Deno.serve(async (req) => {
               inserted: result.inserted,
               ...(result.warnings.length > 0 ? { warnings: result.warnings } : {}),
             });
+            for (const date of result.datesTouched) {
+              projectDatesTouched.add(date);
+            }
             results.push({
               project_id: project.id,
               player_id: player.player_id,
@@ -172,6 +184,10 @@ Deno.serve(async (req) => {
             .from("projects")
             .update({ last_synced_at: projectSyncedAt })
             .eq("id", project.id);
+        }
+
+        if (projectDatesTouched.size > 0) {
+          await triggerAggregateDaily(project.id, [...projectDatesTouched]);
         }
 
         const failed = projectResults.filter((result) => result.error);
@@ -237,17 +253,10 @@ async function pullOnePlayer(
       timezone: TZ,
     })
     : { data: null, error: null, skipped: "Conversões VTurb puladas porque sessions/stats_by_day respondeu." };
-  const trafficResult = await safeVturbPost(vturbRuntime, apiKey, "/sessions/by_source", {
-    player_id: playerId,
-    start_date: startStr,
-    end_date: endStr,
-    timezone: TZ,
-  }, { optional: true, disablePathOn404: true });
 
   const warnings = [
     sessionStatsResult.error ? `sessions_stats_by_day: ${sessionStatsResult.error}` : null,
     statsResult.error ? `stats_by_day: ${statsResult.error}` : null,
-    trafficResult.error ? `sessions_by_source: ${trafficResult.error}` : null,
   ].filter(Boolean) as string[];
 
   if (!sessionStatsResult.data && !statsResult.data) {
@@ -309,89 +318,13 @@ async function pullOnePlayer(
     }
   }
 
-  // Save traffic by source (UTM data)
-  const trafficSources = trafficResult.data as any;
-  if (trafficSources && typeof trafficSources === "object") {
-    // The API may return data grouped by utm_source, utm_campaign, utm_content, etc.
-    const sources = Array.isArray(trafficSources) ? trafficSources : trafficSources.sources ?? trafficSources.data ?? [];
-
-    if (Array.isArray(sources) && sources.length > 0) {
-      // Save each source as individual event for granular tracking
-      for (const sourceEntry of sources) {
-        const utmSource = String(sourceEntry?.utm_source ?? sourceEntry?.source ?? "direct").toLowerCase();
-        const utmCampaign = stringOrNull(sourceEntry?.utm_campaign ?? sourceEntry?.campaign);
-        const utmContent = stringOrNull(sourceEntry?.utm_content ?? sourceEntry?.content);
-        const utmMedium = stringOrNull(sourceEntry?.utm_medium ?? sourceEntry?.medium);
-
-        // Build unique ID based on UTM params
-        const sourceKey = [utmSource, utmCampaign, utmContent, utmMedium].filter(Boolean).join("-") || "direct";
-
-        const { error } = await sb.from("raw_events").upsert(
-          {
-            project_id: project.id,
-            workspace_id: project.workspace_id,
-            user_id: project.user_id,
-            source: "vturb",
-            event_type: "traffic_by_source",
-            event_date: endDay,
-            external_id: `${playerId}-traffic-${sourceKey}-${startDay}-${endDay}`,
-            account_id: playerId,
-            payload: {
-              ...sourceEntry,
-              utm_source: utmSource,
-              utm_campaign: utmCampaign,
-              utm_content: utmContent,
-              utm_medium: utmMedium,
-              range: { start_date: startStr, end_date: endStr },
-            },
-          },
-          { onConflict: "project_id,source,event_type,external_id" },
-        );
-
-        if (!error) {
-          inserted++;
-          datesTouched.add(endDay);
-        }
-      }
-    } else if (Object.keys(trafficSources).length > 0 && !trafficSources.error) {
-      // Fallback: save entire response as aggregate traffic data
-      const { error } = await sb.from("raw_events").upsert(
-        {
-          project_id: project.id,
-          workspace_id: project.workspace_id,
-          user_id: project.user_id,
-          source: "vturb",
-          event_type: "traffic_aggregate",
-          event_date: endDay,
-          external_id: `${playerId}-traffic-agg-${startDay}-${endDay}`,
-          account_id: playerId,
-          payload: { ...trafficSources, range: { start_date: startStr, end_date: endStr } },
-        },
-        { onConflict: "project_id,source,event_type,external_id" },
-      );
-
-      if (!error) {
-        inserted++;
-        datesTouched.add(endDay);
-      }
-    }
-  }
-
   const syncedAt = new Date().toISOString();
   await sb
     .from("workspace_vturb_players")
     .update({ last_synced_at: syncedAt })
     .eq("id", playerRowId);
 
-  if (datesTouched.size > 0) {
-    await fetch(`${SUPABASE_URL}/functions/v1/aggregate-daily`, {
-      method: "POST",
-      headers: buildAutomationHeaders(),
-      body: JSON.stringify({ project_id: project.id, dates: [...datesTouched] }),
-    });
-  }
-
-  return { inserted, warnings };
+  return { inserted, warnings, datesTouched: [...datesTouched] };
 }
 
 async function safeVturbPost(
@@ -399,25 +332,11 @@ async function safeVturbPost(
   apiKey: string,
   path: VturbPath,
   body: unknown,
-  options: { optional?: boolean; disablePathOn404?: boolean } = {},
-): Promise<{ data: unknown | null; error: string | null; skipped?: string | null }> {
-  if (runtime.disabledPaths.has(path)) {
-    return { data: null, error: null, skipped: runtime.disabledPaths.get(path) ?? null };
-  }
-
-  if (options.optional && runtime.skipOptionalPaths) {
-    return { data: null, error: null, skipped: "Pulando endpoint opcional após throttling da VTurb." };
-  }
-
+) : Promise<{ data: unknown | null; error: string | null; skipped?: string | null }> {
   try {
     return { data: await vturbPost(runtime, apiKey, path, body), error: null };
   } catch (error) {
     const message = error instanceof Error ? error.message : `VTurb ${path}: erro inesperado`;
-    if (options.disablePathOn404 && isEndpointNotFound(message)) {
-      runtime.disabledPaths.set(path, message);
-      return { data: null, error: message, skipped: message };
-    }
-
     return {
       data: null,
       error: message,
@@ -446,7 +365,6 @@ async function vturbPost(runtime: VturbRuntime, apiKey: string, path: VturbPath,
 
     const message = data?.message ?? data?.error ?? `HTTP ${response.status}`;
     if (isRateLimitError(response.status, message)) {
-      runtime.skipOptionalPaths = true;
       const waitMs = retryAfterMs(response.headers.get("retry-after"), message, attempt);
       runtime.nextRequestAt = Math.max(runtime.nextRequestAt, Date.now() + waitMs);
       if (attempt < VTURB_MAX_RATE_LIMIT_RETRIES) {
@@ -686,6 +604,40 @@ async function createSyncRun(
   return data?.id as string | undefined;
 }
 
+async function failStaleRunningSyncRuns(sb: ReturnType<typeof createClient>) {
+  const cutoff = new Date(Date.now() - VTURB_RUNNING_SYNC_TIMEOUT_MS).toISOString();
+
+  await sb
+    .from("sync_runs")
+    .update({
+      status: "failed",
+      finished_at: new Date().toISOString(),
+      error_message: "Encerrado automaticamente após exceder o tempo limite do sync VTurb.",
+    })
+    .eq("source", "vturb")
+    .eq("status", "running")
+    .lt("started_at", cutoff);
+}
+
+async function findActiveSyncRun(
+  sb: ReturnType<typeof createClient>,
+  projectId: string,
+) {
+  const cutoff = new Date(Date.now() - VTURB_RUNNING_SYNC_TIMEOUT_MS).toISOString();
+  const { data } = await sb
+    .from("sync_runs")
+    .select("id, started_at")
+    .eq("project_id", projectId)
+    .eq("source", "vturb")
+    .eq("status", "running")
+    .gte("started_at", cutoff)
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return data as { id: string; started_at: string } | null;
+}
+
 async function finishSyncRun(
   sb: ReturnType<typeof createClient>,
   runId: string | undefined,
@@ -747,8 +699,6 @@ function createVturbRuntime(): VturbRuntime {
   return {
     lastRequestAt: 0,
     nextRequestAt: 0,
-    skipOptionalPaths: false,
-    disabledPaths: new Map<VturbPath, string>(),
   };
 }
 
@@ -773,10 +723,6 @@ async function sleep(ms: number) {
 
 function isRateLimitError(status: number, message: string) {
   return status === 429 || message.toLowerCase().includes("rate limit exceeded");
-}
-
-function isEndpointNotFound(message: string) {
-  return message.toLowerCase().includes("http 404");
 }
 
 function retryAfterMs(headerValue: string | null, message: string, attempt: number) {
@@ -822,4 +768,17 @@ function json(body: unknown, status = 200) {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
+}
+
+async function triggerAggregateDaily(projectId: string, dates: string[]) {
+  const response = await fetch(`${SUPABASE_URL}/functions/v1/aggregate-daily`, {
+    method: "POST",
+    headers: buildAutomationHeaders(),
+    body: JSON.stringify({ project_id: projectId, dates }),
+  });
+
+  if (!response.ok) {
+    const message = await response.text().catch(() => "");
+    throw new Error(`Falha ao agregar métricas VTurb: ${message || `HTTP ${response.status}`}`);
+  }
 }
