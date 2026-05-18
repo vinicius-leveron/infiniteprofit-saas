@@ -81,6 +81,12 @@ Deno.serve(async (req) => {
 });
 
 function aggregateOneDay(events: Array<{ source: string; event_type: string; payload: any }>) {
+  const hasSessionStatsByDay = events.some((event) =>
+    event.source === "vturb"
+    && event.event_type === "sessions_stats_by_day"
+    && hasUsableSessionStatsPayload(event.payload),
+  );
+
   let investimento = 0;
   let impressoes = 0;
   let cliques = 0;
@@ -89,6 +95,9 @@ function aggregateOneDay(events: Array<{ source: string; event_type: string; pay
   let viewsUnicas = 0;
   let plays = 0;
   let chegaramPitch = 0;
+  let vturbPitchClicks = 0;
+  let vturbPitchConversions = 0;
+  let hasVturbSessionPitchData = false;
 
   let vendasFront = 0;
   let vendasTotais = 0;
@@ -117,11 +126,17 @@ function aggregateOneDay(events: Array<{ source: string; event_type: string; pay
     }
 
     if (event.source === "vturb") {
+      if (hasSessionStatsByDay && event.event_type === "stats_by_day") {
+        continue;
+      }
       const vturb = extractVturbMetrics(event.event_type, payload);
       pageviews += vturb.pageviews;
       viewsUnicas += vturb.viewsUnicas;
       plays += vturb.plays;
       chegaramPitch += vturb.chegaramPitch;
+      vturbPitchClicks += vturb.pitchClicks;
+      vturbPitchConversions += vturb.pitchConversions;
+      hasVturbSessionPitchData = hasVturbSessionPitchData || vturb.hasSessionPitchData;
       continue;
     }
 
@@ -197,8 +212,12 @@ function aggregateOneDay(events: Array<{ source: string; event_type: string; pay
   const retPitch = plays > 0 ? (chegaramPitch / plays) * 100 : null;
   const passChk = pageviews > 0 ? (checkouts / pageviews) * 100 : null;
   const taxaCarreg = cliques > 0 ? (pageviews / cliques) * 100 : null;
-  const pitchChk = chegaramPitch > 0 ? (checkouts / chegaramPitch) * 100 : null;
-  const pitchVenda = chegaramPitch > 0 ? (vendasFront / chegaramPitch) * 100 : null;
+  const pitchChk = chegaramPitch > 0
+    ? ((hasVturbSessionPitchData ? vturbPitchClicks : checkouts) / chegaramPitch) * 100
+    : null;
+  const pitchVenda = chegaramPitch > 0
+    ? ((hasVturbSessionPitchData ? vturbPitchConversions : vendasFront) / chegaramPitch) * 100
+    : null;
   const chkVenda = checkouts > 0 ? (vendasFront / checkouts) * 100 : null;
   const custoPageview = pageviews > 0 ? investimento / pageviews : null;
   const custoIC = checkouts > 0 ? investimento / checkouts : null;
@@ -267,13 +286,13 @@ function aggregateOneDay(events: Array<{ source: string; event_type: string; pay
 
 function extractVturbMetrics(eventType: string, payload: any) {
   if (eventType === "pageview") {
-    return { pageviews: 1, viewsUnicas: 0, plays: 0, chegaramPitch: 0 };
+    return { pageviews: 1, viewsUnicas: 0, plays: 0, chegaramPitch: 0, pitchClicks: 0, pitchConversions: 0, hasSessionPitchData: false };
   }
   if (eventType === "play") {
-    return { pageviews: 0, viewsUnicas: 1, plays: 1, chegaramPitch: 0 };
+    return { pageviews: 0, viewsUnicas: 1, plays: 1, chegaramPitch: 0, pitchClicks: 0, pitchConversions: 0, hasSessionPitchData: false };
   }
   if (eventType === "pitch_reached") {
-    return { pageviews: 0, viewsUnicas: 0, plays: 0, chegaramPitch: 1 };
+    return { pageviews: 0, viewsUnicas: 0, plays: 0, chegaramPitch: 1, pitchClicks: 0, pitchConversions: 0, hasSessionPitchData: false };
   }
   if (eventType === "sessions_stats_by_day") {
     const pageviews = firstNumber(payload, [
@@ -300,7 +319,19 @@ function extractVturbMetrics(eventType: string, payload: any) {
       "reached_pitch",
       "pitch",
     ]);
-    return { pageviews, viewsUnicas, plays, chegaramPitch };
+    const pitchClicks = firstNumber(payload, [
+      "total_clicked_session_uniq",
+      "total_clicked_device_uniq",
+      "total_clicked",
+    ]);
+    const pitchConversions = firstNumber(payload, [
+      "total_conversions",
+      "conversions",
+    ]);
+    if (!hasUsableSessionStatsPayload(payload)) {
+      return { pageviews: 0, viewsUnicas: 0, plays: 0, chegaramPitch: 0, pitchClicks: 0, pitchConversions: 0, hasSessionPitchData: false };
+    }
+    return { pageviews, viewsUnicas, plays, chegaramPitch, pitchClicks, pitchConversions, hasSessionPitchData: true };
   }
   if (eventType === "stats_by_day") {
     const pageviews = firstNumber(payload, [
@@ -336,7 +367,7 @@ function extractVturbMetrics(eventType: string, payload: any) {
       "sales_page_viewers",
       "pitch",
     ]);
-    return { pageviews, viewsUnicas, plays, chegaramPitch };
+    return { pageviews, viewsUnicas, plays, chegaramPitch, pitchClicks: 0, pitchConversions: 0, hasSessionPitchData: false };
   }
   if (eventType === "retention_curve") {
     return {
@@ -344,10 +375,13 @@ function extractVturbMetrics(eventType: string, payload: any) {
       viewsUnicas: 0,
       plays: 0,
       chegaramPitch: estimatePitchReached(payload),
+      pitchClicks: 0,
+      pitchConversions: 0,
+      hasSessionPitchData: false,
     };
   }
 
-  return { pageviews: 0, viewsUnicas: 0, plays: 0, chegaramPitch: 0 };
+  return { pageviews: 0, viewsUnicas: 0, plays: 0, chegaramPitch: 0, pitchClicks: 0, pitchConversions: 0, hasSessionPitchData: false };
 }
 
 function estimatePitchReached(payload: any) {
@@ -380,6 +414,20 @@ function firstNumber(record: Record<string, unknown>, keys: string[]) {
     if (value > 0) return value;
   }
   return 0;
+}
+
+function hasUsableSessionStatsPayload(payload: Record<string, unknown>) {
+  const viewed = firstNumber(payload, [
+    "total_viewed_session_uniq",
+    "total_viewed_device_uniq",
+    "total_viewed",
+  ]);
+  const started = firstNumber(payload, [
+    "total_started_session_uniq",
+    "total_started_device_uniq",
+    "total_started",
+  ]);
+  return viewed > 0 || started > 0;
 }
 
 function num(value: unknown): number {
