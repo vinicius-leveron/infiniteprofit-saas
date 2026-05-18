@@ -41,10 +41,14 @@ type PlayerBinding = {
 };
 
 type VturbPath =
-  | "/events/total_by_company_players"
+  | "/sessions/stats_by_day"
   | "/conversions/stats_by_day"
-  | "/conversions/video_timed"
   | "/sessions/by_source";
+
+type PlayerMetadata = {
+  duration: number | null;
+  pitchTime: number | null;
+};
 
 type VturbRuntime = {
   lastRequestAt: number;
@@ -114,11 +118,13 @@ Deno.serve(async (req) => {
         const projectResults: Array<Record<string, unknown>> = [];
         let projectSyncedAt: string | null = null;
         const vturbRuntime = createVturbRuntime();
+        const playerMetadata = await loadPlayerMetadataMap(apiKey, vturbRuntime);
 
         for (const player of players) {
           try {
             const result = await pullOnePlayer(sb, {
               vturbRuntime,
+              playerMetadata: playerMetadata.get(player.player_id) ?? null,
               apiKey,
               project,
               playerId: player.player_id,
@@ -202,6 +208,7 @@ async function pullOnePlayer(
   sb: ReturnType<typeof createClient>,
   args: {
     vturbRuntime: VturbRuntime;
+    playerMetadata: PlayerMetadata | null;
     apiKey: string;
     project: ProjectContext;
     playerId: string;
@@ -212,27 +219,24 @@ async function pullOnePlayer(
     endDay: string;
   },
 ) {
-  const { vturbRuntime, apiKey, project, playerId, playerRowId, startStr, endStr, startDay, endDay } = args;
+  const { vturbRuntime, playerMetadata, apiKey, project, playerId, playerRowId, startStr, endStr, startDay, endDay } = args;
 
-  const statsResult = await safeVturbPost(vturbRuntime, apiKey, "/conversions/stats_by_day", {
+  const sessionStatsResult = await safeVturbPost(vturbRuntime, apiKey, "/sessions/stats_by_day", buildSessionStatsBody({
     player_id: playerId,
     start_date: startStr,
     end_date: endStr,
     timezone: TZ,
-  });
-  const timedResult = await safeVturbPost(vturbRuntime, apiKey, "/conversions/video_timed", {
-    player_id: playerId,
-    start_date: startStr,
-    end_date: endStr,
-    timezone: TZ,
-  });
-  const eventsResult = await safeVturbPost(vturbRuntime, apiKey, "/events/total_by_company_players", {
-      events: ["started", "viewed", "finished"],
+    duration: playerMetadata?.duration ?? null,
+    pitchTime: playerMetadata?.pitchTime ?? null,
+  }));
+  const statsResult = !sessionStatsResult.data
+    ? await safeVturbPost(vturbRuntime, apiKey, "/conversions/stats_by_day", {
+      player_id: playerId,
       start_date: startStr,
       end_date: endStr,
       timezone: TZ,
-      players_start_date: [{ player_id: playerId, start_date: startStr }],
-    }, { optional: true });
+    })
+    : { data: null, error: null, skipped: "Conversões VTurb puladas porque sessions/stats_by_day respondeu." };
   const trafficResult = await safeVturbPost(vturbRuntime, apiKey, "/sessions/by_source", {
     player_id: playerId,
     start_date: startStr,
@@ -241,43 +245,41 @@ async function pullOnePlayer(
   }, { optional: true, disablePathOn404: true });
 
   const warnings = [
-    eventsResult.error ? `total_by_company_players: ${eventsResult.error}` : null,
+    sessionStatsResult.error ? `sessions_stats_by_day: ${sessionStatsResult.error}` : null,
     statsResult.error ? `stats_by_day: ${statsResult.error}` : null,
-    timedResult.error ? `video_timed: ${timedResult.error}` : null,
     trafficResult.error ? `sessions_by_source: ${trafficResult.error}` : null,
   ].filter(Boolean) as string[];
 
-  if (!eventsResult.data && !statsResult.data && !timedResult.data) {
+  if (!sessionStatsResult.data && !statsResult.data) {
     throw new Error(warnings.join(" | ") || "Nenhum endpoint VTurb retornou dados");
   }
 
   const datesTouched = new Set<string>();
   let inserted = 0;
 
-  if (Array.isArray(eventsResult.data)) {
-    for (const event of eventsResult.data) {
-      const eventName = String(event?.event ?? "").trim();
-      if (!eventName) continue;
+  const sessionStatsByDay = normalizeSessionStatsByDay(sessionStatsResult.data);
+  for (const dayEntry of sessionStatsByDay) {
+    const day = String(dayEntry?.date_key ?? dayEntry?.day ?? "").slice(0, 10);
+    if (!day) continue;
 
-      const { error } = await sb.from("raw_events").upsert(
-        {
-          project_id: project.id,
-          workspace_id: project.workspace_id,
-          user_id: project.user_id,
-          source: "vturb",
-          event_type: `${eventName}_total`,
-          event_date: endDay,
-          external_id: `${playerId}-${eventName}-${startDay}-${endDay}`,
-          account_id: playerId,
-          payload: event,
-        },
-        { onConflict: "project_id,source,event_type,external_id" },
-      );
+    const { error } = await sb.from("raw_events").upsert(
+      {
+        project_id: project.id,
+        workspace_id: project.workspace_id,
+        user_id: project.user_id,
+        source: "vturb",
+        event_type: "sessions_stats_by_day",
+        event_date: day,
+        external_id: `${playerId}-sessions-${day}`,
+        account_id: playerId,
+        payload: dayEntry,
+      },
+      { onConflict: "project_id,source,event_type,external_id" },
+    );
 
-      if (!error) {
-        inserted++;
-        datesTouched.add(endDay);
-      }
+    if (!error) {
+      inserted++;
+      datesTouched.add(day);
     }
   }
 
@@ -304,29 +306,6 @@ async function pullOnePlayer(
     if (!error) {
       inserted++;
       datesTouched.add(day);
-    }
-  }
-
-  const groupedTimed = (timedResult.data as any)?.grouped_timed ?? [];
-  if (Array.isArray(groupedTimed) && groupedTimed.length > 0) {
-    const { error } = await sb.from("raw_events").upsert(
-      {
-        project_id: project.id,
-        workspace_id: project.workspace_id,
-        user_id: project.user_id,
-        source: "vturb",
-        event_type: "retention_curve",
-        event_date: endDay,
-        external_id: `${playerId}-retention-${startDay}-${endDay}`,
-        account_id: playerId,
-        payload: { grouped_timed: groupedTimed, range: { start_date: startStr, end_date: endStr } },
-      },
-      { onConflict: "project_id,source,event_type,external_id" },
-    );
-
-    if (!error) {
-      inserted++;
-      datesTouched.add(endDay);
     }
   }
 
@@ -479,6 +458,70 @@ async function vturbPost(runtime: VturbRuntime, apiKey: string, path: VturbPath,
   }
 
   throw new Error(`VTurb ${path}: erro inesperado`);
+}
+
+async function loadPlayerMetadataMap(apiKey: string, runtime: VturbRuntime) {
+  try {
+    const data = await vturbGetPlayers(runtime, apiKey);
+    const players = Array.isArray(data)
+      ? data
+      : Array.isArray((data as any)?.players)
+        ? (data as any).players
+        : Array.isArray((data as any)?.data)
+          ? (data as any).data
+          : [];
+
+    return new Map<string, PlayerMetadata>(
+      players
+        .map((player: any) => {
+          const id = String(player?.id ?? "").trim();
+          if (!id) return null;
+          return [
+            id,
+            {
+              duration: positiveNumber(player?.duration),
+              pitchTime: positiveNumber(player?.pitch_time),
+            },
+          ] as const;
+        })
+        .filter((entry): entry is readonly [string, PlayerMetadata] => Boolean(entry)),
+    );
+  } catch (error) {
+    console.warn("vturb players/list metadata unavailable", error);
+    return new Map<string, PlayerMetadata>();
+  }
+}
+
+async function vturbGetPlayers(runtime: VturbRuntime, apiKey: string): Promise<unknown> {
+  for (let attempt = 0; attempt <= VTURB_MAX_RATE_LIMIT_RETRIES; attempt += 1) {
+    await waitForVturbSlot(runtime);
+
+    const response = await fetch(`${VTURB_BASE}/players/list`, {
+      method: "GET",
+      headers: {
+        "X-Api-Token": apiKey,
+        "Content-Type": "application/json",
+      },
+    });
+
+    const data: any = await response.json().catch(() => ({}));
+    if (response.ok) {
+      return data;
+    }
+
+    const message = data?.message ?? data?.error ?? `HTTP ${response.status}`;
+    if (isRateLimitError(response.status, message)) {
+      const waitMs = retryAfterMs(response.headers.get("retry-after"), message, attempt);
+      runtime.nextRequestAt = Math.max(runtime.nextRequestAt, Date.now() + waitMs);
+      if (attempt < VTURB_MAX_RATE_LIMIT_RETRIES) {
+        continue;
+      }
+    }
+
+    throw new Error(`VTurb /players/list: ${message}`);
+  }
+
+  throw new Error("VTurb /players/list: erro inesperado");
 }
 
 async function resolveCaller(req: Request): Promise<Caller | null> {
@@ -668,6 +711,36 @@ async function finishSyncRun(
 function stringOrNull(value: unknown) {
   const trimmed = String(value ?? "").trim();
   return trimmed ? trimmed : null;
+}
+
+function buildSessionStatsBody(args: {
+  player_id: string;
+  start_date: string;
+  end_date: string;
+  timezone: string;
+  duration: number | null;
+  pitchTime: number | null;
+}) {
+  return {
+    player_id: args.player_id,
+    start_date: args.start_date,
+    end_date: args.end_date,
+    timezone: args.timezone,
+    ...(args.duration ? { video_duration: args.duration } : {}),
+    ...(args.pitchTime ? { pitch_time: args.pitchTime } : {}),
+  };
+}
+
+function normalizeSessionStatsByDay(data: unknown) {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray((data as any)?.data)) return (data as any).data;
+  if (Array.isArray((data as any)?.stats_by_day)) return (data as any).stats_by_day;
+  return [];
+}
+
+function positiveNumber(value: unknown) {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 function createVturbRuntime(): VturbRuntime {

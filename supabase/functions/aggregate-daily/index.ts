@@ -275,6 +275,33 @@ function extractVturbMetrics(eventType: string, payload: any) {
   if (eventType === "pitch_reached") {
     return { pageviews: 0, viewsUnicas: 0, plays: 0, chegaramPitch: 1 };
   }
+  if (eventType === "sessions_stats_by_day") {
+    const pageviews = firstNumber(payload, [
+      "total_viewed_session_uniq",
+      "total_viewed",
+      "views",
+      "pageviews",
+    ]);
+    const viewsUnicas = firstNumber(payload, [
+      "total_viewed_device_uniq",
+      "total_viewed_session_uniq",
+      "unique_views",
+      "views_unicas",
+    ]) || pageviews;
+    const plays = firstNumber(payload, [
+      "total_started_session_uniq",
+      "total_started",
+      "plays",
+      "started",
+    ]);
+    const chegaramPitch = firstNumber(payload, [
+      "total_over_pitch",
+      "pitch_reached",
+      "reached_pitch",
+      "pitch",
+    ]);
+    return { pageviews, viewsUnicas, plays, chegaramPitch };
+  }
   if (eventType === "stats_by_day") {
     const pageviews = firstNumber(payload, [
       "pageviews",

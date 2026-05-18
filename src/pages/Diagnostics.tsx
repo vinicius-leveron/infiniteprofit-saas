@@ -248,13 +248,13 @@ export default function Diagnostics() {
       if (row.group === "VSL VTurb" && row.kpi === "Play Rate, Retenção Pitch, Chegaram no Pitch") {
         return {
           ...row,
-          reason: "A VTurb retornou stats_by_day, mas não retornou video_timed/curva de retenção. Sem isso, Retenção Pitch e Chegaram no Pitch ficam vazios.",
+          reason: "A VTurb retornou agregados básicos, mas não retornou sessions/stats_by_day com dados de pitch. Sem isso, Retenção Pitch e Chegaram no Pitch ficam vazios.",
         };
       }
       if (row.group === "Derivados de funil" && row.kpi === "Pitch -> Checkout, Pitch -> Venda, Checkout -> Venda") {
         return {
           ...row,
-          reason: "Sem video_timed/curva de retenção da VTurb, os derivados de pitch ficam incompletos mesmo com o gateway entrando.",
+          reason: "Sem sessions/stats_by_day com total_over_pitch, os derivados de pitch ficam incompletos mesmo com o gateway entrando.",
         };
       }
       return row;
@@ -572,7 +572,7 @@ function buildAlerts(
     alerts.push("Hubla sem evento nas últimas 24h.");
   }
   if (detectVturbPitchGap(rawByType, metrics, latestVturbRun)) {
-    alerts.push("VTurb sem dados de pitch: a API não retornou video_timed/curva de retenção para os players deste projeto. Retenção Pitch, Chegaram no Pitch, Pitch -> Checkout e Pitch -> Venda podem ficar vazios.");
+    alerts.push("VTurb sem dados de pitch: a API não retornou sessions/stats_by_day com total_over_pitch para os players deste projeto. Retenção Pitch, Chegaram no Pitch, Pitch -> Checkout e Pitch -> Venda podem ficar vazios.");
   }
   if (runText(latestVturbRun).includes("rate limit exceeded")) {
     alerts.push("VTurb atingiu rate limit na sincronização mais recente. Parte dos players pode atrasar alguns minutos para aparecer.");
@@ -587,8 +587,8 @@ function detectVturbPitchGap(
   metrics: DailyMetricRow[],
   latestVturbRun: SyncRunRow | null,
 ) {
+  const hasSessionStatsByDay = (rawByType.sessions_stats_by_day ?? 0) > 0;
   const hasStatsByDay = (rawByType.stats_by_day ?? 0) > 0;
-  const hasRetentionCurve = (rawByType.retention_curve ?? 0) > 0;
   const hasPitchMetric = metrics.some((row) => {
     const chegaramPitch = numericValue(row.chegaram_pitch);
     const pitchCheckout = numericValue(row.pitch_chk);
@@ -596,9 +596,14 @@ function detectVturbPitchGap(
     return chegaramPitch > 0 || pitchCheckout > 0 || pitchVenda > 0;
   });
 
-  if (!hasStatsByDay || hasRetentionCurve || hasPitchMetric) return false;
+  if ((!hasSessionStatsByDay && !hasStatsByDay) || hasPitchMetric) return false;
   const vturbText = runText(latestVturbRun);
-  return vturbText.includes("video_timed") || vturbText.includes("public analytics api");
+  return (
+    (hasStatsByDay && !hasSessionStatsByDay)
+    || vturbText.includes("sessions/stats_by_day")
+    || vturbText.includes("public analytics api")
+    || vturbText.includes("error code: 1010")
+  );
 }
 
 function runText(run: SyncRunRow | null) {
