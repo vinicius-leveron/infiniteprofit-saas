@@ -17,3 +17,31 @@ services:
       - type: rewrite
         source: /*
         destination: /index.html
+  - type: worker
+    name: infiniteprofit-creative-worker
+    runtime: node
+    buildCommand: npm ci
+    startCommand: npm run creative-worker
+    envVars:
+      - key: SUPABASE_URL
+        value: https://nztnctrkmfrgclrnflfa.supabase.co
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: CREATIVE_TRANSCRIPTION_PROVIDER
+        value: openai
+      - key: CREATIVE_TRANSCRIPTION_MODEL
+        value: gpt-4o-mini-transcribe
+      - key: CREATIVE_ANALYSIS_PROVIDER
+        value: anthropic
+      - key: CREATIVE_ANALYSIS_MODEL
+        value: claude-sonnet-4-20250514
+      - key: CREATIVE_ANALYSIS_PROMPT_VERSION
+        value: creative-sync-v3
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: CREATIVE_WORKER_POLL_INTERVAL_MS
+        value: "5000"
+      - key: CREATIVE_WORKER_BATCH_SIZE
+        value: "2"
