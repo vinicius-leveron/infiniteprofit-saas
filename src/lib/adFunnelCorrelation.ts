@@ -14,12 +14,17 @@ export interface RawMetaPayload {
   adset_name?: string;
   ad_id?: string;
   ad_name?: string;
+  creative_id?: string;
   spend?: string | number;
   impressions?: string | number;
   clicks?: string | number;
+  outbound_clicks?: Array<{ action_type: string; value: string | number }> | string | number;
   actions?: Array<{ action_type: string; value: string | number }>;
   action_values?: Array<{ action_type: string; value: string | number }>;
   website_purchase_roas?: Array<{ action_type: string; value: string | number }>;
+  video_play_actions?: Array<{ action_type: string; value: string | number }>;
+  video_p25_watched_actions?: Array<{ action_type: string; value: string | number }>;
+  video_thruplay_watched_actions?: Array<{ action_type: string; value: string | number }>;
 }
 
 export interface RawVturbPayload {

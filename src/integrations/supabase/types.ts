@@ -426,6 +426,546 @@ export type Database = {
           },
         ]
       }
+      creative_assets: {
+        Row: {
+          analysis_status: string
+          asset_key: string
+          created_at: string
+          creative_id: string
+          cta: string | null
+          headline: string | null
+          id: string
+          landing_url: string | null
+          last_meta_synced_at: string | null
+          last_processed_at: string | null
+          media_bytes: number | null
+          media_duration_ms: number | null
+          media_fingerprint: string | null
+          media_storage_path: string | null
+          media_type: string
+          poster_storage_path: string | null
+          primary_text: string | null
+          processing_version: string | null
+          project_id: string
+          source_fetched_at: string | null
+          source_media_url: string | null
+          thumbnail_url: string | null
+          updated_at: string
+          user_id: string
+          workspace_id: string
+        }
+        Insert: {
+          analysis_status?: string
+          asset_key: string
+          created_at?: string
+          creative_id: string
+          cta?: string | null
+          headline?: string | null
+          id?: string
+          landing_url?: string | null
+          last_meta_synced_at?: string | null
+          last_processed_at?: string | null
+          media_bytes?: number | null
+          media_duration_ms?: number | null
+          media_fingerprint?: string | null
+          media_storage_path?: string | null
+          media_type?: string
+          poster_storage_path?: string | null
+          primary_text?: string | null
+          processing_version?: string | null
+          project_id: string
+          source_fetched_at?: string | null
+          source_media_url?: string | null
+          thumbnail_url?: string | null
+          updated_at?: string
+          user_id: string
+          workspace_id: string
+        }
+        Update: {
+          analysis_status?: string
+          asset_key?: string
+          created_at?: string
+          creative_id?: string
+          cta?: string | null
+          headline?: string | null
+          id?: string
+          landing_url?: string | null
+          last_meta_synced_at?: string | null
+          last_processed_at?: string | null
+          media_bytes?: number | null
+          media_duration_ms?: number | null
+          media_fingerprint?: string | null
+          media_storage_path?: string | null
+          media_type?: string
+          poster_storage_path?: string | null
+          primary_text?: string | null
+          processing_version?: string | null
+          project_id?: string
+          source_fetched_at?: string | null
+          source_media_url?: string | null
+          thumbnail_url?: string | null
+          updated_at?: string
+          user_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "creative_assets_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      creative_asset_ads: {
+        Row: {
+          ad_id: string
+          ad_name: string | null
+          adset_id: string | null
+          adset_name: string | null
+          asset_id: string
+          campaign_id: string | null
+          campaign_name: string | null
+          created_at: string
+          creative_id: string
+          first_seen_at: string | null
+          id: string
+          last_seen_at: string | null
+          project_id: string
+          updated_at: string
+          user_id: string
+          workspace_id: string
+        }
+        Insert: {
+          ad_id: string
+          ad_name?: string | null
+          adset_id?: string | null
+          adset_name?: string | null
+          asset_id: string
+          campaign_id?: string | null
+          campaign_name?: string | null
+          created_at?: string
+          creative_id: string
+          first_seen_at?: string | null
+          id?: string
+          last_seen_at?: string | null
+          project_id: string
+          updated_at?: string
+          user_id: string
+          workspace_id: string
+        }
+        Update: {
+          ad_id?: string
+          ad_name?: string | null
+          adset_id?: string | null
+          adset_name?: string | null
+          asset_id?: string
+          campaign_id?: string | null
+          campaign_name?: string | null
+          created_at?: string
+          creative_id?: string
+          first_seen_at?: string | null
+          id?: string
+          last_seen_at?: string | null
+          project_id?: string
+          updated_at?: string
+          user_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "creative_asset_ads_asset_id_fkey"
+            columns: ["asset_id"]
+            isOneToOne: false
+            referencedRelation: "creative_assets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "creative_asset_ads_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      creative_asset_analysis: {
+        Row: {
+          analysis_coverage: string
+          analysis_error_message: string | null
+          angle: string | null
+          asset_id: string
+          copy: string | null
+          created_at: string
+          cta: string | null
+          error_message: string | null
+          hook: string | null
+          hook_timestamps: Json
+          model: string | null
+          processed_at: string | null
+          project_id: string
+          prompt_version: string | null
+          provider: string | null
+          scores: Json
+          status: string
+          summary: string | null
+          tags: Json
+          transcript: string | null
+          transcript_error_message: string | null
+          transcript_language: string | null
+          transcript_model: string | null
+          transcript_provider: string | null
+          transcript_segments: Json
+          transcript_status: string
+          updated_at: string
+          user_id: string
+          visual: string | null
+          visual_evidence: Json
+          workspace_id: string
+        }
+        Insert: {
+          analysis_coverage?: string
+          analysis_error_message?: string | null
+          angle?: string | null
+          asset_id: string
+          copy?: string | null
+          created_at?: string
+          cta?: string | null
+          error_message?: string | null
+          hook?: string | null
+          hook_timestamps?: Json
+          model?: string | null
+          processed_at?: string | null
+          project_id: string
+          prompt_version?: string | null
+          provider?: string | null
+          scores?: Json
+          status?: string
+          summary?: string | null
+          tags?: Json
+          transcript?: string | null
+          transcript_error_message?: string | null
+          transcript_language?: string | null
+          transcript_model?: string | null
+          transcript_provider?: string | null
+          transcript_segments?: Json
+          transcript_status?: string
+          updated_at?: string
+          user_id: string
+          visual?: string | null
+          visual_evidence?: Json
+          workspace_id: string
+        }
+        Update: {
+          analysis_coverage?: string
+          analysis_error_message?: string | null
+          angle?: string | null
+          asset_id?: string
+          copy?: string | null
+          created_at?: string
+          cta?: string | null
+          error_message?: string | null
+          hook?: string | null
+          hook_timestamps?: Json
+          model?: string | null
+          processed_at?: string | null
+          project_id?: string
+          prompt_version?: string | null
+          provider?: string | null
+          scores?: Json
+          status?: string
+          summary?: string | null
+          tags?: Json
+          transcript?: string | null
+          transcript_error_message?: string | null
+          transcript_language?: string | null
+          transcript_model?: string | null
+          transcript_provider?: string | null
+          transcript_segments?: Json
+          transcript_status?: string
+          updated_at?: string
+          user_id?: string
+          visual?: string | null
+          visual_evidence?: Json
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "creative_asset_analysis_asset_id_fkey"
+            columns: ["asset_id"]
+            isOneToOne: true
+            referencedRelation: "creative_assets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "creative_asset_analysis_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      creative_asset_daily_metrics: {
+        Row: {
+          asset_id: string
+          clicks: number
+          cpa: number | null
+          cpm: number | null
+          created_at: string
+          ctr: number | null
+          event_date: string
+          has_gateway_data: boolean
+          has_meta_data: boolean
+          hook_rate: number | null
+          impressions: number
+          outbound_clicks: number
+          project_id: string
+          purchases: number
+          revenue: number
+          roas: number | null
+          spend: number
+          updated_at: string
+          user_id: string
+          workspace_id: string
+          link_ctr: number | null
+        }
+        Insert: {
+          asset_id: string
+          clicks?: number
+          cpa?: number | null
+          cpm?: number | null
+          created_at?: string
+          ctr?: number | null
+          event_date: string
+          has_gateway_data?: boolean
+          has_meta_data?: boolean
+          hook_rate?: number | null
+          impressions?: number
+          outbound_clicks?: number
+          project_id: string
+          purchases?: number
+          revenue?: number
+          roas?: number | null
+          spend?: number
+          updated_at?: string
+          user_id: string
+          workspace_id: string
+          link_ctr?: number | null
+        }
+        Update: {
+          asset_id?: string
+          clicks?: number
+          cpa?: number | null
+          cpm?: number | null
+          created_at?: string
+          ctr?: number | null
+          event_date?: string
+          has_gateway_data?: boolean
+          has_meta_data?: boolean
+          hook_rate?: number | null
+          impressions?: number
+          outbound_clicks?: number
+          project_id?: string
+          purchases?: number
+          revenue?: number
+          roas?: number | null
+          spend?: number
+          updated_at?: string
+          user_id?: string
+          workspace_id?: string
+          link_ctr?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "creative_asset_daily_metrics_asset_id_fkey"
+            columns: ["asset_id"]
+            isOneToOne: false
+            referencedRelation: "creative_assets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "creative_asset_daily_metrics_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      creative_asset_jobs: {
+        Row: {
+          asset_id: string
+          attempt_count: number
+          available_at: string
+          created_at: string
+          finished_at: string | null
+          id: string
+          input_fingerprint: string
+          last_error: string | null
+          locked_at: string | null
+          locked_by: string | null
+          max_attempts: number
+          payload: Json
+          project_id: string
+          status: string
+          updated_at: string
+          user_id: string
+          workspace_id: string
+        }
+        Insert: {
+          asset_id: string
+          attempt_count?: number
+          available_at?: string
+          created_at?: string
+          finished_at?: string | null
+          id?: string
+          input_fingerprint: string
+          last_error?: string | null
+          locked_at?: string | null
+          locked_by?: string | null
+          max_attempts?: number
+          payload?: Json
+          project_id: string
+          status?: string
+          updated_at?: string
+          user_id: string
+          workspace_id: string
+        }
+        Update: {
+          asset_id?: string
+          attempt_count?: number
+          available_at?: string
+          created_at?: string
+          finished_at?: string | null
+          id?: string
+          input_fingerprint?: string
+          last_error?: string | null
+          locked_at?: string | null
+          locked_by?: string | null
+          max_attempts?: number
+          payload?: Json
+          project_id?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "creative_asset_jobs_asset_id_fkey"
+            columns: ["asset_id"]
+            isOneToOne: false
+            referencedRelation: "creative_assets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "creative_asset_jobs_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      creative_groups: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+          project_id: string
+          rules: Json
+          sort_key: string | null
+          updated_at: string
+          user_id: string
+          visibility: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          name: string
+          project_id: string
+          rules?: Json
+          sort_key?: string | null
+          updated_at?: string
+          user_id: string
+          visibility?: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+          project_id?: string
+          rules?: Json
+          sort_key?: string | null
+          updated_at?: string
+          user_id?: string
+          visibility?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "creative_groups_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sync_runs: {
+        Row: {
+          created_at: string
+          details: Json | null
+          error_message: string | null
+          finished_at: string | null
+          id: string
+          initiated_by: string | null
+          project_id: string
+          source: string
+          started_at: string | null
+          status: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          details?: Json | null
+          error_message?: string | null
+          finished_at?: string | null
+          id?: string
+          initiated_by?: string | null
+          project_id: string
+          source: string
+          started_at?: string | null
+          status: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          details?: Json | null
+          error_message?: string | null
+          finished_at?: string | null
+          id?: string
+          initiated_by?: string | null
+          project_id?: string
+          source?: string
+          started_at?: string | null
+          status?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sync_runs_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       simulations: {
         Row: {
           created_at: string
@@ -502,6 +1042,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      claim_creative_asset_jobs: {
+        Args: { job_limit: number; worker_name: string }
+        Returns: Database["public"]["Tables"]["creative_asset_jobs"]["Row"][]
+      }
       delete_my_ai_settings: { Args: never; Returns: undefined }
       get_my_ai_settings_safe: {
         Args: never

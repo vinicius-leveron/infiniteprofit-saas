@@ -617,9 +617,15 @@ const Index = () => {
             ) : tab === "bumps" ? (
               <BumpsPanel rows={filtered} />
             ) : tab === "anuncios" ? (
-              <AdsPanel projectId={currentProjectId} />
+              <AdsPanel
+                projectId={currentProjectId}
+                dateRange={{
+                  from: filtered[0]?.date ? format(filtered[0].date, "yyyy-MM-dd") : null,
+                  to: filtered[filtered.length - 1]?.date ? format(filtered[filtered.length - 1].date, "yyyy-MM-dd") : null,
+                }}
+              />
             ) : tab === "atribuicao" ? (
-              <AttributionPanel rows={filtered} />
+              <AttributionPanel rows={filtered} projectId={currentProjectId} />
             ) : tab === "relatorio" ? (
               <ExecutiveReportPanel current={filtered} previous={previous} />
             ) : tab === "diagnostico" ? (

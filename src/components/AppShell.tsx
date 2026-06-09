@@ -3,17 +3,14 @@ import {
   BarChart3,
   Building2,
   ChevronDown,
-  FileText,
   FolderKanban,
   Gift,
   LogOut,
-  Map,
   Megaphone,
   Plus,
   Radio,
   Settings,
   Sliders,
-  Stethoscope,
   Target,
   Users,
 } from "lucide-react";
@@ -43,7 +40,7 @@ interface SidebarProject {
   name: string;
 }
 
-type Tab = "geral" | "trafego" | "funil" | "bumps" | "anuncios" | "atribuicao" | "relatorio" | "diagnostico" | "simulador";
+type Tab = "geral" | "trafego" | "funil" | "bumps" | "anuncios" | "simulador";
 
 const DASHBOARD_TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: "geral", label: "Visao Geral", icon: BarChart3 },
@@ -51,9 +48,6 @@ const DASHBOARD_TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: "funil", label: "Funil VSL", icon: Target },
   { id: "bumps", label: "Bumps & Upsell", icon: Gift },
   { id: "anuncios", label: "Anuncios", icon: Megaphone },
-  { id: "atribuicao", label: "Atribuicao", icon: Map },
-  { id: "relatorio", label: "Relatorio", icon: FileText },
-  { id: "diagnostico", label: "Alertas", icon: Stethoscope },
   { id: "simulador", label: "Simulador", icon: Sliders },
 ];
 

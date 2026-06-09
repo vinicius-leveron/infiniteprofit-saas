@@ -1,648 +1,1443 @@
-import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { formatDistanceToNow } from "date-fns";
+import { ptBR } from "date-fns/locale";
 import {
-  ArrowDownUp,
+  AlertTriangle,
   ChevronDown,
-  ChevronRight,
+  ChevronUp,
+  Clapperboard,
+  Eye,
+  Filter,
+  Image as ImageIcon,
+  Layers,
   Loader2,
-  Megaphone,
+  Play,
+  Plus,
+  RefreshCw,
+  Search,
+  Settings2,
+  Sparkles,
+  Tag,
+  Target,
   TrendingUp,
-  TrendingDown,
-  Link2,
-  Link2Off,
+  Zap,
 } from "lucide-react";
+import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { fBRL, fNum, fPct } from "@/lib/metrics";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
-  correlateAdFunnel,
-  type RawMetaPayload,
-  type RawVturbPayload,
-  type RawGatewayPayload,
-  type CampaignFunnelMetric,
-  type AdsetFunnelMetric,
-  type AdFunnelMetric,
-  type FunnelSortKey,
-  sortFunnelItems,
-  labelForFunnelSort,
-} from "@/lib/adFunnelCorrelation";
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
+import { cn } from "@/lib/utils";
+import { fBRL, fNum, fPct } from "@/lib/metrics";
+import {
+  FIXED_CREATIVE_GROUPS,
+  applyCreativeFilters,
+  buildCreativeAssetCards,
+  groupCreativeCards,
+  labelForMediaType,
+  parseCreativeGroupRules,
+  resolveSortKey,
+  sortCreativeCards,
+  type CreativeAnalysisCoverage,
+  type CreativeAssetAdRow,
+  type CreativeAssetAnalysisRow,
+  type CreativeAssetCard,
+  type CreativeAssetMetricRow,
+  type CreativeAssetRow,
+  type CreativeGroupBy,
+  type CreativeGroupRow,
+  type CreativeGroupRules,
+  type CreativeMediaType,
+  type CreativePipelineStatus,
+  type CreativeSortKey,
+  type CreativeTranscriptStatus,
+  type FixedCreativeGroupKey,
+} from "@/lib/creativeAssets";
+import { AdsFunnelView } from "@/components/ads/AdsFunnelView";
+import { AdsPathsView } from "@/components/ads/AdsPathsView";
+import { useAuth } from "@/hooks/useAuth";
 
 interface AdsPanelProps {
   projectId: string | null;
+  dateRange?: {
+    from: string | null;
+    to: string | null;
+  };
 }
 
-type SortKey = FunnelSortKey;
-type ViewMode = "hierarchy" | "flat";
+type CardsViewMode = "cards" | "funnel" | "paths";
 
-export function AdsPanel({ projectId }: AdsPanelProps) {
-  const navigate = useNavigate();
+type SyncRunRow = {
+  source: string;
+  status: "queued" | "running" | "succeeded" | "failed";
+  error_message: string | null;
+  created_at: string;
+};
+
+type GroupFormState = {
+  name: string;
+  mediaType: CreativeMediaType | "all";
+  pipelineStatus: CreativePipelineStatus | "all";
+  campaignQuery: string;
+  adsetQuery: string;
+  minHookRate: string;
+  minRoas: string;
+  minCtr: string;
+  maxCpm: string;
+  minSpend: string;
+  sortKey: CreativeSortKey;
+};
+
+const EMPTY_GROUP_FORM: GroupFormState = {
+  name: "",
+  mediaType: "all",
+  pipelineStatus: "all",
+  campaignQuery: "",
+  adsetQuery: "",
+  minHookRate: "",
+  minRoas: "",
+  minCtr: "",
+  maxCpm: "",
+  minSpend: "",
+  sortKey: "purchases",
+};
+
+export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
+  const { user } = useAuth();
+  const [viewMode, setViewMode] = useState<CardsViewMode>("cards");
   const [loading, setLoading] = useState(false);
-  const [metaEvents, setMetaEvents] = useState<Array<{ payload: RawMetaPayload | null }>>([]);
-  const [vturbEvents, setVturbEvents] = useState<Array<{ payload: RawVturbPayload | null }>>([]);
-  const [gatewayEvents, setGatewayEvents] = useState<Array<{ event_type: string; payload: RawGatewayPayload | null }>>([]);
-  const [sortKey, setSortKey] = useState<SortKey>("spend");
-  const [viewMode, setViewMode] = useState<ViewMode>("hierarchy");
-  const [expandedCampaigns, setExpandedCampaigns] = useState<Set<string>>(new Set());
-  const [expandedAdsets, setExpandedAdsets] = useState<Set<string>>(new Set());
+  const [syncing, setSyncing] = useState(false);
+  const [assets, setAssets] = useState<CreativeAssetRow[]>([]);
+  const [assetAds, setAssetAds] = useState<CreativeAssetAdRow[]>([]);
+  const [metrics, setMetrics] = useState<CreativeAssetMetricRow[]>([]);
+  const [analyses, setAnalyses] = useState<CreativeAssetAnalysisRow[]>([]);
+  const [groups, setGroups] = useState<CreativeGroupRow[]>([]);
+  const [latestSyncRun, setLatestSyncRun] = useState<SyncRunRow | null>(null);
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [sortKey, setSortKey] = useState<CreativeSortKey>("purchases");
+  const [groupBy, setGroupBy] = useState<CreativeGroupBy>("none");
+  const [mediaFilter, setMediaFilter] = useState<CreativeMediaType | "all">("all");
+  const [pipelineFilter, setPipelineFilter] = useState<CreativePipelineStatus | "all">("all");
+  const [activeFixedGroup, setActiveFixedGroup] = useState<FixedCreativeGroupKey>("all");
+  const [activeCustomGroupId, setActiveCustomGroupId] = useState<string | null>(null);
+  const [expandedCardId, setExpandedCardId] = useState<string | null>(null);
+  const [groupDialogOpen, setGroupDialogOpen] = useState(false);
+  const [groupForm, setGroupForm] = useState<GroupFormState>(EMPTY_GROUP_FORM);
+
+  const load = useCallback(async () => {
+    if (!projectId) return;
+    setLoading(true);
+    try {
+      let metricsQuery = supabase
+        .from("creative_asset_daily_metrics" as never)
+        .select("asset_id, event_date, spend, impressions, clicks, outbound_clicks, ctr, link_ctr, cpm, purchases, revenue, roas, cpa, hook_rate, has_meta_data, has_gateway_data")
+        .eq("project_id", projectId);
+
+      if (dateRange?.from) metricsQuery = metricsQuery.gte("event_date", dateRange.from);
+      if (dateRange?.to) metricsQuery = metricsQuery.lte("event_date", dateRange.to);
+
+      const [
+        { data: projectRow },
+        { data: assetRows },
+        { data: adRows },
+        { data: metricRows },
+        { data: analysisRows },
+        { data: groupRows },
+        { data: syncRows },
+      ] = await Promise.all([
+        supabase
+          .from("projects")
+          .select("workspace_id")
+          .eq("id", projectId)
+          .maybeSingle(),
+        supabase
+          .from("creative_assets" as never)
+          .select("id, creative_id, asset_key, media_type, thumbnail_url, media_storage_path, headline, primary_text, cta, landing_url, analysis_status, last_meta_synced_at, source_media_url, source_fetched_at, media_bytes, media_duration_ms, media_fingerprint, poster_storage_path, last_processed_at, processing_version")
+          .eq("project_id", projectId)
+          .order("updated_at", { ascending: false }),
+        supabase
+          .from("creative_asset_ads" as never)
+          .select("asset_id, ad_id, ad_name, adset_id, adset_name, campaign_id, campaign_name")
+          .eq("project_id", projectId),
+        metricsQuery,
+        supabase
+          .from("creative_asset_analysis" as never)
+          .select("asset_id, status, transcript_status, transcript, transcript_segments, transcript_language, transcript_provider, transcript_model, transcript_error_message, summary, hook, hook_timestamps, angle, copy, cta, visual, visual_evidence, tags, scores, analysis_coverage, analysis_error_message, error_message, processed_at")
+          .eq("project_id", projectId),
+        supabase
+          .from("creative_groups" as never)
+          .select("id, name, rules, sort_key")
+          .eq("project_id", projectId)
+          .order("created_at", { ascending: true }),
+        supabase
+          .from("sync_runs")
+          .select("source, status, error_message, created_at")
+          .eq("project_id", projectId)
+          .eq("source", "creative")
+          .order("created_at", { ascending: false })
+          .limit(1),
+      ]);
+
+      setWorkspaceId((projectRow as { workspace_id?: string } | null)?.workspace_id ?? null);
+      setAssets((assetRows ?? []) as unknown as CreativeAssetRow[]);
+      setAssetAds((adRows ?? []) as unknown as CreativeAssetAdRow[]);
+      setMetrics((metricRows ?? []) as unknown as CreativeAssetMetricRow[]);
+      setAnalyses((analysisRows ?? []) as unknown as CreativeAssetAnalysisRow[]);
+      setGroups((groupRows ?? []) as unknown as CreativeGroupRow[]);
+      setLatestSyncRun(((syncRows ?? [])[0] as SyncRunRow | undefined) ?? null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Erro ao carregar criativos");
+    } finally {
+      setLoading(false);
+    }
+  }, [dateRange?.from, dateRange?.to, projectId]);
 
   useEffect(() => {
     if (!projectId) return;
-    setLoading(true);
+    void load();
+  }, [load, projectId]);
 
-    Promise.all([
-      // Meta ad insights
-      supabase
-        .from("raw_events")
-        .select("payload")
-        .eq("project_id", projectId)
-        .eq("source", "meta")
-        .eq("event_type", "insight_ad")
-        .limit(5000),
-      // VTurb traffic by source (para correlacao)
-      supabase
-        .from("raw_events")
-        .select("payload")
-        .eq("project_id", projectId)
-        .eq("source", "vturb")
-        .eq("event_type", "traffic_by_source")
-        .limit(5000),
-      // Gateway events (para correlacao)
-      supabase
-        .from("raw_events")
-        .select("event_type, payload")
-        .eq("project_id", projectId)
-        .eq("source", "gateway")
-        .in("event_type", ["purchase.approved", "checkout_created"])
-        .limit(5000),
-    ]).then(([meta, vturb, gateway]) => {
-      setMetaEvents((meta.data ?? []) as Array<{ payload: RawMetaPayload | null }>);
-      setVturbEvents((vturb.data ?? []) as Array<{ payload: RawVturbPayload | null }>);
-      setGatewayEvents((gateway.data ?? []) as Array<{ event_type: string; payload: RawGatewayPayload | null }>);
-      setLoading(false);
-    });
-  }, [projectId]);
+  async function syncCreatives() {
+    if (!projectId) return;
+    setSyncing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("creative-sync", {
+        body: {
+          project_id: projectId,
+          days: 30,
+          reprocess: true,
+        },
+      });
+      if (error) throw error;
+      if ((data as { error?: string } | null)?.error) {
+        throw new Error((data as { error: string }).error);
+      }
+      toast.success("Criativos sincronizados");
+      await load();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Erro ao sincronizar criativos");
+    } finally {
+      setSyncing(false);
+    }
+  }
 
-  // Correlacionar dados de todas as fontes
-  const { ads, campaigns: hierarchy } = useMemo(() => {
-    const result = correlateAdFunnel({
-      metaEvents,
-      vturbEvents,
-      gatewayEvents,
-    });
+  async function createGroup() {
+    if (!projectId || !workspaceId || !user?.id) {
+      toast.error("Contexto do projeto indisponível para salvar o grupo");
+      return;
+    }
 
-    // Ordenar ads
-    const sortedAds = sortFunnelItems(result.ads, sortKey);
+    if (!groupForm.name.trim()) {
+      toast.error("Dê um nome para o grupo");
+      return;
+    }
 
-    // Ordenar hierarquia
-    const sortedCampaigns = sortFunnelItems(result.campaigns, sortKey).map((campaign) => ({
-      ...campaign,
-      adsets: sortFunnelItems(campaign.adsets, sortKey).map((adset) => ({
-        ...adset,
-        ads: sortFunnelItems(adset.ads, sortKey),
-      })),
-    }));
+    const rules = buildGroupRulesFromForm(groupForm);
+    try {
+      const { data, error } = await supabase
+        .from("creative_groups" as never)
+        .insert({
+          project_id: projectId,
+          workspace_id: workspaceId,
+          user_id: user.id,
+          name: groupForm.name.trim(),
+          rules,
+          sort_key: groupForm.sortKey,
+          visibility: "private",
+        })
+        .select("id, name, rules, sort_key")
+        .single();
+      if (error) throw error;
+      const nextRow = data as unknown as CreativeGroupRow;
+      setGroups((current) => [...current, nextRow]);
+      setActiveCustomGroupId(nextRow.id);
+      setActiveFixedGroup("all");
+      setGroupDialogOpen(false);
+      setGroupForm(EMPTY_GROUP_FORM);
+      toast.success("Grupo salvo");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Erro ao salvar grupo");
+    }
+  }
 
-    return { ads: sortedAds, campaigns: sortedCampaigns };
-  }, [metaEvents, vturbEvents, gatewayEvents, sortKey]);
+  const cards = useMemo(
+    () => buildCreativeAssetCards({ assets, ads: assetAds, metrics, analyses }),
+    [assets, assetAds, metrics, analyses],
+  );
 
-  const toggleCampaign = (id: string) => {
-    setExpandedCampaigns((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
+  const activeCustomGroup = useMemo(
+    () => groups.find((group) => group.id === activeCustomGroupId) ?? null,
+    [groups, activeCustomGroupId],
+  );
 
-  const toggleAdset = (id: string) => {
-    setExpandedAdsets((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
+  const composedRules = useMemo(() => {
+    const customRules = activeCustomGroup ? parseCreativeGroupRules(activeCustomGroup.rules) : {};
+    const manualRules: CreativeGroupRules = {
+      mediaType: mediaFilter,
+      pipelineStatus: pipelineFilter,
+    };
+    return {
+      ...customRules,
+      ...(manualRules.mediaType && manualRules.mediaType !== "all" ? { mediaType: manualRules.mediaType } : {}),
+      ...(manualRules.pipelineStatus && manualRules.pipelineStatus !== "all" ? { pipelineStatus: manualRules.pipelineStatus } : {}),
+    };
+  }, [activeCustomGroup, mediaFilter, pipelineFilter]);
 
-  const expandAll = () => {
-    setExpandedCampaigns(new Set(hierarchy.map((c) => c.id)));
-    setExpandedAdsets(new Set(hierarchy.flatMap((c) => c.adsets.map((a) => a.id))));
-  };
+  const filteredCards = useMemo(() => {
+    const base = applyCreativeFilters(cards, { search, rules: composedRules });
+    if (activeFixedGroup === "best-hooks") {
+      return base.filter((card) => (card.hookRate ?? 0) > 0);
+    }
+    if (activeFixedGroup === "best-roas") {
+      return base.filter((card) => (card.roas ?? 0) > 0);
+    }
+    return base.filter((card) => card.spend > 0 || card.purchases > 0 || card.impressions > 0);
+  }, [activeFixedGroup, cards, composedRules, search]);
 
-  const collapseAll = () => {
-    setExpandedCampaigns(new Set());
-    setExpandedAdsets(new Set());
-  };
+  const effectiveSortKey = useMemo(
+    () => resolveSortKey(activeFixedGroup, sortKey, activeCustomGroup?.sort_key ?? null),
+    [activeCustomGroup?.sort_key, activeFixedGroup, sortKey],
+  );
+
+  const sortedCards = useMemo(
+    () => sortCreativeCards(filteredCards, effectiveSortKey),
+    [effectiveSortKey, filteredCards],
+  );
+
+  const groupedCards = useMemo(
+    () => groupCreativeCards(sortedCards, groupBy),
+    [groupBy, sortedCards],
+  );
+
+  const metricScale = useMemo(() => {
+    const values = {
+      ctr: Math.max(...sortedCards.map((card) => card.ctr ?? 0), 1),
+      cpm: Math.max(...sortedCards.map((card) => card.cpm ?? 0), 1),
+      hookRate: Math.max(...sortedCards.map((card) => card.hookRate ?? 0), 1),
+    };
+    return values;
+  }, [sortedCards]);
 
   if (!projectId) {
     return (
-      <div className="section-card text-sm text-muted-foreground">
-        Salve ou abra um projeto API para ver anúncios.
+      <div className="rounded-2xl border border-border/40 bg-gradient-to-br from-card/80 to-card/40 p-8 text-center">
+        <div className="mx-auto w-12 h-12 rounded-xl bg-muted/50 flex items-center justify-center mb-4">
+          <Layers className="w-6 h-6 text-muted-foreground" />
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Salve ou abra um projeto API para ver anúncios.
+        </p>
       </div>
     );
   }
 
   return (
-    <div className="section-card">
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-        <div>
-          <h2 className="text-base font-semibold">Funil por Anúncio</h2>
-          <p className="text-xs text-muted-foreground">
-            Campanha → Adset → Ad com funil completo (Meta + VTurb + Gateway).
+    <div className="space-y-6">
+      {/* Header Principal */}
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="space-y-1">
+          <h2 className="text-xl font-semibold tracking-tight">Galeria de Criativos</h2>
+          <p className="text-sm text-muted-foreground">
+            {sortedCards.length > 0
+              ? `${sortedCards.length} criativo${sortedCards.length > 1 ? "s" : ""} • análise, métricas e performance`
+              : "Visual por asset criativo com análise e métricas"}
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex rounded-lg border border-border overflow-hidden">
+        <div className="flex items-center gap-3">
+          {/* Toggle Cards/Funil/Caminhos */}
+          <div className="flex rounded-xl border border-border/60 bg-muted/30 p-1">
             <button
               type="button"
-              onClick={() => setViewMode("hierarchy")}
+              onClick={() => setViewMode("cards")}
               className={cn(
-                "px-3 py-1.5 text-xs font-medium transition-colors",
-                viewMode === "hierarchy"
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-transparent hover:bg-muted"
+                "flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-medium transition-all",
+                viewMode === "cards"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
               )}
             >
-              Hierarquia
+              <Layers className="w-3.5 h-3.5" />
+              Cards
             </button>
             <button
               type="button"
-              onClick={() => setViewMode("flat")}
+              onClick={() => setViewMode("funnel")}
               className={cn(
-                "px-3 py-1.5 text-xs font-medium transition-colors",
-                viewMode === "flat"
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-transparent hover:bg-muted"
+                "flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-medium transition-all",
+                viewMode === "funnel"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
               )}
             >
-              Lista
+              <TrendingUp className="w-3.5 h-3.5" />
+              Funil
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("paths")}
+              className={cn(
+                "flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-medium transition-all",
+                viewMode === "paths"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <Target className="w-3.5 h-3.5" />
+              Caminhos
             </button>
           </div>
-          {viewMode === "hierarchy" && (
-            <div className="flex gap-1">
-              <Button variant="ghost" size="sm" onClick={expandAll} className="h-7 text-xs">
-                Expandir
-              </Button>
-              <Button variant="ghost" size="sm" onClick={collapseAll} className="h-7 text-xs">
-                Recolher
-              </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={syncCreatives}
+            disabled={syncing}
+            className="gap-2 rounded-xl border-border/60 bg-muted/20 hover:bg-muted/40"
+          >
+            {syncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            <span className="hidden sm:inline">Sincronizar</span>
+          </Button>
+        </div>
+      </header>
+
+      {/* Sync Status Banner */}
+      {latestSyncRun && (
+        <div
+          className={cn(
+            "flex items-center gap-3 rounded-xl border px-4 py-3 text-sm",
+            latestSyncRun.status === "failed" && "border-red-500/20 bg-red-500/5 text-red-200",
+            latestSyncRun.status === "running" && "border-amber-500/20 bg-amber-500/5 text-amber-200",
+            latestSyncRun.status === "succeeded" && "border-emerald-500/20 bg-emerald-500/5 text-emerald-200",
+          )}
+        >
+          {latestSyncRun.status === "running" && <Loader2 className="w-4 h-4 animate-spin shrink-0" />}
+          {latestSyncRun.status === "failed" && <AlertTriangle className="w-4 h-4 shrink-0" />}
+          {latestSyncRun.status === "succeeded" && <Sparkles className="w-4 h-4 shrink-0" />}
+          <span className="flex-1">
+            {latestSyncRun.status === "running"
+              ? "Sincronização em andamento..."
+              : latestSyncRun.status === "failed"
+                ? latestSyncRun.error_message ?? "Sincronização falhou"
+                : "Fila de criativos atualizada"}
+          </span>
+          <span className="text-xs opacity-70">
+            {formatDistanceToNow(new Date(latestSyncRun.created_at), { addSuffix: true, locale: ptBR })}
+          </span>
+        </div>
+      )}
+
+      {viewMode === "funnel" ? (
+        <AdsFunnelView projectId={projectId} />
+      ) : viewMode === "paths" ? (
+        <AdsPathsView projectId={projectId} />
+      ) : loading ? (
+        <div className="flex flex-col items-center justify-center py-24 gap-4">
+          <div className="relative">
+            <div className="absolute inset-0 rounded-full bg-violet-500/20 blur-xl animate-pulse" />
+            <Loader2 className="relative w-8 h-8 animate-spin text-violet-400" />
+          </div>
+          <p className="text-sm text-muted-foreground">Carregando criativos...</p>
+        </div>
+      ) : (
+        <>
+          {/* Grupos de Criativos */}
+          <div className="flex flex-wrap items-center gap-2">
+            {FIXED_CREATIVE_GROUPS.map((group) => {
+              const isActive = activeFixedGroup === group.key && !activeCustomGroupId;
+              return (
+                <button
+                  key={group.key}
+                  type="button"
+                  onClick={() => {
+                    setActiveFixedGroup(group.key);
+                    setActiveCustomGroupId(null);
+                  }}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-medium transition-all",
+                    isActive
+                      ? "bg-violet-500/15 text-violet-300 ring-1 ring-violet-500/30"
+                      : "bg-muted/40 text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                  )}
+                >
+                  {group.key === "best-hooks" && <Zap className="w-3.5 h-3.5" />}
+                  {group.key === "best-roas" && <TrendingUp className="w-3.5 h-3.5" />}
+                  {group.label}
+                </button>
+              );
+            })}
+            <div className="h-5 w-px bg-border/50 mx-1" />
+            {groups.map((group) => {
+              const isActive = activeCustomGroupId === group.id;
+              return (
+                <button
+                  key={group.id}
+                  type="button"
+                  onClick={() => {
+                    setActiveCustomGroupId(group.id);
+                    setActiveFixedGroup("all");
+                  }}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-medium transition-all",
+                    isActive
+                      ? "bg-cyan-500/15 text-cyan-300 ring-1 ring-cyan-500/30"
+                      : "bg-muted/40 text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                  )}
+                >
+                  <Tag className="w-3 h-3" />
+                  {group.name}
+                </button>
+              );
+            })}
+            <button
+              type="button"
+              onClick={() => setGroupDialogOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-dashed border-border/60 px-3 py-2 text-xs font-medium text-muted-foreground transition-all hover:border-border hover:bg-muted/30 hover:text-foreground"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Novo grupo
+            </button>
+          </div>
+
+          {/* Toolbar de Filtros */}
+          <div className="rounded-2xl border border-border/40 bg-gradient-to-br from-muted/30 to-muted/10 p-4">
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
+              {/* Search */}
+              <div className="relative lg:col-span-1">
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Buscar criativos..."
+                  className="pl-10 h-10 rounded-xl border-border/50 bg-background/60 placeholder:text-muted-foreground/60"
+                />
+              </div>
+              {/* Selects */}
+              <ToolbarSelect
+                icon={<Settings2 className="w-3.5 h-3.5" />}
+                label="Ordenar"
+                value={sortKey}
+                onValueChange={(value) => setSortKey(value as CreativeSortKey)}
+                options={[
+                  { value: "purchases", label: "Vendas" },
+                  { value: "roas", label: "ROAS" },
+                  { value: "hook_rate", label: "Hook Rate" },
+                  { value: "ctr", label: "CTR" },
+                  { value: "cpm", label: "CPM" },
+                  { value: "spend", label: "Gasto" },
+                ]}
+              />
+              <ToolbarSelect
+                icon={<Layers className="w-3.5 h-3.5" />}
+                label="Agrupar"
+                value={groupBy}
+                onValueChange={(value) => setGroupBy(value as CreativeGroupBy)}
+                options={[
+                  { value: "none", label: "Sem agrupar" },
+                  { value: "campaign", label: "Campanha" },
+                  { value: "adset", label: "Adset" },
+                  { value: "media_type", label: "Tipo" },
+                ]}
+              />
+              <ToolbarSelect
+                icon={<Play className="w-3.5 h-3.5" />}
+                label="Mídia"
+                value={mediaFilter}
+                onValueChange={(value) => setMediaFilter(value as CreativeMediaType | "all")}
+                options={[
+                  { value: "all", label: "Todos" },
+                  { value: "video", label: "Vídeo" },
+                  { value: "image", label: "Imagem" },
+                  { value: "unknown", label: "Sem mídia" },
+                ]}
+              />
+              <ToolbarSelect
+                icon={<Sparkles className="w-3.5 h-3.5" />}
+                label="Pipeline"
+                value={pipelineFilter}
+                onValueChange={(value) => setPipelineFilter(value as CreativePipelineStatus | "all")}
+                options={[
+                  { value: "all", label: "Todos" },
+                  { value: "ready", label: "Pronto" },
+                  { value: "transcribing", label: "Transcrevendo" },
+                  { value: "analyzing", label: "Analisando" },
+                  { value: "pending", label: "Pendente" },
+                  { value: "missing_transcript", label: "Sem transcript" },
+                  { value: "oversized_queued", label: "Vídeo grande em fila" },
+                  { value: "failed", label: "Falhou" },
+                  { value: "missing_media", label: "Sem mídia" },
+                ]}
+              />
+            </div>
+          </div>
+
+          {/* Grid de Cards */}
+          {sortedCards.length === 0 ? (
+            <EmptyCardsState
+              latestSyncRun={latestSyncRun}
+              onRetry={syncCreatives}
+              syncing={syncing}
+            />
+          ) : (
+            <div className="space-y-8">
+              {groupedCards.map((group) => (
+                <section key={group.key} className="space-y-4">
+                  {groupBy !== "none" && (
+                    <div className="flex items-center gap-3">
+                      <div className="h-px flex-1 bg-gradient-to-r from-border/60 to-transparent" />
+                      <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                        <Layers className="w-4 h-4 text-muted-foreground" />
+                        {group.label}
+                        <span className="rounded-full bg-muted/60 px-2 py-0.5 text-xs text-muted-foreground">
+                          {group.cards.length}
+                        </span>
+                      </div>
+                      <div className="h-px flex-1 bg-gradient-to-l from-border/60 to-transparent" />
+                    </div>
+                  )}
+                  <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                    {group.cards.map((card) => (
+                      <CreativeCard
+                        key={card.id}
+                        card={card}
+                        expanded={expandedCardId === card.id}
+                        metricScale={metricScale}
+                        onToggle={() => setExpandedCardId((current) => current === card.id ? null : card.id)}
+                      />
+                    ))}
+                  </div>
+                </section>
+              ))}
             </div>
           )}
-          <div className="flex flex-wrap gap-1">
-            {(["spend", "real_roas", "revenue", "purchases", "real_cpa"] as SortKey[]).map((key) => (
-              <Button
-                key={key}
-                type="button"
-                variant={sortKey === key ? "secondary" : "outline"}
-                size="sm"
-                onClick={() => setSortKey(key)}
-                className="h-7 gap-1 text-xs"
-              >
-                <ArrowDownUp className="w-3 h-3" />
-                {labelForFunnelSort(key)}
-              </Button>
-            ))}
+        </>
+      )}
+
+      <Dialog open={groupDialogOpen} onOpenChange={setGroupDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Novo grupo de criativos</DialogTitle>
+            <DialogDescription>
+              Salve um conjunto de regras para reaplicar filtros e ordenação na grade de cards.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field label="Nome">
+              <Input value={groupForm.name} onChange={(event) => setGroupForm((current) => ({ ...current, name: event.target.value }))} />
+            </Field>
+            <Field label="Ordenação padrão">
+              <Select value={groupForm.sortKey} onValueChange={(value) => setGroupForm((current) => ({ ...current, sortKey: value as CreativeSortKey }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="purchases">Vendas</SelectItem>
+                  <SelectItem value="roas">ROAS</SelectItem>
+                  <SelectItem value="hook_rate">Hook Rate</SelectItem>
+                  <SelectItem value="ctr">CTR</SelectItem>
+                  <SelectItem value="cpm">CPM</SelectItem>
+                  <SelectItem value="spend">Gasto</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label="Tipo de mídia">
+              <Select value={groupForm.mediaType} onValueChange={(value) => setGroupForm((current) => ({ ...current, mediaType: value as CreativeMediaType | "all" }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos</SelectItem>
+                  <SelectItem value="video">Vídeo</SelectItem>
+                  <SelectItem value="image">Imagem</SelectItem>
+                  <SelectItem value="unknown">Sem mídia</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label="Status do pipeline">
+              <Select value={groupForm.pipelineStatus} onValueChange={(value) => setGroupForm((current) => ({ ...current, pipelineStatus: value as CreativePipelineStatus | "all" }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos</SelectItem>
+                  <SelectItem value="ready">Pronto</SelectItem>
+                  <SelectItem value="transcribing">Transcrevendo</SelectItem>
+                  <SelectItem value="analyzing">Analisando</SelectItem>
+                  <SelectItem value="pending">Pendente</SelectItem>
+                  <SelectItem value="missing_transcript">Sem transcript</SelectItem>
+                  <SelectItem value="oversized_queued">Vídeo grande em fila</SelectItem>
+                  <SelectItem value="failed">Falhou</SelectItem>
+                  <SelectItem value="missing_media">Sem mídia</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label="Campanha contém">
+              <Input value={groupForm.campaignQuery} onChange={(event) => setGroupForm((current) => ({ ...current, campaignQuery: event.target.value }))} />
+            </Field>
+            <Field label="Adset contém">
+              <Input value={groupForm.adsetQuery} onChange={(event) => setGroupForm((current) => ({ ...current, adsetQuery: event.target.value }))} />
+            </Field>
+            <Field label="Hook Rate mínimo">
+              <Input value={groupForm.minHookRate} onChange={(event) => setGroupForm((current) => ({ ...current, minHookRate: event.target.value }))} inputMode="decimal" />
+            </Field>
+            <Field label="ROAS mínimo">
+              <Input value={groupForm.minRoas} onChange={(event) => setGroupForm((current) => ({ ...current, minRoas: event.target.value }))} inputMode="decimal" />
+            </Field>
+            <Field label="CTR mínimo">
+              <Input value={groupForm.minCtr} onChange={(event) => setGroupForm((current) => ({ ...current, minCtr: event.target.value }))} inputMode="decimal" />
+            </Field>
+            <Field label="CPM máximo">
+              <Input value={groupForm.maxCpm} onChange={(event) => setGroupForm((current) => ({ ...current, maxCpm: event.target.value }))} inputMode="decimal" />
+            </Field>
+            <Field label="Gasto mínimo">
+              <Input value={groupForm.minSpend} onChange={(event) => setGroupForm((current) => ({ ...current, minSpend: event.target.value }))} inputMode="decimal" />
+            </Field>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setGroupDialogOpen(false)}>Cancelar</Button>
+            <Button onClick={createGroup}>Salvar grupo</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function EmptyCardsState({
+  latestSyncRun,
+  onRetry,
+  syncing,
+}: {
+  latestSyncRun: SyncRunRow | null;
+  onRetry: () => void;
+  syncing: boolean;
+}) {
+  const isFailed = latestSyncRun?.status === "failed";
+  const isRunning = latestSyncRun?.status === "running";
+
+  return (
+    <div className="relative overflow-hidden rounded-3xl border border-border/30 bg-gradient-to-br from-card/90 via-card/60 to-card/40 px-8 py-16 text-center">
+      {/* Background decoration */}
+      <div className="absolute inset-0 overflow-hidden">
+        <div className="absolute -top-24 -right-24 w-64 h-64 rounded-full bg-violet-500/5 blur-3xl" />
+        <div className="absolute -bottom-24 -left-24 w-64 h-64 rounded-full bg-cyan-500/5 blur-3xl" />
+      </div>
+
+      <div className="relative">
+        {/* Icon */}
+        <div className="mx-auto mb-6 relative">
+          {isFailed ? (
+            <div className="w-16 h-16 rounded-2xl bg-red-500/10 flex items-center justify-center mx-auto">
+              <AlertTriangle className="w-8 h-8 text-red-400" />
+            </div>
+          ) : isRunning ? (
+            <div className="w-16 h-16 rounded-2xl bg-amber-500/10 flex items-center justify-center mx-auto">
+              <Loader2 className="w-8 h-8 text-amber-400 animate-spin" />
+            </div>
+          ) : (
+            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-violet-500/20 to-cyan-500/20 flex items-center justify-center mx-auto">
+              <Sparkles className="w-8 h-8 text-violet-300" />
+            </div>
+          )}
+        </div>
+
+        {/* Title */}
+        <h3 className="text-xl font-semibold tracking-tight mb-2">
+          {isFailed
+            ? "Sincronização falhou"
+            : isRunning
+              ? "Processando criativos"
+              : "Nenhum criativo encontrado"}
+        </h3>
+
+        {/* Description */}
+        <p className="text-sm text-muted-foreground max-w-md mx-auto leading-relaxed">
+          {isFailed
+            ? latestSyncRun?.error_message ?? "Ocorreu um erro durante a sincronização. Tente novamente."
+            : isRunning
+              ? "A sincronização está em andamento. Os criativos aparecerão em breve."
+              : "Sincronize os criativos do Meta Ads para visualizar a galeria com mídia, análises e métricas."}
+        </p>
+
+        {/* Action */}
+        {!isRunning && (
+          <Button
+            variant="outline"
+            onClick={onRetry}
+            disabled={syncing}
+            className="mt-6 gap-2 rounded-xl border-border/60 bg-background/40 hover:bg-background/60"
+          >
+            {syncing ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <RefreshCw className="w-4 h-4" />
+            )}
+            Sincronizar criativos
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CreativeCard({
+  card,
+  expanded,
+  metricScale,
+  onToggle,
+}: {
+  card: CreativeAssetCard;
+  expanded: boolean;
+  metricScale: { ctr: number; cpm: number; hookRate: number };
+  onToggle: () => void;
+}) {
+  const title = card.headline || card.adNames[0] || card.assetKey;
+  const previewText = card.primaryText || card.summary || "";
+
+  return (
+    <article
+      className={cn(
+        "group relative overflow-hidden rounded-2xl border transition-all duration-300",
+        expanded
+          ? "border-violet-500/30 bg-gradient-to-b from-card to-card/80 shadow-xl shadow-violet-500/5"
+          : "border-border/40 bg-card/90 hover:border-border/60 hover:shadow-lg hover:shadow-black/20",
+      )}
+    >
+      {/* Hero Media */}
+      <div className="relative aspect-[16/9] overflow-hidden bg-gradient-to-br from-slate-900 via-slate-800/90 to-slate-950">
+        {card.mediaUrl ? (
+          <>
+            <img
+              src={card.mediaUrl}
+              alt={title}
+              className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+            />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
+          </>
+        ) : (
+          <div className="h-full w-full flex flex-col items-center justify-center gap-2 text-muted-foreground/60">
+            {card.mediaType === "video" ? (
+              <Clapperboard className="w-12 h-12" />
+            ) : (
+              <ImageIcon className="w-12 h-12" />
+            )}
+            <span className="text-xs">Sem preview</span>
+          </div>
+        )}
+
+        {/* Top badges */}
+        <div className="absolute inset-x-0 top-0 flex items-start justify-between p-3 gap-2">
+          <div className="flex flex-wrap gap-2">
+            <PipelineBadge status={card.pipelineStatus} />
+            <CoverageBadge coverage={card.analysisCoverage} />
+          </div>
+          <MediaBadge mediaType={card.mediaType} />
+        </div>
+
+        {/* Bottom overlay */}
+        <div className="absolute inset-x-0 bottom-0 p-4">
+          <h3 className="text-sm font-semibold text-white line-clamp-2 leading-snug drop-shadow-lg">
+            {title}
+          </h3>
+          <div className="flex items-center gap-2 mt-2">
+            <span className="inline-flex items-center gap-1 text-[11px] text-white/70">
+              <Eye className="w-3 h-3" />
+              {card.adsCount} anúncio{card.adsCount !== 1 ? "s" : ""}
+            </span>
+            {card.processedAt && (
+              <>
+                <span className="text-white/30">•</span>
+                <span className="text-[11px] text-white/60">
+                  {formatDistanceToNow(new Date(card.processedAt), { addSuffix: true, locale: ptBR })}
+                </span>
+              </>
+            )}
           </div>
         </div>
       </div>
 
-      {loading ? (
-        <div className="py-10 flex justify-center">
-          <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
-        </div>
-      ) : ads.length === 0 ? (
-        <div className="rounded-lg border border-border/50 p-8 text-center">
-          <Megaphone className="w-10 h-10 mx-auto mb-3 text-muted-foreground" />
-          <h3 className="font-semibold mb-1">Sem dados de anúncios</h3>
-          <p className="text-sm text-muted-foreground mb-4">
-            Sincronize a Meta para ver insights por anúncio, campanha e adset.
-          </p>
-          {projectId && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => navigate(`/diagnostics?project=${projectId}`)}
-            >
-              Ir para Diagnóstico
-            </Button>
-          )}
-        </div>
-      ) : viewMode === "flat" ? (
-        <FlatTable ads={ads} />
-      ) : (
-        <HierarchyView
-          campaigns={hierarchy}
-          expandedCampaigns={expandedCampaigns}
-          expandedAdsets={expandedAdsets}
-          toggleCampaign={toggleCampaign}
-          toggleAdset={toggleAdset}
-        />
-      )}
-
-      {/* Summary Stats */}
-      {ads.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mt-4 pt-4 border-t border-border/50">
-          <SummaryStat
-            label="Gasto Total"
-            value={fBRL(ads.reduce((sum, a) => sum + a.spend, 0))}
-          />
-          <SummaryStat
-            label="Vendas (Gateway)"
-            value={fNum(ads.reduce((sum, a) => sum + a.gateway_purchases, 0))}
-          />
-          <SummaryStat
-            label="Receita (Gateway)"
-            value={fBRL(ads.reduce((sum, a) => sum + a.gateway_revenue, 0))}
-          />
-          <SummaryStat
-            label="ROAS Real"
-            value={(() => {
-              const totalSpend = ads.reduce((sum, a) => sum + a.spend, 0);
-              const totalRevenue = ads.reduce((sum, a) => sum + a.gateway_revenue, 0);
-              return totalSpend > 0 && totalRevenue > 0 ? `${(totalRevenue / totalSpend).toFixed(2)}x` : "—";
-            })()}
-          />
-          <SummaryStat
-            label="CPA Real"
-            value={(() => {
-              const totalSpend = ads.reduce((sum, a) => sum + a.spend, 0);
-              const totalPurchases = ads.reduce((sum, a) => sum + a.gateway_purchases, 0);
-              return totalPurchases > 0 ? fBRL(totalSpend / totalPurchases) : "—";
-            })()}
-          />
-          <SummaryStat
-            label="Ads Correlacionados"
-            value={`${ads.filter((a) => a.has_vturb_data || a.has_gateway_data).length}/${ads.length}`}
-          />
-        </div>
-      )}
-    </div>
-  );
-}
-
-function HierarchyView({
-  campaigns,
-  expandedCampaigns,
-  expandedAdsets,
-  toggleCampaign,
-  toggleAdset,
-}: {
-  campaigns: CampaignFunnelMetric[];
-  expandedCampaigns: Set<string>;
-  expandedAdsets: Set<string>;
-  toggleCampaign: (id: string) => void;
-  toggleAdset: (id: string) => void;
-}) {
-  return (
-    <div className="space-y-2">
-      {campaigns.map((campaign) => (
-        <div key={campaign.id} className="rounded-lg border border-border/50 overflow-hidden">
-          {/* Campaign Header */}
-          <button
-            type="button"
-            onClick={() => toggleCampaign(campaign.id)}
-            className="w-full flex flex-col gap-2 px-4 py-3 bg-muted/30 hover:bg-muted/50 transition-colors text-left"
-          >
-            <div className="flex items-center gap-3 w-full">
-              {expandedCampaigns.has(campaign.id) ? (
-                <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />
-              ) : (
-                <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
-              )}
-              <div className="flex-1 min-w-0">
-                <div className="font-semibold truncate">{campaign.name}</div>
-                <div className="text-[10px] text-muted-foreground">
-                  {campaign.adsets.length} conjunto(s) · {campaign.total_ads} anúncio(s)
-                </div>
-              </div>
-              <div className="flex items-center gap-3 shrink-0">
-                <CorrelationBadge adsWithData={campaign.ads_with_data} totalAds={campaign.total_ads} />
-                <RoasBadge roas={campaign.real_roas} label="Real" />
-              </div>
-            </div>
-            {/* Funil da Campanha */}
-            <div className="flex items-center gap-1 text-[10px] ml-7">
-              <FunnelStep label="Cliques" value={campaign.clicks} />
-              <FunnelArrow rate={campaign.click_to_view} />
-              <FunnelStep label="Views" value={campaign.vturb_views} highlight={campaign.has_vturb_data} />
-              <FunnelArrow rate={campaign.view_to_pitch} />
-              <FunnelStep label="Pitch" value={campaign.vturb_pitch_reached} highlight={campaign.has_vturb_data} />
-              <FunnelArrow rate={campaign.pitch_to_checkout} />
-              <FunnelStep label="Chk" value={campaign.gateway_checkouts} highlight={campaign.has_gateway_data} />
-              <FunnelArrow rate={campaign.checkout_to_purchase} />
-              <FunnelStep label="Vendas" value={campaign.gateway_purchases} highlight={campaign.gateway_purchases > 0} />
-              <div className="ml-3 text-xs">
-                <span className="text-muted-foreground">{fBRL(campaign.spend)}</span>
-                <span className="mx-1">→</span>
-                <span className="font-medium text-emerald-600">{fBRL(campaign.gateway_revenue)}</span>
-              </div>
-            </div>
-          </button>
-
-          {/* Adsets */}
-          {expandedCampaigns.has(campaign.id) && (
-            <div className="border-t border-border/30">
-              {campaign.adsets.map((adset) => (
-                <div key={adset.id}>
-                  {/* Adset Header */}
-                  <button
-                    type="button"
-                    onClick={() => toggleAdset(adset.id)}
-                    className="w-full flex flex-col gap-2 px-4 py-2.5 pl-8 bg-background hover:bg-muted/30 transition-colors text-left border-b border-border/20"
+      {/* Content */}
+      <div className="p-4 space-y-4">
+        {/* Tags */}
+        {(card.tags.length > 0 || previewText) && (
+          <div className="space-y-3">
+            {card.tags.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {card.tags.slice(0, 4).map((tag) => (
+                  <span
+                    key={tag}
+                    className="inline-flex items-center rounded-lg bg-muted/60 px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
                   >
-                    <div className="flex items-center gap-3 w-full">
-                      {expandedAdsets.has(adset.id) ? (
-                        <ChevronDown className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                      ) : (
-                        <ChevronRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium truncate">{adset.name}</div>
-                        <div className="text-[10px] text-muted-foreground">{adset.ads.length} anúncio(s)</div>
-                      </div>
-                      <div className="flex items-center gap-3 text-xs shrink-0">
-                        <CorrelationBadge adsWithData={adset.ads_with_data} totalAds={adset.total_ads} size="sm" />
-                        <RoasBadge roas={adset.real_roas} size="sm" />
-                      </div>
-                    </div>
-                    {/* Funil do Adset */}
-                    <div className="flex items-center gap-1 text-[10px] ml-5">
-                      <FunnelStep label="Cliques" value={adset.clicks} size="sm" />
-                      <FunnelArrow rate={adset.click_to_view} />
-                      <FunnelStep label="Views" value={adset.vturb_views} highlight={adset.has_vturb_data} size="sm" />
-                      <FunnelArrow rate={adset.view_to_pitch} />
-                      <FunnelStep label="Pitch" value={adset.vturb_pitch_reached} highlight={adset.has_vturb_data} size="sm" />
-                      <FunnelArrow rate={adset.pitch_to_checkout} />
-                      <FunnelStep label="Chk" value={adset.gateway_checkouts} highlight={adset.has_gateway_data} size="sm" />
-                      <FunnelArrow rate={adset.checkout_to_purchase} />
-                      <FunnelStep label="Vendas" value={adset.gateway_purchases} highlight={adset.gateway_purchases > 0} size="sm" />
-                      <div className="ml-2 text-xs">
-                        <span className="text-muted-foreground">{fBRL(adset.spend)}</span>
-                        <span className="mx-1">→</span>
-                        <span className="font-medium text-emerald-600">{fBRL(adset.gateway_revenue)}</span>
-                      </div>
-                    </div>
-                  </button>
+                    {tag}
+                  </span>
+                ))}
+                {card.tags.length > 4 && (
+                  <span className="inline-flex items-center rounded-lg bg-muted/40 px-2 py-0.5 text-[10px] text-muted-foreground/70">
+                    +{card.tags.length - 4}
+                  </span>
+                )}
+              </div>
+            )}
+            {previewText && (
+              <p className="text-[13px] text-muted-foreground leading-relaxed line-clamp-2">
+                {previewText}
+              </p>
+            )}
+          </div>
+        )}
 
-                  {/* Ads */}
-                  {expandedAdsets.has(adset.id) && (
-                    <div className="bg-muted/10">
-                      {adset.ads.map((ad) => (
-                        <div
-                          key={ad.id}
-                          className="flex flex-col gap-2 px-4 py-3 pl-14 border-b border-border/10 last:border-0"
-                        >
-                          <div className="flex items-center gap-3">
-                            <div className="flex-1 min-w-0">
-                              <div className="text-sm truncate">{ad.name}</div>
-                              <div className="text-[10px] text-muted-foreground font-mono">{ad.id}</div>
-                            </div>
-                            <CorrelationBadge status={ad.correlation_status} size="sm" />
-                            <RoasBadge roas={ad.real_roas} size="sm" />
-                          </div>
+        {/* Primary Metrics */}
+        <div className="grid grid-cols-3 gap-2">
+          <MetricTile
+            label="Gasto"
+            value={fBRL(card.spend)}
+          />
+          <MetricTile
+            label="Vendas"
+            value={fNum(card.purchases)}
+            accent="violet"
+            highlight={card.purchases > 0}
+          />
+          <MetricTile
+            label="ROAS"
+            value={card.roas != null ? `${card.roas.toFixed(2)}x` : "—"}
+            accent="emerald"
+            highlight={card.roas != null && card.roas >= 2}
+          />
+        </div>
 
-                          {/* Funil Completo do Ad */}
-                          <div className="flex items-center gap-1 text-[10px]">
-                            <FunnelStep label="Cliques" value={ad.clicks} size="sm" />
-                            <FunnelArrow rate={ad.click_to_view} />
-                            <FunnelStep label="Views" value={ad.vturb_views} highlight={ad.has_vturb_data} size="sm" />
-                            <FunnelArrow rate={ad.view_to_pitch} />
-                            <FunnelStep label="Pitch" value={ad.vturb_pitch_reached} highlight={ad.has_vturb_data} size="sm" />
-                            <FunnelArrow rate={ad.pitch_to_checkout} />
-                            <FunnelStep label="Chk" value={ad.gateway_checkouts} highlight={ad.has_gateway_data} size="sm" />
-                            <FunnelArrow rate={ad.checkout_to_purchase} />
-                            <FunnelStep label="Vendas" value={ad.gateway_purchases} highlight={ad.gateway_purchases > 0} size="sm" />
-                            <div className="ml-2 text-xs">
-                              <span className="text-muted-foreground">{fBRL(ad.spend)}</span>
-                              <span className="mx-1">→</span>
-                              <span className="font-medium text-emerald-600">{fBRL(ad.gateway_revenue)}</span>
-                              {ad.real_cpa && (
-                                <span className="ml-2 text-muted-foreground">CPA {fBRL(ad.real_cpa)}</span>
-                              )}
-                            </div>
+        {/* Secondary Metrics */}
+        <div className="space-y-2">
+          <MetricBar
+            label="CPM"
+            value={card.cpm != null ? fBRL(card.cpm) : "—"}
+            width={card.cpm != null ? Math.min(100, (card.cpm / metricScale.cpm) * 100) : 0}
+            tone="amber"
+          />
+          <MetricBar
+            label="CTR"
+            value={card.ctr != null ? fPct(card.ctr, 2) : "—"}
+            width={card.ctr != null ? Math.min(100, (card.ctr / metricScale.ctr) * 100) : 0}
+            tone="cyan"
+          />
+          <MetricBar
+            label="Hook"
+            value={card.hookRate != null ? fPct(card.hookRate, 2) : "—"}
+            width={card.hookRate != null ? Math.min(100, (card.hookRate / metricScale.hookRate) * 100) : 0}
+            tone="emerald"
+          />
+        </div>
+
+        {/* Expand Toggle */}
+        <button
+          type="button"
+          onClick={onToggle}
+          className={cn(
+            "w-full flex items-center justify-center gap-2 rounded-xl py-2.5 text-xs font-medium transition-all",
+            expanded
+              ? "bg-violet-500/10 text-violet-300 hover:bg-violet-500/15"
+              : "bg-muted/40 text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+          )}
+        >
+          {expanded ? (
+            <>
+              <ChevronUp className="w-4 h-4" />
+              Recolher análise
+            </>
+          ) : (
+            <>
+              <ChevronDown className="w-4 h-4" />
+              Ver análise completa
+            </>
+          )}
+        </button>
+
+        {/* Expanded Content */}
+        {expanded && (
+          <div className="space-y-4 pt-2 animate-in slide-in-from-top-2 duration-300">
+            <Tabs defaultValue="summary" className="w-full">
+              <TabsList className="w-full grid grid-cols-2 h-9 p-1 bg-muted/40 rounded-xl">
+                <TabsTrigger
+                  value="summary"
+                  className="rounded-lg text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm"
+                >
+                  Resumo
+                </TabsTrigger>
+                <TabsTrigger
+                  value="transcript"
+                  className="rounded-lg text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm"
+                >
+                  Transcrição
+                </TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="summary" className="mt-4 space-y-3">
+                <div className="grid gap-2 sm:grid-cols-3">
+                  <MetricTile label="Hook Score" value={card.scores.hook != null ? `${Math.round(card.scores.hook)}` : "—"} accent="violet" highlight={(card.scores.hook ?? 0) >= 75} />
+                  <MetricTile label="Clareza" value={card.scores.clareza != null ? `${Math.round(card.scores.clareza)}` : "—"} accent="default" />
+                  <MetricTile label="Escala" value={card.scores.potencial_de_escala != null ? `${Math.round(card.scores.potencial_de_escala)}` : "—"} accent="emerald" highlight={(card.scores.potencial_de_escala ?? 0) >= 75} />
+                </div>
+
+                {/* Analysis Grid */}
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <AnalysisBlock title="Resumo" text={card.summary} icon={<Sparkles className="w-3 h-3" />} />
+                  <AnalysisBlock title="Hook" text={card.hook} icon={<Zap className="w-3 h-3" />} accent="amber" />
+                  <AnalysisBlock title="Ângulo" text={card.angle} icon={<TrendingUp className="w-3 h-3" />} />
+                  <AnalysisBlock title="Copy" text={card.copy} icon={<Filter className="w-3 h-3" />} />
+                </div>
+
+                {/* CTA & Visual */}
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <AnalysisBlock title="CTA" text={card.cta} compact />
+                  <AnalysisBlock title="Visual" text={card.visual} compact />
+                </div>
+
+                {card.hookTimestamps.length > 0 && (
+                  <div className="rounded-xl border border-border/30 bg-muted/20 p-3 space-y-2">
+                    <div className="text-[10px] uppercase tracking-wider font-medium text-muted-foreground">
+                      Timestamps do Hook
+                    </div>
+                    <div className="space-y-2">
+                      {card.hookTimestamps.map((item) => (
+                        <div key={`${item.start_ms}-${item.label}`} className="rounded-lg border border-border/20 bg-background/40 px-3 py-2">
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="text-xs font-medium text-foreground">{item.label}</span>
+                            <span className="text-[11px] text-amber-300">{formatMsLabel(item.start_ms)} - {formatMsLabel(item.end_ms)}</span>
                           </div>
+                          <p className="mt-1 text-xs text-muted-foreground">{item.reason}</p>
                         </div>
                       ))}
                     </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      ))}
-    </div>
+                  </div>
+                )}
+
+                {card.visualEvidence.length > 0 && (
+                  <div className="rounded-xl border border-border/30 bg-muted/20 p-3 space-y-2">
+                    <div className="text-[10px] uppercase tracking-wider font-medium text-muted-foreground">
+                      Evidências Visuais
+                    </div>
+                    <div className="space-y-2">
+                      {card.visualEvidence.map((item) => (
+                        <div key={`${item.timestamp_ms}-${item.observation}`} className="flex items-start justify-between gap-3 rounded-lg border border-border/20 bg-background/40 px-3 py-2">
+                          <p className="text-xs text-foreground/90">{item.observation}</p>
+                          <span className="shrink-0 text-[11px] text-cyan-300">{formatMsLabel(item.timestamp_ms)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Vínculos */}
+                {(card.campaignNames.length > 0 || card.adsetNames.length > 0) && (
+                  <div className="rounded-xl border border-border/30 bg-muted/20 p-3 space-y-2">
+                    <div className="text-[10px] uppercase tracking-wider font-medium text-muted-foreground">
+                      Campanhas & Adsets
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {card.campaignNames.map((campaign) => (
+                        <span
+                          key={campaign}
+                          className="inline-flex items-center rounded-lg bg-violet-500/10 border border-violet-500/20 px-2 py-0.5 text-[10px] text-violet-300"
+                        >
+                          {campaign}
+                        </span>
+                      ))}
+                      {card.adsetNames.map((adset) => (
+                        <span
+                          key={adset}
+                          className="inline-flex items-center rounded-lg bg-muted/50 px-2 py-0.5 text-[10px] text-muted-foreground"
+                        >
+                          {adset}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Error */}
+                {(card.errorMessage || card.transcriptErrorMessage || card.analysisErrorMessage) && (
+                  <div className="flex items-start gap-2 rounded-xl border border-red-500/20 bg-red-500/5 p-3">
+                    <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      {card.transcriptErrorMessage && <p className="text-xs text-red-200">Transcript: {card.transcriptErrorMessage}</p>}
+                      {card.analysisErrorMessage && <p className="text-xs text-red-200">Análise: {card.analysisErrorMessage}</p>}
+                      {!card.transcriptErrorMessage && !card.analysisErrorMessage && card.errorMessage && <p className="text-xs text-red-200">{card.errorMessage}</p>}
+                    </div>
+                  </div>
+                )}
+              </TabsContent>
+
+              <TabsContent value="transcript" className="mt-4">
+                {card.transcriptSegments.length > 0 ? (
+                  <div className="rounded-xl border border-border/30 bg-muted/20 p-4 max-h-72 overflow-y-auto space-y-3">
+                    {card.transcriptSegments.map((segment) => (
+                      <div key={`${segment.start_ms}-${segment.end_ms}-${segment.text.slice(0, 12)}`} className="grid grid-cols-[88px_1fr] gap-3 rounded-lg border border-border/20 bg-background/40 px-3 py-2">
+                        <span className="text-[11px] font-medium text-cyan-300">
+                          {formatMsLabel(segment.start_ms)} - {formatMsLabel(segment.end_ms)}
+                        </span>
+                        <p className="text-sm text-foreground/90 leading-relaxed">{segment.text}</p>
+                      </div>
+                    ))}
+                    {card.transcript && (
+                      <div className="rounded-lg border border-dashed border-border/20 px-3 py-2">
+                        <p className="text-xs uppercase tracking-wider text-muted-foreground">Transcript completo</p>
+                        <p className="mt-2 text-sm text-foreground/80 whitespace-pre-line leading-relaxed">{card.transcript}</p>
+                      </div>
+                    )}
+                  </div>
+                ) : card.transcript ? (
+                  <div className="rounded-xl border border-border/30 bg-muted/20 p-4 max-h-64 overflow-y-auto">
+                    <p className="text-sm text-foreground/90 whitespace-pre-line leading-relaxed">{card.transcript}</p>
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-dashed border-border/30 bg-muted/10 p-6 text-center">
+                    <Clapperboard className="w-8 h-8 text-muted-foreground/40 mx-auto mb-2" />
+                    <p className="text-sm text-muted-foreground">
+                      {labelForTranscriptStatus(card.transcriptStatus)}
+                    </p>
+                    <p className="text-xs text-muted-foreground/60 mt-1">
+                      {card.mediaType === "image"
+                        ? "Disponível apenas para vídeos"
+                        : card.transcriptStatus === "oversized_queued"
+                          ? "O worker está quebrando o áudio em partes para transcrever."
+                          : card.transcriptStatus === "failed"
+                            ? "A transcrição falhou e pode ser reprocessada."
+                            : "Aguardando processamento"}
+                    </p>
+                  </div>
+                )}
+              </TabsContent>
+            </Tabs>
+          </div>
+        )}
+      </div>
+    </article>
   );
 }
 
-function FlatTable({ ads }: { ads: AdFunnelMetric[] }) {
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead className="text-xs text-muted-foreground border-b border-border/50">
-          <tr>
-            <th className="text-left py-2 pr-3">Anúncio</th>
-            <th className="text-left py-2 pr-3">Campanha</th>
-            <th className="text-right py-2 pr-3">Gasto</th>
-            <th className="text-right py-2 pr-3">Cliques</th>
-            <th className="text-right py-2 pr-3">Views</th>
-            <th className="text-right py-2 pr-3">Pitch</th>
-            <th className="text-right py-2 pr-3">Chk</th>
-            <th className="text-right py-2 pr-3">Vendas</th>
-            <th className="text-right py-2 pr-3">Receita</th>
-            <th className="text-right py-2 pr-3">CPA</th>
-            <th className="text-right py-2 pr-3">ROAS</th>
-            <th className="text-center py-2">Corr.</th>
-          </tr>
-        </thead>
-        <tbody>
-          {ads.map((row) => (
-            <tr key={row.id} className="border-b border-border/30 last:border-0">
-              <td className="py-2 pr-3 min-w-[200px]">
-                <div className="font-medium truncate max-w-[200px]">{row.name}</div>
-                <div className="text-[10px] text-muted-foreground font-mono">{row.id}</div>
-              </td>
-              <td className="py-2 pr-3 min-w-[150px]">
-                <div className="truncate max-w-[150px]">{row.campaign_name}</div>
-                <div className="text-[10px] text-muted-foreground truncate">{row.adset_name}</div>
-              </td>
-              <td className="py-2 pr-3 text-right tabular-nums">{fBRL(row.spend)}</td>
-              <td className="py-2 pr-3 text-right tabular-nums">{fNum(row.clicks)}</td>
-              <td className="py-2 pr-3 text-right tabular-nums">{fNum(row.vturb_views)}</td>
-              <td className="py-2 pr-3 text-right tabular-nums">{fNum(row.vturb_pitch_reached)}</td>
-              <td className="py-2 pr-3 text-right tabular-nums">{fNum(row.gateway_checkouts)}</td>
-              <td className="py-2 pr-3 text-right tabular-nums">{fNum(row.gateway_purchases)}</td>
-              <td className="py-2 pr-3 text-right tabular-nums">{fBRL(row.gateway_revenue)}</td>
-              <td className="py-2 pr-3 text-right tabular-nums">{fBRL(row.real_cpa)}</td>
-              <td className="py-2 pr-3 text-right">
-                <RoasBadge roas={row.real_roas} size="sm" />
-              </td>
-              <td className="py-2 text-center">
-                <CorrelationBadge status={row.correlation_status} size="sm" />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function FunnelStep({
+function ToolbarSelect({
+  icon,
   label,
   value,
-  highlight,
-  size = "md",
+  onValueChange,
+  options,
+}: {
+  icon?: ReactNode;
+  label: string;
+  value: string;
+  onValueChange: (value: string) => void;
+  options: Array<{ value: string; label: string }>;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground/80 font-medium">
+        {icon}
+        {label}
+      </div>
+      <Select value={value} onValueChange={onValueChange}>
+        <SelectTrigger className="h-10 rounded-xl border-border/50 bg-background/60 text-sm">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent className="rounded-xl">
+          {options.map((option) => (
+            <SelectItem key={option.value} value={option.value} className="rounded-lg">
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
+function MetricTile({
+  label,
+  value,
+  accent = "default",
+  highlight = false,
 }: {
   label: string;
-  value: number;
+  value: string;
+  accent?: "default" | "emerald" | "violet";
   highlight?: boolean;
-  size?: "sm" | "md";
 }) {
   return (
     <div
       className={cn(
-        "text-center rounded",
-        size === "sm" ? "px-1 py-0.5" : "px-1.5 py-0.5",
-        highlight && "bg-emerald-500/10 text-emerald-600"
+        "relative overflow-hidden rounded-xl border px-3 py-2.5 transition-colors",
+        accent === "default" && "border-border/40 bg-muted/30",
+        accent === "emerald" && "border-emerald-500/20 bg-emerald-500/5",
+        accent === "violet" && "border-violet-500/20 bg-violet-500/5",
+        highlight && accent === "emerald" && "border-emerald-500/40 bg-emerald-500/10",
+        highlight && accent === "violet" && "border-violet-500/40 bg-violet-500/10",
       )}
     >
-      <div className={cn("font-semibold tabular-nums", size === "sm" ? "text-[10px]" : "text-xs")}>
-        {fNum(value)}
-      </div>
-      <div className={cn("opacity-70", size === "sm" ? "text-[8px]" : "text-[9px]")}>{label}</div>
-    </div>
-  );
-}
-
-function FunnelArrow({ rate }: { rate: number | null }) {
-  return (
-    <div className="flex flex-col items-center px-0.5">
-      <span className="text-muted-foreground/40 text-[10px]">→</span>
-      {rate !== null && (
-        <span
+      {highlight && (
+        <div
           className={cn(
-            "text-[8px] tabular-nums",
-            rate >= 50 ? "text-emerald-600" : rate >= 20 ? "text-amber-600" : "text-muted-foreground"
+            "absolute inset-0 opacity-30",
+            accent === "emerald" && "bg-gradient-to-br from-emerald-500/20 to-transparent",
+            accent === "violet" && "bg-gradient-to-br from-violet-500/20 to-transparent",
+          )}
+        />
+      )}
+      <div className="relative">
+        <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">{label}</div>
+        <div
+          className={cn(
+            "mt-0.5 text-base font-semibold tabular-nums",
+            highlight && accent === "emerald" && "text-emerald-300",
+            highlight && accent === "violet" && "text-violet-300",
           )}
         >
-          {fPct(rate)}
-        </span>
-      )}
+          {value}
+        </div>
+      </div>
     </div>
   );
 }
 
-function CorrelationBadge({
-  status,
-  adsWithData,
-  totalAds,
-  size = "md",
+function MetricBar({
+  label,
+  value,
+  width,
+  tone,
 }: {
-  status?: "full" | "partial" | "none";
-  adsWithData?: number;
-  totalAds?: number;
-  size?: "sm" | "md";
+  label: string;
+  value: string;
+  width: number;
+  tone: "amber" | "cyan" | "emerald";
 }) {
-  // Se temos adsWithData e totalAds, calculamos a porcentagem
-  if (adsWithData !== undefined && totalAds !== undefined && totalAds > 0) {
-    const pct = Math.round((adsWithData / totalAds) * 100);
-    const isFull = pct === 100;
-    const isPartial = pct > 0 && pct < 100;
+  return (
+    <div className="flex items-center gap-3">
+      <span className="w-12 text-[11px] text-muted-foreground font-medium shrink-0">{label}</span>
+      <div className="flex-1 h-1.5 rounded-full bg-muted/50 overflow-hidden">
+        <div
+          className={cn(
+            "h-full rounded-full transition-all duration-500 ease-out",
+            tone === "amber" && "bg-gradient-to-r from-amber-500 to-amber-400",
+            tone === "cyan" && "bg-gradient-to-r from-cyan-500 to-cyan-400",
+            tone === "emerald" && "bg-gradient-to-r from-emerald-500 to-emerald-400",
+          )}
+          style={{ width: `${Math.max(2, width)}%` }}
+        />
+      </div>
+      <span className="w-16 text-right tabular-nums text-xs font-medium text-foreground/80">{value}</span>
+    </div>
+  );
+}
 
-    return (
-      <span
+function PipelineBadge({ status }: { status: CreativePipelineStatus }) {
+  const config: Record<CreativePipelineStatus, { icon: ReactNode; label: string; className: string }> = {
+    ready: {
+      icon: <Sparkles className="w-3 h-3" />,
+      label: "Pronto",
+      className: "bg-emerald-500/20 text-emerald-200 border-emerald-500/30",
+    },
+    transcribing: {
+      icon: <Loader2 className="w-3 h-3 animate-spin" />,
+      label: "Transcrevendo",
+      className: "bg-amber-500/20 text-amber-200 border-amber-500/30",
+    },
+    analyzing: {
+      icon: <Loader2 className="w-3 h-3 animate-spin" />,
+      label: "Analisando",
+      className: "bg-cyan-500/20 text-cyan-200 border-cyan-500/30",
+    },
+    pending: {
+      icon: <Loader2 className="w-3 h-3" />,
+      label: "Pendente",
+      className: "bg-muted/40 text-muted-foreground border-border/50",
+    },
+    missing_transcript: {
+      icon: <Clapperboard className="w-3 h-3" />,
+      label: "Sem transcript",
+      className: "bg-orange-500/20 text-orange-200 border-orange-500/30",
+    },
+    oversized_queued: {
+      icon: <Clapperboard className="w-3 h-3" />,
+      label: "Vídeo grande em fila",
+      className: "bg-fuchsia-500/20 text-fuchsia-200 border-fuchsia-500/30",
+    },
+    failed: {
+      icon: <AlertTriangle className="w-3 h-3" />,
+      label: "Falhou",
+      className: "bg-red-500/20 text-red-200 border-red-500/30",
+    },
+    missing_media: {
+      icon: <ImageIcon className="w-3 h-3" />,
+      label: "Sem mídia",
+      className: "bg-muted/40 text-muted-foreground border-border/50",
+    },
+  };
+
+  const { icon, label, className } = config[status];
+
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-medium backdrop-blur-md",
+        className,
+      )}
+    >
+      {icon}
+      {label}
+    </span>
+  );
+}
+
+function CoverageBadge({ coverage }: { coverage: CreativeAnalysisCoverage }) {
+  const label =
+    coverage === "full"
+      ? "Cobertura total"
+      : coverage === "partial"
+        ? "Cobertura parcial"
+        : coverage === "failed"
+          ? "Cobertura falhou"
+          : coverage === "not_applicable"
+            ? "Sem transcript"
+            : "Cobertura pendente";
+
+  return (
+    <span className="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[10px] font-medium text-white/80 backdrop-blur-md">
+      {label}
+    </span>
+  );
+}
+
+function MediaBadge({ mediaType }: { mediaType: CreativeMediaType }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-lg bg-black/50 border border-white/10 backdrop-blur-md px-2 py-1 text-[10px] font-medium text-white/90">
+      {mediaType === "video" ? (
+        <Play className="w-3 h-3" />
+      ) : mediaType === "image" ? (
+        <ImageIcon className="w-3 h-3" />
+      ) : (
+        <Layers className="w-3 h-3" />
+      )}
+      {labelForMediaType(mediaType)}
+    </span>
+  );
+}
+
+function AnalysisBlock({
+  title,
+  text,
+  icon,
+  accent,
+  compact = false,
+}: {
+  title: string;
+  text: string | null;
+  icon?: ReactNode;
+  accent?: "amber" | "emerald" | "cyan" | "violet";
+  compact?: boolean;
+}) {
+  const hasContent = text && text.trim().length > 0;
+
+  return (
+    <div
+      className={cn(
+        "rounded-xl border transition-colors",
+        hasContent
+          ? "border-border/30 bg-muted/20"
+          : "border-dashed border-border/20 bg-muted/10",
+        compact ? "p-2.5" : "p-3",
+      )}
+    >
+      <div
         className={cn(
-          "inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-medium",
-          size === "sm" ? "text-[9px]" : "text-[10px]",
-          isFull && "bg-emerald-500/10 text-emerald-600",
-          isPartial && "bg-amber-500/10 text-amber-600",
-          !isFull && !isPartial && "bg-muted text-muted-foreground"
+          "flex items-center gap-1.5 text-[10px] uppercase tracking-wider font-medium",
+          accent === "amber" && "text-amber-400/80",
+          accent === "emerald" && "text-emerald-400/80",
+          accent === "cyan" && "text-cyan-400/80",
+          accent === "violet" && "text-violet-400/80",
+          !accent && "text-muted-foreground",
         )}
       >
-        {isFull ? <Link2 className="w-2.5 h-2.5" /> : <Link2Off className="w-2.5 h-2.5" />}
-        {pct}%
-      </span>
-    );
-  }
-
-  // Caso contrário, usamos o status diretamente
-  const finalStatus = status ?? "none";
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-medium",
-        size === "sm" ? "text-[9px]" : "text-[10px]",
-        finalStatus === "full" && "bg-emerald-500/10 text-emerald-600",
-        finalStatus === "partial" && "bg-amber-500/10 text-amber-600",
-        finalStatus === "none" && "bg-muted text-muted-foreground"
-      )}
-    >
-      {finalStatus === "full" ? (
-        <Link2 className="w-2.5 h-2.5" />
-      ) : (
-        <Link2Off className="w-2.5 h-2.5" />
-      )}
-      {finalStatus === "full" ? "OK" : finalStatus === "partial" ? "Parcial" : "—"}
-    </span>
-  );
-}
-
-function MetricBadge({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="text-center">
-      <div className="font-semibold tabular-nums">{value}</div>
-      <div className="text-[10px] text-muted-foreground">{label}</div>
+        {icon}
+        {title}
+      </div>
+      <p
+        className={cn(
+          "mt-1.5 text-[13px] leading-relaxed",
+          hasContent ? "text-foreground/90" : "text-muted-foreground/50 italic",
+          compact && "line-clamp-2",
+        )}
+      >
+        {hasContent ? text : "Não disponível"}
+      </p>
     </div>
   );
 }
 
-function RoasBadge({
-  roas,
-  size = "md",
-  label,
-}: {
-  roas: number | null;
-  size?: "sm" | "md";
-  label?: string;
-}) {
-  if (roas === null || roas === 0) {
-    return (
-      <span className={cn("text-muted-foreground", size === "sm" ? "text-[10px]" : "text-xs")}>
-        — {label ?? "ROAS"}
-      </span>
-    );
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="flex flex-col gap-1.5">
+      <Label>{label}</Label>
+      {children}
+    </label>
+  );
+}
+
+function labelForTranscriptStatus(status: CreativeTranscriptStatus) {
+  switch (status) {
+    case "processing":
+      return "Transcrição em andamento";
+    case "ready":
+      return "Transcript pronta";
+    case "failed":
+      return "Transcript falhou";
+    case "not_applicable":
+      return "Sem transcript";
+    case "missing_media":
+      return "Sem mídia";
+    case "oversized_queued":
+      return "Vídeo grande em fila";
+    default:
+      return "Transcript pendente";
   }
-
-  const isGood = roas >= 2;
-  const isBad = roas < 1;
-
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-medium tabular-nums",
-        size === "sm" ? "text-[10px]" : "text-xs",
-        isGood && "bg-emerald-500/10 text-emerald-600",
-        isBad && "bg-red-500/10 text-red-500",
-        !isGood && !isBad && "bg-amber-500/10 text-amber-600"
-      )}
-    >
-      {isGood ? (
-        <TrendingUp className={cn(size === "sm" ? "w-2.5 h-2.5" : "w-3 h-3")} />
-      ) : isBad ? (
-        <TrendingDown className={cn(size === "sm" ? "w-2.5 h-2.5" : "w-3 h-3")} />
-      ) : null}
-      {roas.toFixed(2)}x{label ? ` ${label}` : ""}
-    </span>
-  );
 }
 
-function SummaryStat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="text-center">
-      <div className="text-[11px] text-muted-foreground mb-0.5">{label}</div>
-      <div className="text-lg font-semibold">{value}</div>
-    </div>
-  );
+function formatMsLabel(value: number) {
+  const totalSeconds = Math.max(0, Math.floor(value / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
+function buildGroupRulesFromForm(form: GroupFormState): CreativeGroupRules {
+  const rules: CreativeGroupRules = {};
+  if (form.mediaType !== "all") rules.mediaType = form.mediaType;
+  if (form.pipelineStatus !== "all") rules.pipelineStatus = form.pipelineStatus;
+  if (form.campaignQuery.trim()) rules.campaignQuery = form.campaignQuery.trim();
+  if (form.adsetQuery.trim()) rules.adsetQuery = form.adsetQuery.trim();
+  const numericRules: Array<[keyof CreativeGroupRules, string]> = [
+    ["minHookRate", form.minHookRate],
+    ["minRoas", form.minRoas],
+    ["minCtr", form.minCtr],
+    ["maxCpm", form.maxCpm],
+    ["minSpend", form.minSpend],
+  ];
+  for (const [key, value] of numericRules) {
+    const parsed = Number(value);
+    if (value !== "" && Number.isFinite(parsed)) {
+      (rules[key] as number | null | undefined) = parsed;
+    }
+  }
+  return rules;
+}
