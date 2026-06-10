@@ -20,7 +20,7 @@ services:
   - type: worker
     name: infiniteprofit-creative-worker
     runtime: node
-    buildCommand: npm ci
+    buildCommand: apt-get update && apt-get install -y ffmpeg && npm ci
     startCommand: npm run creative-worker
     envVars:
       - key: SUPABASE_URL
@@ -45,3 +45,7 @@ services:
         value: "5000"
       - key: CREATIVE_WORKER_BATCH_SIZE
         value: "2"
+      - key: FFMPEG_PATH
+        value: /usr/bin/ffmpeg
+      - key: FFPROBE_PATH
+        value: /usr/bin/ffprobe
