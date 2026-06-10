@@ -94,6 +94,7 @@ async function processJob(job) {
         contentType: guessContentType(sourceFile, "image"),
       });
       await persistSuccess({
+        job,
         payload,
         transcript: null,
         transcriptSegments: [],
@@ -221,6 +222,7 @@ async function processJob(job) {
     });
 
     await persistSuccess({
+      job,
       payload,
       transcript,
       transcriptSegments,
@@ -438,6 +440,7 @@ async function transcribeFile(filePath) {
 }
 
 async function persistSuccess({
+  job,
   payload,
   transcript,
   transcriptSegments,
@@ -459,9 +462,9 @@ async function persistSuccess({
     .from("creative_asset_analysis")
     .upsert({
       asset_id: payload.asset_id,
-      project_id: payload.project_id,
-      workspace_id: payload.workspace_id,
-      user_id: payload.user_id,
+      project_id: payload.project_id || job.project_id,
+      workspace_id: payload.workspace_id || job.workspace_id,
+      user_id: job.user_id,
       status,
       transcript_status: transcriptStatus,
       transcript,
@@ -527,9 +530,9 @@ async function persistFailure(job, payload, error) {
     .from("creative_asset_analysis")
     .upsert({
       asset_id: payload.asset_id,
-      project_id: payload.project_id,
-      workspace_id: payload.workspace_id,
-      user_id: payload.user_id,
+      project_id: payload.project_id || job.project_id,
+      workspace_id: payload.workspace_id || job.workspace_id,
+      user_id: job.user_id,
       status: assetStatus,
       transcript_status: transcriptStatus,
       transcript_error_message: transcriptStatus === "failed" ? message : null,
