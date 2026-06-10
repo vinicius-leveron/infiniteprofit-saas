@@ -457,7 +457,11 @@ async function persistSuccess({
 
   await supabase
     .from("creative_asset_analysis")
-    .update({
+    .upsert({
+      asset_id: payload.asset_id,
+      project_id: payload.project_id,
+      workspace_id: payload.workspace_id,
+      user_id: payload.user_id,
       status,
       transcript_status: transcriptStatus,
       transcript,
@@ -483,8 +487,7 @@ async function persistSuccess({
       error_message: analysis.errorMessage,
       analysis_error_message: analysis.errorMessage,
       processed_at: now,
-    })
-    .eq("asset_id", payload.asset_id);
+    }, { onConflict: "asset_id" });
 
   await supabase
     .from("creative_assets")
@@ -522,15 +525,18 @@ async function persistFailure(job, payload, error) {
 
   await supabase
     .from("creative_asset_analysis")
-    .update({
+    .upsert({
+      asset_id: payload.asset_id,
+      project_id: payload.project_id,
+      workspace_id: payload.workspace_id,
+      user_id: payload.user_id,
       status: assetStatus,
       transcript_status: transcriptStatus,
       transcript_error_message: transcriptStatus === "failed" ? message : null,
       analysis_coverage: analysisCoverage,
       analysis_error_message: message,
       error_message: message,
-    })
-    .eq("asset_id", payload.asset_id);
+    }, { onConflict: "asset_id" });
 
   await supabase
     .from("creative_assets")
