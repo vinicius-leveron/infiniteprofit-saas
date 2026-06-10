@@ -30,7 +30,7 @@ services:
       - key: CREATIVE_TRANSCRIPTION_PROVIDER
         value: openai
       - key: CREATIVE_TRANSCRIPTION_MODEL
-        value: gpt-4o-mini-transcribe
+        value: whisper-1
       - key: CREATIVE_ANALYSIS_PROVIDER
         value: anthropic
       - key: CREATIVE_ANALYSIS_MODEL
