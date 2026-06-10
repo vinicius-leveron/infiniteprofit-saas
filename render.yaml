@@ -19,9 +19,9 @@ services:
         destination: /index.html
   - type: worker
     name: infiniteprofit-creative-worker
-    runtime: node
-    buildCommand: apt-get update && apt-get install -y ffmpeg && npm ci
-    startCommand: npm run creative-worker
+    runtime: docker
+    dockerfilePath: ./workers/creative-processor/Dockerfile
+    dockerContext: .
     envVars:
       - key: SUPABASE_URL
         value: https://nztnctrkmfrgclrnflfa.supabase.co
