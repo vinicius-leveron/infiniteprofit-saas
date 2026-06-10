@@ -1,6 +1,4 @@
 import { createClient } from "@supabase/supabase-js";
-import ffmpegPath from "ffmpeg-static";
-import ffprobeStatic from "ffprobe-static";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
@@ -26,8 +24,8 @@ const PROMPT_VERSION = process.env.CREATIVE_ANALYSIS_PROMPT_VERSION || "creative
 const POLL_INTERVAL_MS = Number(process.env.CREATIVE_WORKER_POLL_INTERVAL_MS || "5000");
 const BATCH_SIZE = Number(process.env.CREATIVE_WORKER_BATCH_SIZE || "2");
 const WORKER_ID = process.env.CREATIVE_WORKER_ID || process.env.RENDER_SERVICE_NAME || os.hostname();
-const FFMPEG_BIN = process.env.FFMPEG_PATH || ffmpegPath || "ffmpeg";
-const FFPROBE_BIN = process.env.FFPROBE_PATH || ffprobeStatic.path || "ffprobe";
+const FFMPEG_BIN = process.env.FFMPEG_PATH || "ffmpeg";
+const FFPROBE_BIN = process.env.FFPROBE_PATH || "ffprobe";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
