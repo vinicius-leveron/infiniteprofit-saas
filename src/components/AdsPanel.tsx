@@ -7,6 +7,7 @@ import {
   ChevronUp,
   Clapperboard,
   Eye,
+  ExternalLink,
   Filter,
   Image as ImageIcon,
   Layers,
@@ -20,6 +21,7 @@ import {
   Tag,
   Target,
   TrendingUp,
+  Wand2,
   Zap,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -143,6 +145,7 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
   const [activeFixedGroup, setActiveFixedGroup] = useState<FixedCreativeGroupKey>("all");
   const [activeCustomGroupId, setActiveCustomGroupId] = useState<string | null>(null);
   const [expandedCardId, setExpandedCardId] = useState<string | null>(null);
+  const [analyzingAssetId, setAnalyzingAssetId] = useState<string | null>(null);
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
   const [groupForm, setGroupForm] = useState<GroupFormState>(EMPTY_GROUP_FORM);
 
@@ -227,7 +230,7 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
         body: {
           project_id: projectId,
           days: 30,
-          reprocess: true,
+          enqueue_analysis: false,
         },
       });
       if (error) throw error;
@@ -240,6 +243,38 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
       toast.error(error instanceof Error ? error.message : "Erro ao sincronizar criativos");
     } finally {
       setSyncing(false);
+    }
+  }
+
+  async function analyzeCreative(card: CreativeAssetCard) {
+    if (!projectId) return;
+    setAnalyzingAssetId(card.id);
+    try {
+      const reprocessScope =
+        card.mediaType === "video" && card.transcriptStatus !== "ready"
+          ? "transcript"
+          : "analysis";
+      const { data, error } = await supabase.functions.invoke("creative-sync", {
+        body: {
+          project_id: projectId,
+          asset_id: card.id,
+          reprocess: true,
+          reprocess_scope: reprocessScope,
+          enqueue_analysis: true,
+        },
+      });
+      if (error) throw error;
+      if ((data as { error?: string } | null)?.error) {
+        throw new Error((data as { error: string }).error);
+      }
+      toast.success(card.mediaType === "video" && reprocessScope === "transcript"
+        ? "Transcrição enviada para a fila"
+        : "Análise enviada para a fila");
+      await load();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Erro ao enfileirar análise");
+    } finally {
+      setAnalyzingAssetId(null);
     }
   }
 
@@ -623,6 +658,8 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
                         expanded={expandedCardId === card.id}
                         metricScale={metricScale}
                         onToggle={() => setExpandedCardId((current) => current === card.id ? null : card.id)}
+                        onAnalyze={() => analyzeCreative(card)}
+                        analyzing={analyzingAssetId === card.id}
                       />
                     ))}
                   </div>
@@ -799,14 +836,26 @@ function CreativeCard({
   expanded,
   metricScale,
   onToggle,
+  onAnalyze,
+  analyzing,
 }: {
   card: CreativeAssetCard;
   expanded: boolean;
   metricScale: { ctr: number; cpm: number; hookRate: number };
   onToggle: () => void;
+  onAnalyze: () => void;
+  analyzing: boolean;
 }) {
   const title = card.headline || card.adNames[0] || card.assetKey;
   const previewText = card.primaryText || card.summary || "";
+  const landingLabel = compactUrlLabel(card.landingUrl);
+  const analyzeLabel =
+    card.mediaType === "video" && card.transcriptStatus !== "ready"
+      ? "Transcrever"
+      : card.pipelineStatus === "ready"
+        ? "Reanalisar"
+        : "Analisar";
+  const canAnalyze = card.mediaType !== "unknown" && card.pipelineStatus !== "missing_media";
 
   return (
     <article
@@ -900,6 +949,36 @@ function CreativeCard({
           </div>
         )}
 
+        {/* Source Metadata */}
+        <div className="flex flex-wrap gap-1.5">
+          {card.cta && <InfoPill label="CTA" value={card.cta} />}
+          <InfoPill label="Ads" value={String(card.adsCount)} />
+          <InfoPill label="Campanhas" value={String(card.campaignNames.length)} />
+          <InfoPill label="Adsets" value={String(card.adsetNames.length)} />
+          {card.landingUrl && (
+            <a
+              href={card.landingUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-lg border border-border/40 bg-muted/30 px-2 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:border-border hover:text-foreground"
+            >
+              <ExternalLink className="w-3 h-3 shrink-0" />
+              <span className="truncate">{landingLabel}</span>
+            </a>
+          )}
+          {card.sourceMediaUrl && (
+            <a
+              href={card.sourceMediaUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 rounded-lg border border-border/40 bg-muted/30 px-2 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:border-border hover:text-foreground"
+            >
+              <ExternalLink className="w-3 h-3" />
+              Mídia
+            </a>
+          )}
+        </div>
+
         {/* Primary Metrics */}
         <div className="grid grid-cols-3 gap-2">
           <MetricTile
@@ -942,29 +1021,42 @@ function CreativeCard({
           />
         </div>
 
-        {/* Expand Toggle */}
-        <button
-          type="button"
-          onClick={onToggle}
-          className={cn(
-            "w-full flex items-center justify-center gap-2 rounded-xl py-2.5 text-xs font-medium transition-all",
-            expanded
-              ? "bg-violet-500/10 text-violet-300 hover:bg-violet-500/15"
-              : "bg-muted/40 text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-          )}
-        >
-          {expanded ? (
-            <>
-              <ChevronUp className="w-4 h-4" />
-              Recolher análise
-            </>
-          ) : (
-            <>
-              <ChevronDown className="w-4 h-4" />
-              Ver análise completa
-            </>
-          )}
-        </button>
+        {/* Actions */}
+        <div className="grid grid-cols-2 gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onAnalyze}
+            disabled={analyzing || !canAnalyze}
+            className="h-9 gap-2 rounded-xl border-border/60 bg-background/40 text-xs"
+          >
+            {analyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
+            {analyzeLabel}
+          </Button>
+          <button
+            type="button"
+            onClick={onToggle}
+            className={cn(
+              "flex items-center justify-center gap-2 rounded-xl py-2.5 text-xs font-medium transition-all",
+              expanded
+                ? "bg-violet-500/10 text-violet-300 hover:bg-violet-500/15"
+                : "bg-muted/40 text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+            )}
+          >
+            {expanded ? (
+              <>
+                <ChevronUp className="w-4 h-4" />
+                Recolher
+              </>
+            ) : (
+              <>
+                <ChevronDown className="w-4 h-4" />
+                Detalhes
+              </>
+            )}
+          </button>
+        </div>
 
         {/* Expanded Content */}
         {expanded && (
@@ -1211,6 +1303,15 @@ function MetricTile({
   );
 }
 
+function InfoPill({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="inline-flex max-w-full items-center gap-1 rounded-lg border border-border/40 bg-muted/30 px-2 py-1 text-[10px] font-medium text-muted-foreground">
+      <span className="text-muted-foreground/70">{label}</span>
+      <span className="max-w-28 truncate text-foreground/80">{value}</span>
+    </span>
+  );
+}
+
 function MetricBar({
   label,
   value,
@@ -1418,6 +1519,17 @@ function formatMsLabel(value: number) {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function compactUrlLabel(url: string | null) {
+  if (!url) return "";
+  try {
+    const parsed = new URL(url);
+    const path = parsed.pathname === "/" ? "" : parsed.pathname.replace(/\/$/, "");
+    return `${parsed.hostname}${path}`.slice(0, 48);
+  } catch {
+    return url.slice(0, 48);
+  }
 }
 
 function buildGroupRulesFromForm(form: GroupFormState): CreativeGroupRules {

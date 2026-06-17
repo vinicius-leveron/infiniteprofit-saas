@@ -378,6 +378,7 @@ async function triggerCreativeSync(
       body: JSON.stringify({
         project_id: projectId,
         days,
+        enqueue_analysis: false,
         ...(accountId ? { account_id: accountId } : {}),
       }),
     });

@@ -189,7 +189,7 @@ export function AdsFunnelView({ projectId }: AdsPanelProps) {
             </div>
           )}
           <div className="flex flex-wrap gap-1">
-            {(["spend", "real_roas", "revenue", "purchases", "real_cpa"] as SortKey[]).map((key) => (
+            {(["spend", "real_roas", "revenue", "purchases", "real_cpa", "play_rate", "pitch_retention"] as SortKey[]).map((key) => (
               <Button
                 key={key}
                 type="button"
@@ -241,7 +241,7 @@ export function AdsFunnelView({ projectId }: AdsPanelProps) {
 
       {/* Summary Stats */}
       {ads.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mt-4 pt-4 border-t border-border/50">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3 mt-4 pt-4 border-t border-border/50">
           <SummaryStat
             label="Gasto Total"
             value={fBRL(ads.reduce((sum, a) => sum + a.spend, 0))}
@@ -269,6 +269,14 @@ export function AdsFunnelView({ projectId }: AdsPanelProps) {
               const totalPurchases = ads.reduce((sum, a) => sum + a.gateway_purchases, 0);
               return totalPurchases > 0 ? fBRL(totalSpend / totalPurchases) : "—";
             })()}
+          />
+          <SummaryStat
+            label="Play Rate"
+            value={fPct(weightedRate(ads, "vturb_plays", "vturb_pageviews", "play_rate"))}
+          />
+          <SummaryStat
+            label="Retenção Pitch"
+            value={fPct(weightedRate(ads, "vturb_pitch_reached", "vturb_plays", "pitch_retention"))}
           />
           <SummaryStat
             label="Ads Correlacionados"
@@ -336,6 +344,8 @@ function HierarchyView({
                 <span className="mx-1">→</span>
                 <span className="font-medium text-emerald-600">{fBRL(campaign.gateway_revenue)}</span>
               </div>
+              <RatePill label="Play" value={campaign.play_rate} />
+              <RatePill label="Ret" value={campaign.pitch_retention} />
             </div>
           </button>
 
@@ -381,6 +391,8 @@ function HierarchyView({
                         <span className="mx-1">→</span>
                         <span className="font-medium text-emerald-600">{fBRL(adset.gateway_revenue)}</span>
                       </div>
+                      <RatePill label="Play" value={adset.play_rate} />
+                      <RatePill label="Ret" value={adset.pitch_retention} />
                     </div>
                   </button>
 
@@ -420,6 +432,8 @@ function HierarchyView({
                                 <span className="ml-2 text-muted-foreground">CPA {fBRL(ad.real_cpa)}</span>
                               )}
                             </div>
+                            <RatePill label="Play" value={ad.play_rate} />
+                            <RatePill label="Ret" value={ad.pitch_retention} />
                           </div>
                         </div>
                       ))}
@@ -447,6 +461,8 @@ function FlatTable({ ads }: { ads: AdFunnelMetric[] }) {
             <th className="text-right py-2 pr-3">Cliques</th>
             <th className="text-right py-2 pr-3">Views</th>
             <th className="text-right py-2 pr-3">Pitch</th>
+            <th className="text-right py-2 pr-3">Play</th>
+            <th className="text-right py-2 pr-3">Retenção</th>
             <th className="text-right py-2 pr-3">Chk</th>
             <th className="text-right py-2 pr-3">Vendas</th>
             <th className="text-right py-2 pr-3">Receita</th>
@@ -470,6 +486,8 @@ function FlatTable({ ads }: { ads: AdFunnelMetric[] }) {
               <td className="py-2 pr-3 text-right tabular-nums">{fNum(row.clicks)}</td>
               <td className="py-2 pr-3 text-right tabular-nums">{fNum(row.vturb_views)}</td>
               <td className="py-2 pr-3 text-right tabular-nums">{fNum(row.vturb_pitch_reached)}</td>
+              <td className="py-2 pr-3 text-right tabular-nums">{fPct(row.play_rate)}</td>
+              <td className="py-2 pr-3 text-right tabular-nums">{fPct(row.pitch_retention)}</td>
               <td className="py-2 pr-3 text-right tabular-nums">{fNum(row.gateway_checkouts)}</td>
               <td className="py-2 pr-3 text-right tabular-nums">{fNum(row.gateway_purchases)}</td>
               <td className="py-2 pr-3 text-right tabular-nums">{fBRL(row.gateway_revenue)}</td>
@@ -530,6 +548,14 @@ function FunnelArrow({ rate }: { rate: number | null }) {
         </span>
       )}
     </div>
+  );
+}
+
+function RatePill({ label, value }: { label: string; value: number | null }) {
+  return (
+    <span className="ml-1 rounded bg-muted/60 px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground tabular-nums">
+      {label} {fPct(value)}
+    </span>
   );
 }
 
@@ -644,4 +670,20 @@ function SummaryStat({ label, value }: { label: string; value: string }) {
       <div className="text-lg font-semibold">{value}</div>
     </div>
   );
+}
+
+function weightedRate(
+  rows: AdFunnelMetric[],
+  numeratorKey: keyof AdFunnelMetric,
+  denominatorKey: keyof AdFunnelMetric,
+  fallbackKey: keyof AdFunnelMetric,
+) {
+  const numerator = rows.reduce((sum, row) => sum + Number(row[numeratorKey] ?? 0), 0);
+  const denominator = rows.reduce((sum, row) => sum + Number(row[denominatorKey] ?? 0), 0);
+  if (denominator > 0) return (numerator / denominator) * 100;
+
+  const values = rows
+    .map((row) => Number(row[fallbackKey] ?? NaN))
+    .filter((value) => Number.isFinite(value));
+  return values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
 }

@@ -199,6 +199,7 @@ type CreativeJobPayload = {
   meta_account_binding_id: string | null;
   meta_account_id: string | null;
   video_id: string | null;
+  job_trigger: "manual" | "auto";
 };
 
 type JobHint = {
@@ -224,6 +225,10 @@ Deno.serve(async (req) => {
     const targetAssetId = stringOrNull(body.asset_id);
     const reprocess = Boolean(body.reprocess);
     const reprocessScope = normalizeReprocessScope(body.reprocess_scope);
+    const enqueueAnalysis =
+      Boolean(body.enqueue_analysis) ||
+      Boolean(body.run_analysis) ||
+      Boolean(targetAssetId && reprocess && (reprocessScope === "analysis" || reprocessScope === "transcript"));
     const days = Math.min(Math.max(Number(body.days) || 30, 1), 90);
 
     if (caller.kind === "user" && !targetProjectId) {
@@ -257,7 +262,14 @@ Deno.serve(async (req) => {
         projectId: project.id,
         source: "creative",
         initiatedBy: caller.kind === "user" ? caller.userId : null,
-        details: { days, account_filter: targetAccountId, reprocess, reprocess_scope: reprocessScope, asset_id: targetAssetId },
+        details: {
+          days,
+          account_filter: targetAccountId,
+          reprocess,
+          reprocess_scope: reprocessScope,
+          asset_id: targetAssetId,
+          enqueue_analysis: enqueueAnalysis,
+        },
       });
 
       try {
@@ -279,6 +291,7 @@ Deno.serve(async (req) => {
             targetAssetId,
             reprocess,
             reprocessScope,
+            enqueueAnalysis,
           });
 
         results.push(result);
@@ -291,6 +304,7 @@ Deno.serve(async (req) => {
             reprocess,
             reprocess_scope: reprocessScope,
             asset_id: targetAssetId,
+            enqueue_analysis: enqueueAnalysis,
             result,
           },
           errorMessage: null,
@@ -306,6 +320,7 @@ Deno.serve(async (req) => {
             reprocess,
             reprocess_scope: reprocessScope,
             asset_id: targetAssetId,
+            enqueue_analysis: enqueueAnalysis,
           },
           errorMessage: message,
         });
@@ -328,6 +343,7 @@ async function syncProjectAssets(
     targetAssetId: string | null;
     reprocess: boolean;
     reprocessScope: ReprocessScope;
+    enqueueAnalysis: boolean;
   },
 ) {
   const accounts = await loadProjectAccounts(sb, args.project, args.targetAccountId);
@@ -376,6 +392,19 @@ async function syncProjectAssets(
   const queueTargets = args.targetAssetId
     ? assetRows.filter((row) => row.id === args.targetAssetId)
     : assetRows;
+
+  if (!args.enqueueAnalysis) {
+    return {
+      project_id: args.project.id,
+      assets: assetRows.length,
+      metrics: metrics.length,
+      jobs_enqueued: 0,
+      jobs_skipped: 0,
+      jobs_already_running: 0,
+      missing_media: 0,
+      analysis_enqueue_skipped: true,
+    };
+  }
 
   const analysisMap = await loadExistingAnalyses(sb, queueTargets.map((row) => String(row.id)));
   const jobMap = await loadExistingJobs(sb, queueTargets.map((row) => String(row.id)));
@@ -1025,6 +1054,7 @@ async function enqueueCreativeJobs(
       meta_account_binding_id: jobHint.metaAccountBindingId,
       meta_account_id: jobHint.metaAccountId,
       video_id: jobHint.videoId,
+      job_trigger: "manual",
     };
 
     upserts.push({

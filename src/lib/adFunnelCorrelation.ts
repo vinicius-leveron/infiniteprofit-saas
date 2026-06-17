@@ -31,6 +31,12 @@ export interface RawVturbPayload {
   utm_source?: string;
   utm_campaign?: string;
   utm_content?: string;
+  pageviews?: number;
+  page_views?: number;
+  landing_page_views?: number;
+  plays?: number;
+  play?: number;
+  total_plays?: number;
   sessions?: number;
   views?: number;
   unique_views?: number;
@@ -61,6 +67,8 @@ export interface FunnelMetrics {
   pixel_roas: number | null;
 
   // VTurb (correlacionado)
+  vturb_pageviews: number;
+  vturb_plays: number;
   vturb_views: number;
   vturb_pitch_reached: number;
   has_vturb_data: boolean;
@@ -76,6 +84,8 @@ export interface FunnelMetrics {
   real_cpa: number | null;
 
   // Taxas de Conversao
+  play_rate: number | null;
+  pitch_retention: number | null;
   click_to_view: number | null;
   view_to_pitch: number | null;
   pitch_to_checkout: number | null;
@@ -121,6 +131,34 @@ function toNumber(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function firstPositiveNumber(...values: unknown[]) {
+  for (const value of values) {
+    const parsed = toNumber(value);
+    if (parsed > 0) return parsed;
+  }
+  return 0;
+}
+
+function extractLinkClicks(payload: RawMetaPayload) {
+  const linkClick = actionValue(payload.actions, ["link_click"]);
+  if (linkClick > 0) return linkClick;
+
+  const outboundClick = actionValue(payload.outbound_clicks, ["outbound_click"]);
+  if (outboundClick > 0) return outboundClick;
+
+  return toNumber(payload.clicks);
+}
+
+function actionValue(value: unknown, actionTypes: string[]) {
+  if (!Array.isArray(value)) return toNumber(value);
+  const targetTypes = new Set(actionTypes.map((type) => type.toLowerCase()));
+  return value.reduce((sum, item) => {
+    const type = String((item as { action_type?: unknown })?.action_type ?? "").toLowerCase();
+    if (!targetTypes.has(type)) return sum;
+    return sum + toNumber((item as { value?: unknown })?.value);
+  }, 0);
+}
+
 function createEmptyFunnelMetrics(): FunnelMetrics {
   return {
     spend: 0,
@@ -132,6 +170,8 @@ function createEmptyFunnelMetrics(): FunnelMetrics {
     pixel_purchases: 0,
     pixel_purchase_value: 0,
     pixel_roas: null,
+    vturb_pageviews: 0,
+    vturb_plays: 0,
     vturb_views: 0,
     vturb_pitch_reached: 0,
     has_vturb_data: false,
@@ -141,6 +181,8 @@ function createEmptyFunnelMetrics(): FunnelMetrics {
     has_gateway_data: false,
     real_roas: null,
     real_cpa: null,
+    play_rate: null,
+    pitch_retention: null,
     click_to_view: null,
     view_to_pitch: null,
     pitch_to_checkout: null,
@@ -176,6 +218,16 @@ function calculateDerivedMetrics(metrics: FunnelMetrics): void {
   if (metrics.vturb_views > 0 && metrics.vturb_pitch_reached > 0) {
     metrics.view_to_pitch = (metrics.vturb_pitch_reached / metrics.vturb_views) * 100;
   }
+  if (metrics.vturb_pageviews > 0 && metrics.vturb_plays > 0) {
+    metrics.play_rate = (metrics.vturb_plays / metrics.vturb_pageviews) * 100;
+  } else if (metrics.click_to_view != null) {
+    metrics.play_rate = metrics.click_to_view;
+  }
+  if (metrics.vturb_plays > 0 && metrics.vturb_pitch_reached > 0) {
+    metrics.pitch_retention = (metrics.vturb_pitch_reached / metrics.vturb_plays) * 100;
+  } else if (metrics.view_to_pitch != null) {
+    metrics.pitch_retention = metrics.view_to_pitch;
+  }
   if (metrics.vturb_pitch_reached > 0 && metrics.gateway_checkouts > 0) {
     metrics.pitch_to_checkout = (metrics.gateway_checkouts / metrics.vturb_pitch_reached) * 100;
   }
@@ -200,6 +252,8 @@ function aggregateMetrics(target: FunnelMetrics, source: FunnelMetrics): void {
   target.pixel_checkouts += source.pixel_checkouts;
   target.pixel_purchases += source.pixel_purchases;
   target.pixel_purchase_value += source.pixel_purchase_value;
+  target.vturb_pageviews += source.vturb_pageviews;
+  target.vturb_plays += source.vturb_plays;
   target.vturb_views += source.vturb_views;
   target.vturb_pitch_reached += source.vturb_pitch_reached;
   target.gateway_checkouts += source.gateway_checkouts;
@@ -249,7 +303,7 @@ export function correlateAdFunnel(input: CorrelationInput): CorrelationResult {
 
     ad.spend += toNumber(payload.spend);
     ad.impressions += toNumber(payload.impressions);
-    ad.clicks += toNumber(payload.clicks);
+    ad.clicks += extractLinkClicks(payload);
 
     // Extrair conversoes do pixel
     const actions = payload.actions ?? [];
@@ -287,15 +341,19 @@ export function correlateAdFunnel(input: CorrelationInput): CorrelationResult {
   }
 
   // 2. Criar mapa VTurb por utm_content
-  const vturbByContent = new Map<string, { views: number; pitch_reached: number }>();
+  const vturbByContent = new Map<string, { pageviews: number; plays: number; views: number; pitch_reached: number }>();
 
   for (const event of vturbEvents) {
     const payload = event.payload ?? {};
     const utmContent = payload.utm_content ? String(payload.utm_content) : null;
     if (!utmContent) continue;
 
-    const existing = vturbByContent.get(utmContent) ?? { views: 0, pitch_reached: 0 };
-    existing.views += toNumber(payload.sessions ?? payload.views ?? payload.unique_views);
+    const existing = vturbByContent.get(utmContent) ?? { pageviews: 0, plays: 0, views: 0, pitch_reached: 0 };
+    const pageviews = firstPositiveNumber(payload.pageviews, payload.page_views, payload.landing_page_views);
+    const plays = firstPositiveNumber(payload.plays, payload.play, payload.total_plays, payload.views, payload.sessions, payload.unique_views);
+    existing.pageviews += pageviews;
+    existing.plays += plays;
+    existing.views += plays || toNumber(payload.sessions ?? payload.views ?? payload.unique_views);
     existing.pitch_reached += toNumber(payload.pitch_reached ?? payload.conversions);
     vturbByContent.set(utmContent, existing);
   }
@@ -324,6 +382,8 @@ export function correlateAdFunnel(input: CorrelationInput): CorrelationResult {
   for (const [adId, ad] of adMap) {
     const vturb = vturbByContent.get(adId);
     if (vturb) {
+      ad.vturb_pageviews = vturb.pageviews;
+      ad.vturb_plays = vturb.plays;
       ad.vturb_views = vturb.views;
       ad.vturb_pitch_reached = vturb.pitch_reached;
       ad.has_vturb_data = true;
@@ -421,7 +481,9 @@ export type FunnelSortKey =
   | "real_roas"
   | "real_cpa"
   | "revenue"
-  | "purchases";
+  | "purchases"
+  | "play_rate"
+  | "pitch_retention";
 
 export function valueForFunnelSort(item: FunnelMetrics, key: FunnelSortKey): number {
   switch (key) {
@@ -441,6 +503,10 @@ export function valueForFunnelSort(item: FunnelMetrics, key: FunnelSortKey): num
       return item.gateway_revenue;
     case "purchases":
       return item.gateway_purchases;
+    case "play_rate":
+      return item.play_rate ?? -1;
+    case "pitch_retention":
+      return item.pitch_retention ?? -1;
     default:
       return item.spend;
   }
@@ -468,6 +534,10 @@ export function labelForFunnelSort(key: FunnelSortKey): string {
       return "Receita";
     case "purchases":
       return "Vendas";
+    case "play_rate":
+      return "Play Rate";
+    case "pitch_retention":
+      return "Retenção";
     default:
       return "Gasto";
   }

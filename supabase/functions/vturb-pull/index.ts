@@ -46,6 +46,7 @@ type VturbPath =
   | "/conversions/stats_by_day";
 
 type PlayerMetadata = {
+  name: string | null;
   duration: number | null;
   pitchTime: number | null;
 };
@@ -138,6 +139,7 @@ Deno.serve(async (req) => {
               project,
               playerId: player.player_id,
               playerRowId: player.id,
+              playerLabel: player.label,
               startStr,
               endStr,
               startDay,
@@ -229,13 +231,14 @@ async function pullOnePlayer(
     project: ProjectContext;
     playerId: string;
     playerRowId: string;
+    playerLabel: string | null;
     startStr: string;
     endStr: string;
     startDay: string;
     endDay: string;
   },
 ) {
-  const { vturbRuntime, playerMetadata, apiKey, project, playerId, playerRowId, startStr, endStr, startDay, endDay } = args;
+  const { vturbRuntime, playerMetadata, apiKey, project, playerId, playerRowId, playerLabel, startStr, endStr, startDay, endDay } = args;
 
   const sessionStatsResult = await safeVturbPost(vturbRuntime, apiKey, "/sessions/stats_by_day", buildSessionStatsBody({
     player_id: playerId,
@@ -319,9 +322,14 @@ async function pullOnePlayer(
   }
 
   const syncedAt = new Date().toISOString();
+  const updatePayload: Record<string, unknown> = { last_synced_at: syncedAt };
+  if (playerMetadata?.name && (!playerLabel || playerLabel === playerId)) {
+    updatePayload.label = playerMetadata.name;
+  }
+
   await sb
     .from("workspace_vturb_players")
-    .update({ last_synced_at: syncedAt })
+    .update(updatePayload)
     .eq("id", playerRowId);
 
   return { inserted, warnings, datesTouched: [...datesTouched] };
@@ -397,6 +405,7 @@ async function loadPlayerMetadataMap(apiKey: string, runtime: VturbRuntime) {
           return [
             id,
             {
+              name: stringOrNull(player?.name ?? player?.title ?? player?.video_name ?? player?.label),
               duration: positiveNumber(player?.duration),
               pitchTime: positiveNumber(player?.pitch_time),
             },

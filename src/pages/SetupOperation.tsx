@@ -27,10 +27,11 @@ type SetupDraft = {
   vturbKey: string;
   playersText: string;
   hublaSecret: string;
+  webhookToken: string;
 };
 
 const STEPS: Array<{ id: StepId; label: string }> = [
-  { id: "nome", label: "Operação" },
+  { id: "nome", label: "Funil" },
   { id: "meta", label: "Meta" },
   { id: "vturb", label: "VTurb" },
   { id: "hubla", label: "Hubla" },
@@ -52,13 +53,13 @@ export default function SetupOperation() {
   const [vturbKey, setVturbKey] = useState("");
   const [playersText, setPlayersText] = useState("");
   const [hublaSecret, setHublaSecret] = useState("");
-  const [createdWebhookUrl, setCreatedWebhookUrl] = useState("");
+  const [webhookToken, setWebhookToken] = useState(() => randomHex(24));
 
   // Test states
   const [testingMeta, setTestingMeta] = useState(false);
   const [metaTestResult, setMetaTestResult] = useState<{ ok: boolean; name?: string; error?: string } | null>(null);
   const [testingVturb, setTestingVturb] = useState(false);
-  const [vturbTestResult, setVturbTestResult] = useState<{ ok: boolean; players?: Array<{ id: string }>; error?: string } | null>(null);
+  const [vturbTestResult, setVturbTestResult] = useState<{ ok: boolean; players?: Array<{ id: string; name?: string | null }>; error?: string } | null>(null);
 
   useEffect(() => {
     if (!authLoading && !user) navigate("/auth", { replace: true });
@@ -74,6 +75,15 @@ export default function SetupOperation() {
     () => playersText.split(/\n|,|;/).map((value) => value.trim()).filter(Boolean),
     [playersText],
   );
+  const playerLabelById = useMemo(
+    () => new Map((vturbTestResult?.players ?? [])
+      .map((player) => [player.id, player.name?.trim() || player.id] as const)),
+    [vturbTestResult?.players],
+  );
+  const webhookUrl = useMemo(
+    () => `${SUPABASE_URL}/functions/v1/webhook-gateway/hubla/${webhookToken}`,
+    [webhookToken],
+  );
 
   useEffect(() => {
     const draft = readSetupDraft(draftStorageKey) ?? emptySetupDraft();
@@ -85,9 +95,9 @@ export default function SetupOperation() {
     setVturbKey(draft.vturbKey);
     setPlayersText(draft.playersText);
     setHublaSecret(draft.hublaSecret);
+    setWebhookToken(draft.webhookToken);
     setMetaTestResult(null);
     setVturbTestResult(null);
-    setCreatedWebhookUrl("");
     setHydratedDraftKey(draftStorageKey);
   }, [draftStorageKey]);
 
@@ -103,6 +113,7 @@ export default function SetupOperation() {
       vturbKey,
       playersText,
       hublaSecret,
+      webhookToken,
     };
 
     if (isSetupDraftEmpty(draft)) {
@@ -122,6 +133,7 @@ export default function SetupOperation() {
     playersText,
     step,
     vturbKey,
+    webhookToken,
   ]);
 
   async function createOperation() {
@@ -183,7 +195,7 @@ export default function SetupOperation() {
             .upsert({
               workspace_id: currentWorkspace.id,
               player_id: playerId,
-              label: playerId,
+              label: playerLabelById.get(playerId) ?? playerId,
               created_by: user.id,
             }, { onConflict: "workspace_id,player_id" })
             .select("id")
@@ -197,7 +209,6 @@ export default function SetupOperation() {
         }
       }
 
-      const webhookToken = randomHex(24);
       const { error: checkoutError } = await supabase.from("project_checkout_bindings").upsert({
         project_id: project.id,
         webhook_token: webhookToken,
@@ -206,8 +217,7 @@ export default function SetupOperation() {
       if (checkoutError) throw checkoutError;
 
       const provider = hublaSecret.trim() ? "hubla" : "hubla";
-      const webhookUrl = `${SUPABASE_URL}/functions/v1/webhook-gateway/${provider}/${webhookToken}`;
-      setCreatedWebhookUrl(webhookUrl);
+      const finalWebhookUrl = `${SUPABASE_URL}/functions/v1/webhook-gateway/${provider}/${webhookToken}`;
 
       const syncSources: SyncSource[] = [];
       if (metaAccountId.trim() && metaToken.trim()) syncSources.push("meta");
@@ -233,6 +243,7 @@ export default function SetupOperation() {
       } else {
         toast.success("Operação criada");
       }
+      void navigator.clipboard.writeText(finalWebhookUrl).catch(() => undefined);
 
       navigate(`/diagnostics?project=${project.id}`);
     } catch (error) {
@@ -288,9 +299,9 @@ export default function SetupOperation() {
         </div>
 
         {step === "nome" && (
-          <StepSection title="Nome da operação">
+          <StepSection title="Nome do funil">
             <Label htmlFor="operation-name">Nome</Label>
-            <Input id="operation-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Projeto Yasmin" />
+            <Input id="operation-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Perpétuo Denise" />
           </StepSection>
         )}
 
@@ -401,15 +412,16 @@ export default function SetupOperation() {
               <Input value={hublaSecret} onChange={(e) => setHublaSecret(e.target.value)} type="password" placeholder="Cole o token da Hubla" />
             </Field>
             <p className="text-xs text-muted-foreground">
-              A URL final é gerada ao criar a operação e aparece em Conexões/Diagnóstico sem placeholder.
+              Configure esta URL na Hubla para receber eventos de checkout desta operação.
             </p>
+            <WebhookCopyButton url={webhookUrl} />
           </StepSection>
         )}
 
         {step === "final" && (
           <StepSection title="Revisão">
             <div className="grid sm:grid-cols-2 gap-3 text-sm">
-              <Review label="Operação" value={name || "Pendente"} ok={!!name.trim()} />
+              <Review label="Funil" value={name || "Pendente"} ok={!!name.trim()} />
               <Review
                 label="Meta"
                 value={metaAccountId || "Pendente"}
@@ -427,21 +439,7 @@ export default function SetupOperation() {
             <p className="text-xs text-muted-foreground">
               A primeira sincronização da Meta e da VTurb roda automaticamente ao criar a operação. Na primeira vez, pode levar alguns minutos.
             </p>
-            {createdWebhookUrl && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  void navigator.clipboard.writeText(createdWebhookUrl);
-                  toast.success("Webhook copiado");
-                }}
-                className="gap-2"
-              >
-                <Copy className="w-4 h-4" />
-                Copiar webhook
-              </Button>
-            )}
+            <WebhookCopyButton url={webhookUrl} />
           </StepSection>
         )}
 
@@ -511,6 +509,28 @@ function Review({ label, value, ok, testStatus }: {
   );
 }
 
+function WebhookCopyButton({ url }: { url: string }) {
+  return (
+    <div className="rounded-lg border border-border/50 bg-muted/20 p-3">
+      <div className="text-[11px] text-muted-foreground">Webhook Hubla</div>
+      <div className="mt-1 break-all font-mono text-xs">{url}</div>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={() => {
+          void navigator.clipboard.writeText(url);
+          toast.success("Webhook copiado");
+        }}
+        className="mt-3 gap-2"
+      >
+        <Copy className="w-4 h-4" />
+        Copiar webhook
+      </Button>
+    </div>
+  );
+}
+
 function normalizeAccountId(value: string) {
   const trimmed = value.trim();
   return trimmed.startsWith("act_") ? trimmed : `act_${trimmed}`;
@@ -531,6 +551,7 @@ function readSetupDraft(storageKey: string) {
       vturbKey: typeof parsed.vturbKey === "string" ? parsed.vturbKey : "",
       playersText: typeof parsed.playersText === "string" ? parsed.playersText : "",
       hublaSecret: typeof parsed.hublaSecret === "string" ? parsed.hublaSecret : "",
+      webhookToken: typeof parsed.webhookToken === "string" && parsed.webhookToken.trim() ? parsed.webhookToken : randomHex(24),
     } satisfies SetupDraft;
   } catch {
     sessionStorage.removeItem(storageKey);
@@ -565,6 +586,7 @@ function emptySetupDraft(): SetupDraft {
     vturbKey: "",
     playersText: "",
     hublaSecret: "",
+    webhookToken: randomHex(24),
   };
 }
 

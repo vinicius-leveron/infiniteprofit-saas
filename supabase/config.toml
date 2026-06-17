@@ -41,6 +41,9 @@ verify_jwt = true
 [functions.vturb-pull]
 verify_jwt = false
 
+[functions.creative-sync]
+verify_jwt = false
+
 [functions.vturb-test]
 verify_jwt = true
 
