@@ -74,6 +74,15 @@ interface SimResult {
   cpm: number | null;
 }
 
+interface SensitivityPoint {
+  delta: string;
+  value: number;
+  lucro: number;
+  fat: number;
+  lucroDelta: number;
+  fatDelta: number;
+}
+
 const num = (v: number | null | undefined, fallback = 0) =>
   v == null || isNaN(v) || !isFinite(v) ? fallback : v;
 
@@ -156,7 +165,7 @@ export const SimulatorPanel = ({ rows }: Props) => {
     setActualInputs(baselineInputs);
   };
 
-  // Sensibilidade: varia uma variável de -30% a +30% e mostra impacto no lucro
+  // Sensibilidade: varia uma variável de -30% a +30% e mostra impacto incremental.
   const [sensVar, setSensVar] = useState<keyof SimInputs>("chkVenda");
 
   // Ranking de sensibilidade: mede quanto o lucro muda quando cada variável sobe +10%
@@ -176,7 +185,7 @@ export const SimulatorPanel = ({ rows }: Props) => {
       { key: "investimento", label: "Investimento" },
       { key: "impressoes", label: "Impressões" },
     ];
-    const baseLucro = runSim(inputs).lucro;
+    const baseLucro = simResult.lucro;
     const ranked = vars
       .map((v) => {
         const base = inputs[v.key];
@@ -189,25 +198,33 @@ export const SimulatorPanel = ({ rows }: Props) => {
       })
       .sort((a, b) => Math.abs(b.deltaLucro) - Math.abs(a.deltaLucro));
     return ranked;
-  }, [inputs]);
+  }, [inputs, simResult.lucro]);
 
   const topSensitive = sensitivityRanking[0];
 
   const sensitivityData = useMemo(() => {
     const base = inputs[sensVar];
     if (!base) return [];
-    const points: { delta: string; lucro: number; fat: number }[] = [];
+    const baseScenario = runSim(inputs);
+    const points: SensitivityPoint[] = [];
     for (let pct = -30; pct <= 30; pct += 5) {
-      const next = { ...inputs, [sensVar]: base * (1 + pct / 100) };
+      const value = base * (1 + pct / 100);
+      const next = { ...inputs, [sensVar]: value };
       const r = runSim(next);
       points.push({
         delta: (pct > 0 ? "+" : "") + pct + "%",
+        value,
         lucro: Math.round(r.lucro),
         fat: Math.round(r.fatLiquido),
+        lucroDelta: Math.round(r.lucro - baseScenario.lucro),
+        fatDelta: Math.round(r.fatLiquido - baseScenario.fatLiquido),
       });
     }
     return points;
   }, [inputs, sensVar]);
+  const selectedSensitivityLabel = sensitivityRanking.find((item) => item.key === sensVar)?.label ?? String(sensVar);
+  const sensitivityLow = sensitivityData[0] ?? null;
+  const sensitivityHigh = sensitivityData[sensitivityData.length - 1] ?? null;
 
   // ===== Salvar / Histórico de simulações =====
   const [searchParams] = useSearchParams();
@@ -420,7 +437,7 @@ export const SimulatorPanel = ({ rows }: Props) => {
       {/* Sensibilidade */}
       <SectionCard
         title="Análise de sensibilidade"
-        subtitle="Variando uma única alavanca de -30% a +30%"
+        subtitle="Impacto incremental ao variar uma única alavanca de -30% a +30%"
         right={
           <select
             value={sensVar}
@@ -477,6 +494,25 @@ export const SimulatorPanel = ({ rows }: Props) => {
             )}
           </div>
         )}
+        {sensitivityLow && sensitivityHigh && (
+          <div className="mb-3 grid gap-2 sm:grid-cols-3">
+            <SensitivitySummaryCard
+              label="Alavanca"
+              value={selectedSensitivityLabel}
+              detail={`${formatSensitivityValue(sensitivityLow.value, sensVar)} → ${formatSensitivityValue(sensitivityHigh.value, sensVar)}`}
+            />
+            <SensitivitySummaryCard
+              label="Impacto no lucro"
+              value={`${formatSignedCurrency(sensitivityLow.lucroDelta)} / ${formatSignedCurrency(sensitivityHigh.lucroDelta)}`}
+              detail="mínimo e máximo no intervalo"
+            />
+            <SensitivitySummaryCard
+              label="Impacto no faturamento"
+              value={`${formatSignedCurrency(sensitivityLow.fatDelta)} / ${formatSignedCurrency(sensitivityHigh.fatDelta)}`}
+              detail="variação contra o cenário simulado"
+            />
+          </div>
+        )}
         <div className="h-64">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={sensitivityData} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
@@ -491,15 +527,25 @@ export const SimulatorPanel = ({ rows }: Props) => {
                   borderRadius: 8,
                   fontSize: 12,
                 }}
-                formatter={(v: number, name: string) => [fBRL(v), name === "lucro" ? "Lucro" : "Faturamento"]}
+                formatter={(v: number, name: string) => {
+                  if (name === "lucroDelta") return [formatSignedCurrency(v), "Impacto no lucro"];
+                  if (name === "fatDelta") return [formatSignedCurrency(v), "Impacto no faturamento"];
+                  return [fBRL(v), name];
+                }}
+                labelFormatter={(label, payload) => {
+                  const point = payload?.[0]?.payload as SensitivityPoint | undefined;
+                  return point
+                    ? `${label} · ${formatSensitivityValue(point.value, sensVar)}`
+                    : String(label);
+                }}
               />
-              <Line type="monotone" dataKey="fat" stroke="hsl(var(--kpi-blue))" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="lucro" stroke="hsl(var(--primary))" strokeWidth={2.5} dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="fatDelta" name="fatDelta" stroke="hsl(var(--kpi-blue))" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="lucroDelta" name="lucroDelta" stroke="hsl(var(--primary))" strokeWidth={2.5} dot={{ r: 3 }} />
             </LineChart>
           </ResponsiveContainer>
         </div>
         <p className="text-[11px] text-muted-foreground mt-2">
-          Mantém todas as outras variáveis fixas e mexe só em <b className="text-foreground">{sensVar}</b>.
+          Mantém todas as outras variáveis fixas e mostra a diferença contra o cenário simulado atual.
         </p>
       </SectionCard>
 
@@ -777,6 +823,22 @@ const SliderField = ({
   </div>
 );
 
+const SensitivitySummaryCard = ({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: string;
+  detail: string;
+}) => (
+  <div className="rounded-md border border-border/60 bg-secondary/30 px-3 py-2">
+    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
+    <div className="mt-1 text-sm font-semibold tabular-nums text-foreground">{value}</div>
+    <div className="mt-0.5 text-[10px] text-muted-foreground">{detail}</div>
+  </div>
+);
+
 const ReadOnlyRate = ({ label, value }: { label: string; value: number }) => {
   const pct = Math.max(0, Math.min(100, value));
   return (
@@ -844,6 +906,17 @@ const ComparisonRow = ({
     </div>
   );
 };
+
+function formatSignedCurrency(value: number) {
+  if (!Number.isFinite(value) || value === 0) return fBRL(0);
+  return `${value > 0 ? "+" : ""}${fBRL(value)}`;
+}
+
+function formatSensitivityValue(value: number, key: keyof SimInputs) {
+  if (key.startsWith("ticket") || key === "investimento") return fBRL(value);
+  if (key === "impressoes") return fNum(Math.round(value));
+  return `${value.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%`;
+}
 
 const FunnelBreakdown = ({ base, sim }: { base: SimResult; sim: SimResult }) => {
   const stages: { label: string; baseV: number; simV: number }[] = [

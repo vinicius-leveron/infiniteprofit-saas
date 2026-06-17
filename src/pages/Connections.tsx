@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   Copy,
   CreditCard,
+  FileUp,
   Inbox,
   Link as LinkIcon,
   Loader2,
@@ -23,6 +24,15 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -156,6 +166,15 @@ export default function Connections() {
   const [syncingAccountId, setSyncingAccountId] = useState<string | null>(null);
   const [vturbSyncing, setVturbSyncing] = useState(false);
   const [vturbSyncingPlayerId, setVturbSyncingPlayerId] = useState<string | null>(null);
+  const [hublaImportOpen, setHublaImportOpen] = useState(false);
+  const [hublaCsv, setHublaCsv] = useState("");
+  const [hublaImporting, setHublaImporting] = useState(false);
+  const [hublaImportPreview, setHublaImportPreview] = useState<{
+    imported: number;
+    skipped: number;
+    dates: string[];
+    warnings: string[];
+  } | null>(null);
 
   useEffect(() => {
     if (!authLoading && !user) navigate("/auth", { replace: true });
@@ -452,6 +471,53 @@ export default function Connections() {
     }
   }
 
+  async function importHublaCsv(dryRun = false) {
+    if (!project?.id) return;
+    if (!isWorkspaceAdmin || workspaceIntegration?.gateway_provider !== "hubla") {
+      toast.error("Importação CSV disponível apenas para administradores usando Hubla");
+      return;
+    }
+    if (!hublaCsv.trim()) {
+      toast.error("Cole ou selecione um CSV da Hubla");
+      return;
+    }
+
+    setHublaImporting(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("hubla-csv-import", {
+        body: {
+          project_id: project.id,
+          csv: hublaCsv,
+          dry_run: dryRun,
+        },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      const result = {
+        imported: Number(data?.imported ?? 0),
+        skipped: Number(data?.skipped ?? 0),
+        dates: Array.isArray(data?.dates) ? data.dates : [],
+        warnings: Array.isArray(data?.warnings) ? data.warnings : [],
+      };
+      setHublaImportPreview(result);
+
+      if (dryRun) {
+        toast.success(`Prévia: ${result.imported} evento(s) reconhecido(s)`);
+      } else {
+        toast.success(`${result.imported} evento(s) Hubla importado(s)`);
+        setHublaImportOpen(false);
+        setHublaCsv("");
+        await load();
+        await loadEvents();
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Erro ao importar CSV Hubla");
+    } finally {
+      setHublaImporting(false);
+    }
+  }
+
   const gatewayWebhookUrl =
     workspaceIntegration?.gateway_provider && checkoutBinding?.webhook_token
       ? `${SUPABASE_URL}/functions/v1/webhook-gateway/${workspaceIntegration.gateway_provider}/${checkoutBinding.webhook_token}`
@@ -461,6 +527,7 @@ export default function Connections() {
   const selectedMetaAccounts = metaAccounts.filter((account) => selectedMetaIds.includes(account.id));
   const selectedPlayers = vturbPlayers.filter((player) => selectedPlayerIds.includes(player.id));
   const filteredEvents = eventFilter === "all" ? events : events.filter((event) => event.source === eventFilter);
+  const canImportHublaCsv = isWorkspaceAdmin && workspaceIntegration?.gateway_provider === "hubla";
 
   // Fallback: redirect to projects if no project param
   if (!projectId) {
@@ -715,6 +782,26 @@ export default function Connections() {
                       (URL segura gerada automaticamente)
                     </span>
                   </div>
+                  {canImportHublaCsv && (
+                    <div className="flex flex-wrap items-center gap-3">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          setHublaImportPreview(null);
+                          setHublaImportOpen(true);
+                        }}
+                        className="gap-2"
+                      >
+                        <FileUp className="w-4 h-4" />
+                        Importar CSV Hubla
+                      </Button>
+                      <span className="text-xs text-muted-foreground">
+                        Use para vendas retroativas sem payload bruto do webhook.
+                      </span>
+                    </div>
+                  )}
                   <p className="text-xs text-muted-foreground">
                     Eventos suportados: criacao de checkout, compra aprovada, recusada e reembolsada.
                   </p>
@@ -891,6 +978,71 @@ export default function Connections() {
           )}
         </div>
       </div>
+      <Dialog open={hublaImportOpen} onOpenChange={setHublaImportOpen}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Importar CSV Hubla</DialogTitle>
+            <DialogDescription>
+              Importe vendas retroativas para preencher faturamento e vendas quando os webhooks antigos não têm payload bruto.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label>Arquivo CSV</Label>
+              <Input
+                type="file"
+                accept=".csv,.txt,text/csv,text/plain"
+                onChange={async (event) => {
+                  const file = event.target.files?.[0];
+                  if (!file) return;
+                  setHublaImportPreview(null);
+                  setHublaCsv(await file.text());
+                }}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Conteúdo CSV</Label>
+              <Textarea
+                value={hublaCsv}
+                onChange={(event) => {
+                  setHublaImportPreview(null);
+                  setHublaCsv(event.target.value);
+                }}
+                rows={10}
+                placeholder="Cole aqui o export da Hubla com colunas como transação, data, status, valor, email, produto e UTMs."
+                className="font-mono text-xs"
+              />
+            </div>
+            {hublaImportPreview && (
+              <div className="rounded-lg border border-border/50 bg-muted/20 p-3 text-sm">
+                <div className="font-medium">
+                  {hublaImportPreview.imported} evento(s) reconhecido(s) · {hublaImportPreview.skipped} linha(s) ignorada(s)
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  Datas: {hublaImportPreview.dates.length > 0 ? hublaImportPreview.dates.join(", ") : "nenhuma"}
+                </div>
+                {hublaImportPreview.warnings.length > 0 && (
+                  <div className="mt-2 max-h-28 overflow-y-auto rounded border border-border/40 bg-background/50 p-2 text-xs text-muted-foreground">
+                    {hublaImportPreview.warnings.slice(0, 8).map((warning) => (
+                      <div key={warning}>{warning}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => importHublaCsv(true)} disabled={hublaImporting || !hublaCsv.trim()}>
+              {hublaImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+              Validar
+            </Button>
+            <Button onClick={() => importHublaCsv(false)} disabled={hublaImporting || !hublaCsv.trim()} className="gap-2">
+              {hublaImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileUp className="w-4 h-4" />}
+              Importar e reprocessar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </main>
   );
 }
