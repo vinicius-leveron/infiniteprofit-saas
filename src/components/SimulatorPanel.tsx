@@ -46,8 +46,8 @@ interface SimInputs {
   investimento: number;
   // Taxas do funil (em %)
   ctr: number;       // cliques / impressões
-  connectRate: number; // pageviews / cliques
-  playRate: number;    // plays / pageviews
+  connectRate: number; // LP Views / cliques no link
+  playRate: number;    // plays / pageviews VSL
   pitchRet: number;    // chega ao pitch / plays
   pitchChk: number;    // chega ao checkout / pitch
   chkVenda: number;    // venda / checkout
@@ -848,8 +848,8 @@ const ComparisonRow = ({
 const FunnelBreakdown = ({ base, sim }: { base: SimResult; sim: SimResult }) => {
   const stages: { label: string; baseV: number; simV: number }[] = [
     { label: "Impressões", baseV: 0, simV: 0 }, // preenchido abaixo se necessário — usamos cliques+ como base
-    { label: "Cliques", baseV: base.cliques, simV: sim.cliques },
-    { label: "Pageviews", baseV: base.pageviews, simV: sim.pageviews },
+    { label: "Cliques no link", baseV: base.cliques, simV: sim.cliques },
+    { label: "LP Views", baseV: base.pageviews, simV: sim.pageviews },
     { label: "Plays", baseV: base.plays, simV: sim.plays },
     { label: "Pitches", baseV: base.pitches, simV: sim.pitches },
     { label: "Checkouts", baseV: base.checkouts, simV: sim.checkouts },

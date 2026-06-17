@@ -4,6 +4,7 @@ import type { DailyRow, BumpDaily } from "./csv";
 export interface DailyMetricsRow {
   event_date: string; // YYYY-MM-DD
   investimento: number | null; impressoes: number | null; cliques: number | null;
+  landing_pageviews?: number | null;
   cpm: number | null; ctr: number | null; cpc: number | null;
   pageviews: number | null; views_unicas: number | null; play_rate: number | null;
   ret_pitch: number | null; chegaram_pitch: number | null;
@@ -84,6 +85,7 @@ export function dailyMetricsToDailyRows(rows: DailyMetricsRow[]): DailyRow[] {
         aprovPix: r.aprov_pix,
         impressoes: r.impressoes,
         cliques: r.cliques,
+        landingPageviews: r.landing_pageviews ?? null,
         pageviews: r.pageviews,
         checkouts: r.checkouts,
         cpm: r.cpm,

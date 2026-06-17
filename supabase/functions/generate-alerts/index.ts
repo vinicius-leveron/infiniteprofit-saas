@@ -46,6 +46,7 @@ interface RawEventRow {
 interface MetricRow {
   event_date: string;
   investimento: number | null;
+  landing_pageviews: number | null;
   pageviews: number | null;
   checkouts: number | null;
   vendas_totais: number | null;
@@ -148,7 +149,7 @@ async function buildAlerts(sb: ReturnType<typeof createClient>, project: Project
         .limit(5000),
       sb
         .from("daily_metrics")
-        .select("event_date, investimento, pageviews, checkouts, vendas_totais, fat_liquido, roi, cliques, chegaram_pitch")
+        .select("event_date, investimento, landing_pageviews, pageviews, checkouts, vendas_totais, fat_liquido, roi, cliques, chegaram_pitch")
         .eq("project_id", project.id)
         .order("event_date", { ascending: false })
         .limit(30),
@@ -251,14 +252,14 @@ async function buildAlerts(sb: ReturnType<typeof createClient>, project: Project
   }
 
   const recent = rows.slice(0, 7);
-  if (recent.some((row) => num(row.investimento) > 0 && num(row.pageviews) === 0)) {
+  if (recent.some((row) => num(row.investimento) > 0 && num(row.landing_pageviews) === 0)) {
     alerts.push({
       source: "funnel",
       type: "funnel_gap",
       severity: "critical",
-      title: "Gasto sem pageview",
-      message: "Há dia recente com investimento Meta, mas sem pageview VTurb.",
-      dedupe_key: "spend_no_pageview",
+      title: "Gasto sem LP View",
+      message: "Há dia recente com investimento Meta, mas sem Landing Page View.",
+      dedupe_key: "spend_no_lp_view",
     });
   }
   if (recent.some((row) => num(row.pageviews) > 0 && num(row.checkouts) === 0)) {

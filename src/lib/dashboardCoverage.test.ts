@@ -35,6 +35,7 @@ describe("dashboard coverage contract", () => {
         investimento: 3,
         impressoes: 3,
         cliques: 3,
+        landing_pageviews: 3,
         cpm: 3,
         ctr: 3,
         cpc: 3,

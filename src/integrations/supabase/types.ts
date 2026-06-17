@@ -111,6 +111,7 @@ export type Database = {
           fat_orderbump: number | null
           impressoes: number | null
           investimento: number | null
+          landing_pageviews: number | null
           lucro: number | null
           obs: string | null
           pageviews: number | null
@@ -157,6 +158,7 @@ export type Database = {
           fat_orderbump?: number | null
           impressoes?: number | null
           investimento?: number | null
+          landing_pageviews?: number | null
           lucro?: number | null
           obs?: string | null
           pageviews?: number | null
@@ -203,6 +205,7 @@ export type Database = {
           fat_orderbump?: number | null
           impressoes?: number | null
           investimento?: number | null
+          landing_pageviews?: number | null
           lucro?: number | null
           obs?: string | null
           pageviews?: number | null

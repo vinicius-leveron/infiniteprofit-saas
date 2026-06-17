@@ -11,6 +11,7 @@ const corsHeaders = {
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
+const META_DATE_TIME_ZONE = "America/Sao_Paulo";
 
 type Caller =
   | { kind: "service" }
@@ -115,6 +116,14 @@ Deno.serve(async (req) => {
             .from("projects")
             .update({ last_synced_at: latestProjectSync })
             .eq("id", project.id);
+
+          const creativeTrigger = await triggerCreativeSync(project.id, days, targetAccountId);
+          if (creativeTrigger) {
+            projectResults.push({
+              project_id: project.id,
+              creative_sync: creativeTrigger,
+            });
+          }
         }
 
         const failed = projectResults.filter((result) => result.error);
@@ -153,10 +162,7 @@ async function pullForAccount(
   account: MetaAccountBinding,
   days: number,
 ) {
-  const since = new Date();
-  since.setDate(since.getDate() - days);
-  const sinceStr = ymd(since);
-  const untilStr = ymd(new Date());
+  const { sinceStr, untilStr } = inclusiveLocalDateRange(days);
   const accountId = normalizeMetaAccountId(account.account_id);
 
   const dates = new Set<string>();
@@ -170,6 +176,16 @@ async function pullForAccount(
 
   for (const level of ["account", "campaign", "adset", "ad"] as MetaInsightLevel[]) {
     const insights = await fetchInsights(accountId, account.access_token, level, sinceStr, untilStr);
+    if (level === "ad" && insights.length > 0) {
+      const creativeIdByAdId = await fetchCreativeIdsForAds(account.access_token, insights.map((insight) => String(insight?.ad_id ?? "")));
+      for (const insight of insights) {
+        const adId = String(insight?.ad_id ?? "");
+        const creativeId = creativeIdByAdId.get(adId);
+        if (creativeId) {
+          insight.creative_id = creativeId;
+        }
+      }
+    }
     insertedByLevel[level] = insights.length;
 
     for (const insight of insights) {
@@ -213,7 +229,40 @@ async function fetchInsights(
   url.searchParams.set("level", level);
   url.searchParams.set("time_increment", "1");
   url.searchParams.set("time_range", JSON.stringify({ since: sinceStr, until: untilStr }));
-  url.searchParams.set("fields", fieldsForLevel(level));
+  url.searchParams.set("fields", fieldsForLevel(level, true));
+  url.searchParams.set("access_token", accessToken);
+  url.searchParams.set("limit", "500");
+
+  const insights: any[] = [];
+  let nextUrl: string | null = url.toString();
+  while (nextUrl) {
+    const response = await fetch(nextUrl);
+    if (!response.ok) {
+      const text = await response.text();
+      if (level === "ad" && nextUrl === url.toString()) {
+        return await fetchInsightsFallback(accountId, accessToken, level, sinceStr, untilStr);
+      }
+      throw new Error(`Meta API ${response.status}: ${text.slice(0, 300)}`);
+    }
+    const data = await response.json();
+    if (Array.isArray(data?.data)) insights.push(...data.data);
+    nextUrl = typeof data?.paging?.next === "string" ? data.paging.next : null;
+  }
+  return insights;
+}
+
+async function fetchInsightsFallback(
+  accountId: string,
+  accessToken: string,
+  level: MetaInsightLevel,
+  sinceStr: string,
+  untilStr: string,
+) {
+  const url = new URL(`https://graph.facebook.com/v21.0/${accountId}/insights`);
+  url.searchParams.set("level", level);
+  url.searchParams.set("time_increment", "1");
+  url.searchParams.set("time_range", JSON.stringify({ since: sinceStr, until: untilStr }));
+  url.searchParams.set("fields", fieldsForLevel(level, false));
   url.searchParams.set("access_token", accessToken);
   url.searchParams.set("limit", "500");
 
@@ -282,12 +331,64 @@ async function upsertLegacyAccountInsight(
   if (error) throw new Error(error.message);
 }
 
-function fieldsForLevel(level: MetaInsightLevel) {
-  const base = "spend,impressions,clicks,cpm,ctr,cpc,date_start";
+function fieldsForLevel(level: MetaInsightLevel, includeCreativeSignals: boolean) {
+  const creativeSignals = includeCreativeSignals
+    ? ",outbound_clicks,video_play_actions,video_p25_watched_actions,video_thruplay_watched_actions"
+    : "";
+  const base = `spend,impressions,clicks,cpm,ctr,cpc,date_start,actions,action_values,cost_per_action_type,website_purchase_roas${creativeSignals}`;
   if (level === "campaign") return `${base},campaign_id,campaign_name`;
   if (level === "adset") return `${base},campaign_id,campaign_name,adset_id,adset_name`;
   if (level === "ad") return `${base},campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name`;
   return base;
+}
+
+async function fetchCreativeIdsForAds(accessToken: string, adIds: string[]) {
+  const uniqueIds = [...new Set(adIds.filter(Boolean))];
+  const results = new Map<string, string>();
+  for (let index = 0; index < uniqueIds.length; index += 25) {
+    const batch = uniqueIds.slice(index, index + 25);
+    const url = new URL("https://graph.facebook.com/v21.0/");
+    url.searchParams.set("ids", batch.join(","));
+    url.searchParams.set("fields", "id,creative{id}");
+    url.searchParams.set("access_token", accessToken);
+    const response = await fetch(url);
+    if (!response.ok) {
+      continue;
+    }
+    const payload = await response.json();
+    for (const adId of batch) {
+      const creativeId = stringOrNull(payload?.[adId]?.creative?.id);
+      if (creativeId) {
+        results.set(adId, creativeId);
+      }
+    }
+  }
+  return results;
+}
+
+async function triggerCreativeSync(
+  projectId: string,
+  days: number,
+  accountId: string | null,
+) {
+  try {
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/creative-sync`, {
+      method: "POST",
+      headers: buildAutomationHeaders(),
+      body: JSON.stringify({
+        project_id: projectId,
+        days,
+        ...(accountId ? { account_id: accountId } : {}),
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return { ok: false, error: String(payload?.error ?? `HTTP ${response.status}`) };
+    }
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "Erro ao disparar creative-sync" };
+  }
 }
 
 function entityIdForLevel(level: MetaInsightLevel, insight: any) {
@@ -475,9 +576,28 @@ function stringOrNull(value: unknown) {
   return trimmed ? trimmed : null;
 }
 
-function ymd(date: Date) {
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+function inclusiveLocalDateRange(days: number) {
+  const safeDays = Math.max(1, Math.floor(days || 1));
+  const untilStr = formatLocalYmd(new Date());
+  const sinceStr = addLocalDays(untilStr, -(safeDays - 1));
+  return { sinceStr, untilStr };
+}
+
+function addLocalDays(ymd: string, delta: number) {
+  const [year, month, day] = ymd.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day + delta, 12, 0, 0));
+  return formatLocalYmd(date);
+}
+
+function formatLocalYmd(date: Date) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: META_DATE_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
 }
 
 function json(body: unknown, status = 200) {

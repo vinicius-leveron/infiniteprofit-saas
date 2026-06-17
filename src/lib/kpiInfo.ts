@@ -50,7 +50,7 @@ const map: Record<string, { formula?: string; description: string }> = {
     description: "Quantidade de pedidos reembolsados no período.",
   },
   "ctr": {
-    formula: "Cliques ÷ Impressões",
+    formula: "Cliques no link ÷ Impressões",
     description: "Click-through rate — quantos clicaram após ver o anúncio.",
   },
   "cpm": {
@@ -58,19 +58,23 @@ const map: Record<string, { formula?: string; description: string }> = {
     description: "Custo por mil impressões.",
   },
   "cpc": {
-    formula: "Investimento ÷ Cliques",
-    description: "Custo por clique.",
+    formula: "Investimento ÷ Cliques no link",
+    description: "Custo por clique no link.",
   },
   "custo por i c": {
     formula: "Investimento ÷ Checkouts",
-    description: "Custo para gerar um checkout iniciado.",
+    description: "Custo para gerar um checkout iniciado na Hubla.",
   },
   "custo pageview": {
-    formula: "Investimento ÷ Pageviews",
-    description: "Custo para entregar uma visualização de página.",
+    formula: "Investimento ÷ Landing Page Views",
+    description: "Custo para entregar uma visualização de página de destino.",
+  },
+  "custo lp view": {
+    formula: "Investimento ÷ Landing Page Views",
+    description: "Custo para entregar uma visualização de página de destino.",
   },
   "taxa de carregamento": {
-    formula: "Pageviews ÷ Cliques",
+    formula: "Landing Page Views ÷ Cliques no link",
     description: "Quanto do tráfego pago efetivamente carrega a página.",
   },
   "play rate": {
@@ -92,10 +96,19 @@ const map: Record<string, { formula?: string; description: string }> = {
     description: "Quantas vezes seu anúncio foi exibido.",
   },
   "cliques": {
-    description: "Cliques únicos no anúncio.",
+    description: "Cliques no link do anúncio.",
+  },
+  "cliques no link": {
+    description: "Cliques no link do anúncio.",
+  },
+  "lp views": {
+    description: "Landing Page Views da Meta.",
+  },
+  "landing page views": {
+    description: "Landing Page Views da Meta.",
   },
   "pageviews": {
-    description: "Carregamentos da página de venda.",
+    description: "Pageviews VSL vindos da VTurb.",
   },
   "checkouts": {
     description: "Checkouts iniciados (intenção de compra).",

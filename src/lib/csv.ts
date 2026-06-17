@@ -47,6 +47,7 @@ export interface DailyRow {
   aprovPix: number | null;
   impressoes: number | null;
   cliques: number | null;
+  landingPageviews?: number | null;
   pageviews: number | null;
   checkouts: number | null;
   cpm: number | null;
@@ -168,6 +169,13 @@ const HEADER_MAP: Record<string, keyof DailyRow> = {
   // Traffic funnel
   "impressoes": "impressoes",
   "cliques": "cliques",
+  "cliques no link": "cliques",
+  "link clicks": "cliques",
+  "landing page views": "landingPageviews",
+  "landing pageviews": "landingPageviews",
+  "lp views": "landingPageviews",
+  "visualizacoes da pagina de destino": "landingPageviews",
+  "visualizacoes de pagina de destino": "landingPageviews",
   "pageviews": "pageviews",
   "checkouts": "checkouts",
   "cpm": "cpm",
@@ -393,6 +401,7 @@ export function parseCsv(text: string): ParsedCsv {
       aprovPix: get("aprovPix"),
       impressoes: get("impressoes"),
       cliques: get("cliques"),
+      landingPageviews: get("landingPageviews") ?? get("pageviews"),
       pageviews: get("pageviews"),
       checkouts: get("checkouts"),
       cpm: get("cpm"),

@@ -44,13 +44,14 @@ const METRICS: MetricDef[] = [
 
   // Tráfego
   { key: "impressoes", label: "Impressões", category: "Tráfego", bad: "down", get: (t) => t.impressoes },
-  { key: "cliques", label: "Cliques", category: "Tráfego", bad: "down", get: (t) => t.cliques },
+  { key: "cliques", label: "Cliques no link", category: "Tráfego", bad: "down", get: (t) => t.cliques },
+  { key: "landingPageviews", label: "LP Views", category: "Tráfego", bad: "down", get: (t) => t.landingPageviews },
   { key: "ctr", label: "CTR", category: "Tráfego", bad: "down", get: (t) => t.ctr },
   { key: "taxaCarreg", label: "Taxa de Carregamento", category: "Tráfego", bad: "down", get: (t) => t.taxaCarreg },
-  { key: "passChk", label: "Pageview → Checkout", category: "Tráfego", bad: "down", get: (t) => t.passChk },
+  { key: "passChk", label: "Pageviews VSL → Checkout", category: "Tráfego", bad: "down", get: (t) => t.passChk },
   { key: "cpm", label: "CPM", category: "Tráfego", bad: "up", get: (t) => t.cpm },
   { key: "cpc", label: "CPC", category: "Tráfego", bad: "up", get: (t) => t.cpc },
-  { key: "custoPageview", label: "Custo por Pageview", category: "Tráfego", bad: "up", get: (t) => t.custoPageview },
+  { key: "custoPageview", label: "Custo por LP View", category: "Tráfego", bad: "up", get: (t) => t.custoPageview },
   { key: "custoIC", label: "Custo por I.C.", category: "Tráfego", bad: "up", get: (t) => t.custoIC },
 
   // Funil VSL

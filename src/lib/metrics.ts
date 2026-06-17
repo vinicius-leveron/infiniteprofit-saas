@@ -34,6 +34,7 @@ export interface KpiTotals {
   valorReembolsado: number;
   impressoes: number;
   cliques: number;
+  landingPageviews: number;
   pageviews: number;
   checkouts: number;
   // computed
@@ -45,8 +46,8 @@ export interface KpiTotals {
   cpc: number | null;
   custoPageview: number | null;
   custoIC: number | null;
-  taxaCarreg: number | null; // pageviews/cliques
-  passChk: number | null; // checkouts/pageviews
+  taxaCarreg: number | null; // landingPageviews/cliques
+  passChk: number | null; // checkouts/pageviews VSL
   taxaReembolso: number | null;
   // averages from daily values
   avgPlayRate: number | null;
@@ -80,6 +81,7 @@ export function computeTotals(rows: DailyRow[]): KpiTotals {
   const valorReembolsado = sumK(rows, "valorReembolsado");
   const impressoes = sumK(rows, "impressoes");
   const cliques = sumK(rows, "cliques");
+  const landingPageviews = sumK(rows, "landingPageviews");
   const pageviews = sumK(rows, "pageviews");
   const checkouts = sumK(rows, "checkouts");
 
@@ -98,6 +100,7 @@ export function computeTotals(rows: DailyRow[]): KpiTotals {
     valorReembolsado,
     impressoes,
     cliques,
+    landingPageviews,
     pageviews,
     checkouts,
     roi: safeDiv(fatLiquido, investimento),
@@ -106,9 +109,9 @@ export function computeTotals(rows: DailyRow[]): KpiTotals {
     cpm: impressoes ? (investimento / impressoes) * 1000 : null,
     ctr: impressoes ? (cliques / impressoes) * 100 : null,
     cpc: safeDiv(investimento, cliques),
-    custoPageview: safeDiv(investimento, pageviews),
+    custoPageview: safeDiv(investimento, landingPageviews),
     custoIC: safeDiv(investimento, checkouts),
-    taxaCarreg: cliques ? (pageviews / cliques) * 100 : null,
+    taxaCarreg: cliques ? (landingPageviews / cliques) * 100 : null,
     passChk: pageviews ? (checkouts / pageviews) * 100 : null,
     taxaReembolso: vendasTotais ? (reembolsos / vendasTotais) * 100 : null,
     avgPlayRate: avgK(rows, "playRate"),

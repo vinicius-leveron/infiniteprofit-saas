@@ -181,8 +181,8 @@ export const DayDrilldownDialog = ({ row, onOpenChange, projectId, editable, onO
 
   const traffic: Stat[] = [
     { label: "Impressões", value: fNum(row.impressoes), icon: Eye, tone: "cyan" },
-    { label: "Cliques", value: fNum(row.cliques), icon: MousePointerClick, tone: "blue" },
-    { label: "Pageviews", value: fNum(row.pageviews), icon: FileText, tone: "indigo" },
+    { label: "Cliques no link", value: fNum(row.cliques), icon: MousePointerClick, tone: "blue" },
+    { label: "LP Views", value: fNum(row.landingPageviews), icon: FileText, tone: "indigo" },
     { label: "Checkouts", value: fNum(row.checkouts), icon: ShoppingBag, tone: "violet" },
     { label: "CPM", value: fBRL(row.cpm), icon: Activity, tone: "orange" },
     { label: "CTR", value: fPct(row.ctr, 2), icon: Activity, tone: "emerald" },
@@ -191,6 +191,7 @@ export const DayDrilldownDialog = ({ row, onOpenChange, projectId, editable, onO
   ];
 
   const funnel: Stat[] = [
+    { label: "Pageviews VSL", value: fNum(row.pageviews), icon: FileText, tone: "indigo" },
     { label: "Play Rate", value: fPct(row.playRate), icon: Play, tone: "cyan" },
     { label: "Retenção Pitch", value: fPct(row.retPitch), icon: Film, tone: "blue" },
     { label: "Pitch → Checkout", value: fPct(row.pitchChk), icon: Activity, tone: "indigo" },

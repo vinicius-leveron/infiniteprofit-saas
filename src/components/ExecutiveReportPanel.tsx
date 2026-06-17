@@ -95,8 +95,8 @@ function delta(current: number | null | undefined, previous: number | null | und
 
 function buildDataAlerts(rows: DailyRow[]) {
   const alerts: string[] = [];
-  if (rows.some((row) => (row.investimento ?? 0) > 0 && (row.pageviews ?? 0) === 0)) {
-    alerts.push("Há dias com gasto Meta e sem pageview VTurb.");
+  if (rows.some((row) => (row.investimento ?? 0) > 0 && (row.landingPageviews ?? 0) === 0)) {
+    alerts.push("Há dias com gasto Meta e sem Landing Page View.");
   }
   if (rows.some((row) => (row.checkouts ?? 0) > 0 && (row.vendasTotais ?? 0) === 0)) {
     alerts.push("Há dias com checkout e sem venda aprovada.");
@@ -108,7 +108,7 @@ function buildDataAlerts(rows: DailyRow[]) {
 }
 
 function mainBottleneck(totals: ReturnType<typeof computeTotals>) {
-  if ((totals.taxaCarreg ?? 100) < 50) return "Carregamento entre clique e pageview.";
+  if ((totals.taxaCarreg ?? 100) < 50) return "Carregamento entre clique no link e Landing Page View.";
   if ((totals.avgPlayRate ?? 100) < 40) return "Play rate da VSL.";
   if ((totals.avgPitchChk ?? 100) < 10) return "Pitch para checkout.";
   if ((totals.avgChkVenda ?? 100) < 20) return "Checkout para venda.";

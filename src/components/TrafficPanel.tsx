@@ -35,7 +35,7 @@ export const TrafficPanel = ({ rows }: Props) => {
         day: fmtDay(r.date),
         impressoes: r.impressoes ?? 0,
         cliques: r.cliques ?? 0,
-        pageviews: r.pageviews ?? 0,
+        landingPageviews: r.landingPageviews ?? 0,
         checkouts: r.checkouts ?? 0,
         cpm: r.cpm ?? 0,
         ctr: r.ctr ?? 0,
@@ -54,22 +54,22 @@ export const TrafficPanel = ({ rows }: Props) => {
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
         {/* — Volume — */}
         <KpiCard label="Impressões" value={fNum(t.impressoes)} icon={Eye} tone="cyan" />
-        <KpiCard label="Cliques" value={fNum(t.cliques)} icon={MousePointerClick} tone="blue" />
-        <KpiCard label="Pageviews" value={fNum(t.pageviews)} icon={FileText} tone="indigo" />
+        <KpiCard label="Cliques no link" value={fNum(t.cliques)} icon={MousePointerClick} tone="blue" />
+        <KpiCard label="LP Views" value={fNum(t.landingPageviews)} icon={FileText} tone="indigo" />
         <KpiCard label="Checkouts" value={fNum(t.checkouts)} hint={`P/ Chk: ${fPct(t.passChk)}`} icon={ShoppingBag} tone="violet" />
 
         {/* — Conversões / Taxas — */}
         <KpiCard
           label="CTR"
           value={fPct(t.ctr, 2)}
-          hint="Cliques ÷ Impressões"
+          hint="Cliques no link ÷ Impressões"
           icon={Target}
           tone="emerald"
         />
         <KpiCard
           label="Taxa de Carregamento"
           value={fPct(t.taxaCarreg)}
-          hint="Pageviews ÷ Cliques"
+          hint="Landing Page Views ÷ Cliques no link"
           icon={Download}
           tone="emerald"
         />
@@ -78,7 +78,7 @@ export const TrafficPanel = ({ rows }: Props) => {
         <KpiCard label="CPM" value={fBRL(t.cpm)} icon={Gauge} tone="orange" />
         <KpiCard label="CPC" value={fBRL(t.cpc)} icon={Gauge} tone="yellow" />
         <KpiCard label="Custo por I.C" value={fBRL(t.custoIC)} icon={Percent} tone="pink" />
-        <KpiCard label="Custo Pageview" value={fBRL(t.custoPageview)} icon={Percent} tone="purple" />
+        <KpiCard label="Custo LP View" value={fBRL(t.custoPageview)} icon={Percent} tone="purple" />
       </div>
 
       <ChartSection
@@ -141,7 +141,7 @@ export const TrafficPanel = ({ rows }: Props) => {
 
       <ChartSection
         title="Taxa de Carregamento (%)"
-        description="Pageviews ÷ Cliques — quão bem sua página retém o tráfego pago"
+        description="Landing Page Views ÷ Cliques no link — quão bem sua página retém o tráfego pago"
       >
         <div className="h-64">
           <ResponsiveContainer>
@@ -157,7 +157,7 @@ export const TrafficPanel = ({ rows }: Props) => {
       </ChartSection>
 
       <div className="grid lg:grid-cols-2 gap-6">
-        <ChartSection title="Impressões & Cliques">
+        <ChartSection title="Impressões, Cliques e LP Views">
           <div className="h-64">
             <ResponsiveContainer>
               <BarChart data={series} margin={{ top: 8, right: 8, left: -8, bottom: 0 }} barGap={4} barCategoryGap="20%">
@@ -168,7 +168,8 @@ export const TrafficPanel = ({ rows }: Props) => {
                 <Tooltip content={<RichTooltip formatter={(v) => fNum(v)} />} cursor={barCursor} />
                 <Legend wrapperStyle={{ fontSize: 12, paddingBottom: 8 }} verticalAlign="top" />
                 <Bar yAxisId="l" dataKey="impressoes" name="Impressões" fill={chartColors.primary} radius={[4, 4, 0, 0]} />
-                <Bar yAxisId="r" dataKey="cliques" name="Cliques" fill={chartColors.secondary} radius={[4, 4, 0, 0]} />
+                <Bar yAxisId="r" dataKey="cliques" name="Cliques no link" fill={chartColors.secondary} radius={[4, 4, 0, 0]} />
+                <Bar yAxisId="r" dataKey="landingPageviews" name="LP Views" fill={chartColors.positive} radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>

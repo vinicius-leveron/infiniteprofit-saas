@@ -21,6 +21,7 @@ import { CommandPalette } from "@/components/CommandPalette";
 import { SheetSyncDialog } from "@/components/SheetSyncDialog";
 import { parseCsv, type DailyRow } from "@/lib/csv";
 import { dailyMetricsToDailyRows, type DailyMetricsRow } from "@/lib/dailyMetrics";
+import { readStoredDashboardFilters, writeStoredDashboardFilters } from "@/lib/dashboardFilters";
 import { applyMetaAccountFilter } from "@/lib/metaAccountFilter";
 import {
   Select,
@@ -104,6 +105,7 @@ const Index = () => {
   const [period, setPeriod] = useState<Period>("all");
   const [customFrom, setCustomFrom] = useState<string>("");
   const [customTo, setCustomTo] = useState<string>("");
+  const [filtersHydratedFor, setFiltersHydratedFor] = useState<string | null>(null);
 
   // Drill-down + Command palette
   const [drilldownRow, setDrilldownRow] = useState<DailyRow | null>(null);
@@ -120,6 +122,36 @@ const Index = () => {
   useEffect(() => {
     if (!authLoading && !user) navigate("/auth", { replace: true });
   }, [authLoading, user, navigate]);
+
+  useEffect(() => {
+    if (!currentProjectId) {
+      setFiltersHydratedFor(null);
+      return;
+    }
+    const stored = readStoredDashboardFilters(currentProjectId);
+    setPeriod(stored.period ?? "all");
+    setCustomFrom(stored.customFrom ?? "");
+    setCustomTo(stored.customTo ?? "");
+    setAccountFilter(stored.accountFilter ?? "all");
+    setFiltersHydratedFor(currentProjectId);
+  }, [currentProjectId]);
+
+  useEffect(() => {
+    if (!currentProjectId || filtersHydratedFor !== currentProjectId) return;
+    writeStoredDashboardFilters(currentProjectId, {
+      period,
+      customFrom,
+      customTo,
+      accountFilter,
+    });
+  }, [accountFilter, currentProjectId, customFrom, customTo, filtersHydratedFor, period]);
+
+  useEffect(() => {
+    if (projectSource !== "api" || accountFilter === "all" || metaAccounts.length === 0) return;
+    if (!metaAccounts.some((account) => account.account_id === accountFilter)) {
+      setAccountFilter("all");
+    }
+  }, [accountFilter, metaAccounts, projectSource]);
 
   // Carrega projeto se vier ?project=ID
   useEffect(() => {

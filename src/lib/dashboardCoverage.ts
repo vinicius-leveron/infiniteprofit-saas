@@ -30,11 +30,11 @@ interface CoverageDef {
 const DEFINITIONS: CoverageDef[] = [
   {
     group: "Tráfego Meta",
-    kpi: "Investimento, Impressões, Cliques",
+    kpi: "Investimento, Impressões, Cliques no link, LP Views",
     source: "Meta",
     rawSource: "meta",
     rawTypes: ["insight", "insight_account"],
-    metricKeys: ["investimento", "impressoes", "cliques"],
+    metricKeys: ["investimento", "impressoes", "cliques", "landing_pageviews"],
   },
   {
     group: "Tráfego Meta",
@@ -96,7 +96,7 @@ const DEFINITIONS: CoverageDef[] = [
   {
     group: "Derivados de funil",
     kpi: "Taxa de carregamento e custos por etapa",
-    source: "Meta + VTurb + Hubla",
+    source: "Meta + Hubla/VTurb",
     rawTypes: ["insight", "insight_account", "sessions_stats_by_day", "stats_by_day"],
     metricKeys: ["taxa_carreg", "custo_pageview", "custo_ic", "pass_chk"],
     partialReason: "Combina fontes por data; fica parcial quando alguma fonte do dia está ausente.",
