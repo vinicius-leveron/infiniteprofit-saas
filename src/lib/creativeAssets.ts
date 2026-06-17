@@ -48,6 +48,7 @@ export interface CreativeAssetRow {
   primary_text: string | null;
   cta: string | null;
   landing_url: string | null;
+  post_url: string | null;
   analysis_status: CreativeAnalysisStatus;
   last_meta_synced_at: string | null;
   source_media_url: string | null;
@@ -156,6 +157,7 @@ export interface CreativeAssetCard {
   primaryText: string | null;
   cta: string | null;
   landingUrl: string | null;
+  postUrl: string | null;
   analysisStatus: CreativeAnalysisStatus;
   transcriptStatus: CreativeTranscriptStatus;
   analysisCoverage: CreativeAnalysisCoverage;
@@ -239,6 +241,7 @@ export function buildCreativeAssetCards(input: {
       asset.primary_text,
       asset.cta,
       asset.landing_url,
+      asset.post_url,
       analysis?.summary,
       analysis?.hook,
       analysis?.angle,
@@ -260,6 +263,7 @@ export function buildCreativeAssetCards(input: {
       primaryText: asset.primary_text,
       cta: asset.cta,
       landingUrl: asset.landing_url,
+      postUrl: asset.post_url,
       analysisStatus,
       transcriptStatus,
       analysisCoverage,

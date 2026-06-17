@@ -42,6 +42,10 @@ export interface MetaAdCreativeRecord {
   link_url?: string;
   object_type?: string;
   call_to_action_type?: string;
+  object_story_id?: string;
+  effective_object_story_id?: string;
+  instagram_permalink_url?: string;
+  permalink_url?: string;
   object_story_spec?: Record<string, unknown> | null;
 }
 
@@ -61,6 +65,7 @@ export interface DerivedCreativeAsset {
   primaryText: string | null;
   cta: string | null;
   landingUrl: string | null;
+  postUrl: string | null;
   videoId: string | null;
 }
 
@@ -167,6 +172,14 @@ export function deriveCreativeAsset(record: MetaAdDetailsRecord): DerivedCreativ
     stringOrNull(asObject(asObject(linkData.call_to_action).value).link) ??
     stringOrNull(linkData.link) ??
     null;
+  const storyId =
+    stringOrNull(creative.effective_object_story_id) ??
+    stringOrNull(creative.object_story_id) ??
+    null;
+  const postUrl =
+    stringOrNull(creative.instagram_permalink_url) ??
+    stringOrNull(creative.permalink_url) ??
+    buildFacebookPostUrl(storyId);
   const imageUrl =
     stringOrNull(creative.image_url) ??
     stringOrNull(linkData.picture) ??
@@ -207,6 +220,7 @@ export function deriveCreativeAsset(record: MetaAdDetailsRecord): DerivedCreativ
     primaryText,
     cta,
     landingUrl,
+    postUrl,
     videoId,
   };
 }
@@ -576,6 +590,14 @@ function secondsToMs(value: unknown) {
 
 function stripQuery(value: string) {
   return value.split("?")[0] ?? value;
+}
+
+function buildFacebookPostUrl(storyId: string | null) {
+  if (!storyId) return null;
+  if (/^https?:\/\//i.test(storyId)) return storyId;
+  const match = /^(\d+)_(\d+)$/.exec(storyId);
+  if (match) return `https://www.facebook.com/${match[1]}/posts/${match[2]}`;
+  return `https://www.facebook.com/${storyId}`;
 }
 
 function unique(values: string[]) {

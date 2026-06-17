@@ -446,6 +446,7 @@ export type Database = {
           media_fingerprint: string | null
           media_storage_path: string | null
           media_type: string
+          post_url: string | null
           poster_storage_path: string | null
           primary_text: string | null
           processing_version: string | null
@@ -473,6 +474,7 @@ export type Database = {
           media_fingerprint?: string | null
           media_storage_path?: string | null
           media_type?: string
+          post_url?: string | null
           poster_storage_path?: string | null
           primary_text?: string | null
           processing_version?: string | null
@@ -500,6 +502,7 @@ export type Database = {
           media_fingerprint?: string | null
           media_storage_path?: string | null
           media_type?: string
+          post_url?: string | null
           poster_storage_path?: string | null
           primary_text?: string | null
           processing_version?: string | null

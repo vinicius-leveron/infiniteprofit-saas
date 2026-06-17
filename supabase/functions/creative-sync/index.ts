@@ -79,6 +79,7 @@ type ExistingAssetRow = {
   primary_text: string | null;
   cta: string | null;
   landing_url: string | null;
+  post_url: string | null;
   analysis_status: CreativeAnalysisStatus;
   source_media_url: string | null;
   source_fetched_at: string | null;
@@ -103,6 +104,7 @@ type AssetUpsertPayload = {
   primary_text: string | null;
   cta: string | null;
   landing_url: string | null;
+  post_url: string | null;
   analysis_status: CreativeAnalysisStatus;
   last_meta_synced_at: string;
   source_media_url: string | null;
@@ -182,6 +184,7 @@ type CreativeJobPayload = {
   primary_text: string | null;
   cta: string | null;
   landing_url: string | null;
+  post_url: string | null;
   thumbnail_url: string | null;
   source_media_url: string | null;
   media_storage_path: string | null;
@@ -452,6 +455,7 @@ async function requeueExistingAsset(
       "primary_text",
       "cta",
       "landing_url",
+      "post_url",
       "analysis_status",
       "last_meta_synced_at",
       "source_media_url",
@@ -487,6 +491,7 @@ async function requeueExistingAsset(
     primary_text: asset.primary_text,
     cta: asset.cta,
     landing_url: asset.landing_url,
+    post_url: asset.post_url,
     analysis_status: asset.analysis_status,
     last_meta_synced_at: new Date().toISOString(),
     source_media_url: asset.source_media_url,
@@ -636,6 +641,7 @@ async function buildAssetPayloads(
       primary_text: candidate.derived.primaryText ?? current?.primary_text ?? null,
       cta: candidate.derived.cta ?? current?.cta ?? null,
       landing_url: candidate.derived.landingUrl ?? current?.landing_url ?? null,
+      post_url: candidate.derived.postUrl ?? current?.post_url ?? null,
       analysis_status: analysisStatus,
       last_meta_synced_at: args.latestSync,
       source_media_url: sourceMediaUrl,
@@ -698,7 +704,7 @@ async function fetchAdDetailsBatch(accessToken: string, adIds: string[]) {
   url.searchParams.set("ids", adIds.join(","));
   url.searchParams.set(
     "fields",
-    "id,name,creative{id,name,body,title,image_url,thumbnail_url,link_url,object_type,call_to_action_type,object_story_spec}",
+    "id,name,creative{id,name,body,title,image_url,thumbnail_url,link_url,object_type,call_to_action_type,object_story_id,effective_object_story_id,object_story_spec}",
   );
   url.searchParams.set("access_token", accessToken);
 
@@ -726,7 +732,7 @@ async function fetchAdDetailsOne(accessToken: string, adId: string) {
   const url = new URL(`https://graph.facebook.com/v21.0/${adId}`);
   url.searchParams.set(
     "fields",
-    "id,name,creative{id,name,body,title,image_url,thumbnail_url,link_url,object_type,call_to_action_type,object_story_spec}",
+    "id,name,creative{id,name,body,title,image_url,thumbnail_url,link_url,object_type,call_to_action_type,object_story_id,effective_object_story_id,object_story_spec}",
   );
   url.searchParams.set("access_token", accessToken);
 
@@ -849,6 +855,7 @@ async function upsertCreativeAssets(
       "primary_text",
       "cta",
       "landing_url",
+      "post_url",
       "analysis_status",
       "source_media_url",
       "source_fetched_at",
@@ -1037,6 +1044,7 @@ async function enqueueCreativeJobs(
       primary_text: assetPayload.primary_text,
       cta: assetPayload.cta,
       landing_url: assetPayload.landing_url,
+      post_url: assetPayload.post_url,
       thumbnail_url: assetPayload.thumbnail_url,
       source_media_url: assetPayload.source_media_url,
       media_storage_path: assetPayload.media_storage_path,
@@ -1248,6 +1256,7 @@ async function loadExistingAssetsByKey(
       "primary_text",
       "cta",
       "landing_url",
+      "post_url",
       "analysis_status",
       "source_media_url",
       "source_fetched_at",

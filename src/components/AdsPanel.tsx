@@ -177,7 +177,7 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
           .maybeSingle(),
         supabase
           .from("creative_assets" as never)
-          .select("id, creative_id, asset_key, media_type, thumbnail_url, media_storage_path, headline, primary_text, cta, landing_url, analysis_status, last_meta_synced_at, source_media_url, source_fetched_at, media_bytes, media_duration_ms, media_fingerprint, poster_storage_path, last_processed_at, processing_version")
+          .select("id, creative_id, asset_key, media_type, thumbnail_url, media_storage_path, headline, primary_text, cta, landing_url, post_url, analysis_status, last_meta_synced_at, source_media_url, source_fetched_at, media_bytes, media_duration_ms, media_fingerprint, poster_storage_path, last_processed_at, processing_version")
           .eq("project_id", projectId)
           .order("updated_at", { ascending: false }),
         supabase
@@ -849,6 +849,7 @@ function CreativeCard({
   const title = card.headline || card.adNames[0] || card.assetKey;
   const previewText = card.primaryText || card.summary || "";
   const landingLabel = compactUrlLabel(card.landingUrl);
+  const postLabel = compactUrlLabel(card.postUrl) || "Post";
   const analyzeLabel =
     card.mediaType === "video" && card.transcriptStatus !== "ready"
       ? "Transcrever"
@@ -964,6 +965,17 @@ function CreativeCard({
             >
               <ExternalLink className="w-3 h-3 shrink-0" />
               <span className="truncate">{landingLabel}</span>
+            </a>
+          )}
+          {card.postUrl && (
+            <a
+              href={card.postUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-lg border border-border/40 bg-muted/30 px-2 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:border-border hover:text-foreground"
+            >
+              <ExternalLink className="w-3 h-3 shrink-0" />
+              <span className="truncate">{postLabel}</span>
             </a>
           )}
           {card.sourceMediaUrl && (
