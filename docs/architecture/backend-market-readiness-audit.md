@@ -44,17 +44,17 @@ Recomendacao de decisao: nao abrir onboarding publico ate concluir os itens P0 e
 
 ### Local baseline
 
-- `npm test`: passed, 18 test files, 54 tests. Positive contract tests for production were skipped when QA env vars were absent.
+- `npm test`: passed, 22 test files, 66 tests. Positive contract tests for production were skipped when QA env vars were absent.
 - `npm run lint`: passed with 0 errors and 16 warnings. Warnings are mostly React hook dependencies and Fast Refresh exports.
 - `npm run build`: passed. Vite warned that the main JS chunk is about 2.1 MB minified and that Browserslist data is stale.
 - `npm run e2e`: passed for available public-route smoke tests, 4 passed and 10 skipped because auth/project/public-share QA env vars were absent.
-- Git state at audit time: branch `main` is behind `origin/main` by 5 commits and has many local modified/untracked files. Implementation changes were kept versioned in the repo and production was not mutated directly from this audit.
+- Git/deploy state after the 2026-06-19 deployment pass: branch `main` was rebased onto `origin/main` and pushed through commit `14431f8`. Supabase Edge Functions were deployed separately with `supabase functions deploy --use-api`. Database migrations were not applied because direct Postgres auth still requires `SUPABASE_DB_PASSWORD`.
 
 ### Production baseline
 
 Read-only production checks used the linked Supabase project `nztnctrkmfrgclrnflfa`, Postgres 17, region `us-west-2`.
 
-- Edge Functions active in production: initial audit found `hubla-csv-import` deployed without local source; after integrating `origin/main` on 2026-06-19, it is present in the repo-managed function manifest.
+- Edge Functions active in production: initial audit found `hubla-csv-import` deployed without local source; after integrating `origin/main` on 2026-06-19, it is present in the repo-managed function manifest. The latest drift check passed after deploying 17 repo-managed functions.
 - Cron jobs active in production:
   - `sync-meta-projects`: `0 * * * *`
   - `sync-vturb-projects`: `*/30 * * * *`
@@ -216,8 +216,9 @@ Acceptance tests:
 Evidence:
 - Initial audit found Edge Function `hubla-csv-import` active in production and absent from the local source tree.
 - Refreshed function inventory on 2026-06-18 showed repo-managed functions `accept-invite`, `creative-asset-urls`, `creative-jobs-admin`, and `workspace-credentials` expected locally but not active in production yet.
-- Local branch was behind `origin/main` by 5 commits.
-- Many local modified/untracked files are present.
+- On 2026-06-19, the local branch was rebased onto `origin/main`, function source drift was reconciled, and all 17 repo-managed Edge Functions were deployed.
+- Remaining drift is now database-only: local migrations exist that are not present remotely because `supabase db push --dry-run --include-all` needs `SUPABASE_DB_PASSWORD` before production apply.
+- Untracked local operator scripts remain intentionally outside version control and should not be deployed without secret review.
 
 Impact:
 - Reproducibility is weak: production cannot be rebuilt confidently from this checkout.
@@ -240,6 +241,12 @@ Implemented locally on 2026-06-18:
 - Removed `hubla-csv-import` from external-drift status after integrating the repo-managed source from `origin/main`.
 - Added `scripts/check-supabase-function-drift.mjs` and npm scripts `check:function-manifest` and `check:function-drift`.
 - Added `.github/workflows/ci.yml` with build/lint/typecheck/test/build/E2E smoke and a manual/scheduled Supabase function drift job.
+
+Deployment update on 2026-06-19:
+- `supabase config push --project-ref nztnctrkmfrgclrnflfa --yes`: passed; remote config was already up to date.
+- `supabase functions deploy --project-ref nztnctrkmfrgclrnflfa --use-api`: passed for all 17 repo-managed Edge Functions.
+- `npm run check:function-drift`: passed after deploy and confirmed local manifest and remote function inventory match.
+- `git push origin main`: passed through application commit `14431f8`.
 
 ### P1. Public creative storage needs an explicit product/security decision
 
@@ -404,7 +411,7 @@ Goal: avoid increasing blast radius while P0 findings are open.
 - Freeze public/self-service onboarding.
 - Keep pilot users controlled.
 - Require manual daily check of `sync_runs`, `creative_asset_jobs`, and cron jobs.
-- Confirm current production branch/commit and reconcile local branch behind remote.
+- Confirm current production branch/commit after each deploy and keep `main` reconciled with the environment.
 
 Exit criteria:
 - P0 migration plan reviewed.
@@ -439,9 +446,9 @@ Implemented locally on 2026-06-18:
 
 Deployment notes:
 - Apply these migrations only in a planned production change window after backup.
-- `supabase migration list` on 2026-06-18 shows `20260617155234` plus the hardening/reliability/scale/storage migrations as local-not-remote.
-- `supabase db push --dry-run` must be rerun with `SUPABASE_DB_PASSWORD` before deploy. The latest post-storage attempt could not connect to direct Postgres auth because `SUPABASE_DB_PASSWORD` was not available in the shell.
-- Deploy Edge Functions `accept-invite`, `ai-settings`, `meta-test`, `vturb-test`, `workspace-credentials`, `generate-alerts`, `creative-jobs-admin`, and `creative-asset-urls` with required environment variables.
+- `supabase migration list` on 2026-06-19 shows pending local-not-remote migrations `20260617155234`, `20260617170623`, `20260618150929`, `20260618151441`, `20260618153620`, `20260618154641`, `20260618155408`, `20260618155824`, `20260618161747`, and `20260618162934`.
+- `supabase db push --dry-run --include-all` must be rerun with `SUPABASE_DB_PASSWORD` before applying database changes. The latest attempt could not connect to direct Postgres auth because `SUPABASE_DB_PASSWORD` was not available in the shell.
+- Edge Functions `accept-invite`, `ai-settings`, `meta-test`, `vturb-test`, `workspace-credentials`, `generate-alerts`, `creative-jobs-admin`, `creative-asset-urls`, and the remaining repo-managed functions were deployed on 2026-06-19.
 - After deployment, rerun security advisors and explicit RPC/secret access proof cases before reopening public onboarding.
 
 ### Phase 2: Sync reliability
@@ -580,8 +587,8 @@ npm run build
 npm run e2e
 ```
 
-Executed on 2026-06-18:
-- `npm test`: passed, 18 files and 54 tests. Positive Edge contract tests that require QA variables were skipped.
+Executed on 2026-06-18 and refreshed during deploy on 2026-06-19:
+- `npm test`: passed, 22 files and 66 tests. Positive Edge contract tests that require QA variables were skipped.
 - `npm run lint`: passed with 0 errors and 16 warnings.
 - `npx tsc --noEmit`: passed.
 - `node --check workers/creative-processor/index.mjs`: passed.
@@ -590,15 +597,18 @@ Executed on 2026-06-18:
 - `npm run build`: passed; Vite warned about a large main chunk and stale Browserslist data.
 - `npm run e2e`: passed public-route smoke coverage, 4 passed and 10 skipped because QA auth/project/public-share variables were absent.
 - `npm run qa:prod`: passed read-only public-route smoke coverage against production, 4 passed and 10 skipped because QA variables were absent.
-- `supabase migration list`: passed and showed pending local migrations `20260617155234`, `20260618150929`, `20260618151441`, `20260618153620`, `20260618154641`, `20260618155408`, `20260618155824`, `20260618161747`, and `20260618162934`.
+- `supabase migration list`: passed and showed pending local migrations `20260617155234`, `20260617170623`, `20260618150929`, `20260618151441`, `20260618153620`, `20260618154641`, `20260618155408`, `20260618155824`, `20260618161747`, and `20260618162934`.
 - `supabase db push --dry-run`: blocked because `20260617155234` would be inserted before the last remote migration.
-- `supabase db push --dry-run --include-all`: previously passed through `20260618161747`; latest rerun after adding `20260618162934` was blocked by missing `SUPABASE_DB_PASSWORD` for direct Postgres auth and must be rerun before deploy.
+- `supabase db push --dry-run --include-all`: latest rerun was blocked by missing `SUPABASE_DB_PASSWORD` for direct Postgres auth and must be rerun before database deploy.
 - `supabase db advisors --linked --type performance --level warn -o json`: passed and returned 34 `auth_rls_initplan`, 1 `multiple_permissive_policies`, and no current `unindexed_foreign_keys` findings.
 - Local SQL parser check with `pglast` parsed `20260618161747_optimize_rls_tenancy_helpers.sql` as 51 statements.
 - `supabase status`: could not validate local DB because Docker daemon is not running.
-- `npm run check:function-manifest`: passed and confirmed 16 repo-managed Edge Functions match the manifest.
+- `npm run check:function-manifest`: passed and confirmed 17 repo-managed Edge Functions match the manifest.
 - `node --check scripts/check-supabase-function-drift.mjs`: passed.
-- `npm run check:function-drift`: failed as expected against current production because `accept-invite`, `creative-asset-urls`, `creative-jobs-admin`, and `workspace-credentials` are expected by the manifest but are not active remotely yet.
+- `supabase config push --project-ref nztnctrkmfrgclrnflfa --yes`: passed; remote config was up to date.
+- `supabase functions deploy --project-ref nztnctrkmfrgclrnflfa --use-api`: passed and deployed all 17 repo-managed Edge Functions.
+- `npm run check:function-drift`: passed after the function deploy.
+- `git push origin main`: passed through commit `14431f8`.
 
 ### Commands to run against production or QA
 
