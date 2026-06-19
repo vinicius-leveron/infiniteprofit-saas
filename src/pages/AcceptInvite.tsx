@@ -13,6 +13,7 @@ export default function AcceptInvite() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { user, loading: authLoading } = useAuth();
+  const userId = user?.id ?? null;
   const { refreshAccess, setCurrentWorkspaceId } = useWorkspace();
   const [processing, setProcessing] = useState(true);
 
@@ -21,7 +22,7 @@ export default function AcceptInvite() {
 
   useEffect(() => {
     if (authLoading) return;
-    if (!user || !token) return;
+    if (!userId || !token) return;
 
     let cancelled = false;
     void (async () => {
@@ -51,7 +52,7 @@ export default function AcceptInvite() {
     return () => {
       cancelled = true;
     };
-  }, [authLoading, kind, navigate, refreshAccess, setCurrentWorkspaceId, token, user]);
+  }, [authLoading, kind, navigate, refreshAccess, setCurrentWorkspaceId, token, userId]);
 
   if (authLoading) {
     return (
