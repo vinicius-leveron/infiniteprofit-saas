@@ -79,6 +79,7 @@ const WorkspaceContext = createContext<WorkspaceContextValue | undefined>(undefi
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const { user, loading: authLoading } = useAuth();
+  const userId = user?.id ?? null;
   const [loading, setLoading] = useState(true);
   const [workspaces, setWorkspaces] = useState<WorkspaceAccess[]>([]);
   const [organizations, setOrganizations] = useState<OrganizationAccess[]>([]);
@@ -94,7 +95,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const refreshAccess = useCallback(async () => {
-    if (!user) {
+    if (!userId) {
       setWorkspaces([]);
       setOrganizations([]);
       setCurrentWorkspaceId(null);
@@ -109,11 +110,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         supabase
           .from("workspace_members")
           .select("role, workspaces(id, name, organization_id)")
-          .eq("user_id", user.id),
+          .eq("user_id", userId),
         supabase
           .from("organization_members")
           .select("role, organizations(id, name)")
-          .eq("user_id", user.id),
+          .eq("user_id", userId),
       ]);
 
     if (workspaceError) {
@@ -156,7 +157,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     }
 
     setLoading(false);
-  }, [setCurrentWorkspaceId, user]);
+  }, [setCurrentWorkspaceId, userId]);
 
   useEffect(() => {
     if (authLoading) return;
@@ -207,7 +208,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       currentWorkspaceRole,
       currentOrganizationRole,
       hasWorkspaces: workspaces.length > 0,
-      needsOnboarding: !authLoading && !loading && !!user && workspaces.length === 0,
+      needsOnboarding: !authLoading && !loading && !!userId && workspaces.length === 0,
       isWorkspaceAdmin: currentWorkspaceRole === "owner" || currentWorkspaceRole === "admin",
       isOrganizationAdmin:
         currentOrganizationRole === "owner" || currentOrganizationRole === "admin",
@@ -223,7 +224,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     organizations,
     refreshAccess,
     setCurrentWorkspaceId,
-    user,
+    userId,
     workspaces,
   ]);
 

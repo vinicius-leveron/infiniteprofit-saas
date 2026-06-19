@@ -75,6 +75,7 @@ const Index = () => {
   const [searchParams] = useSearchParams();
   const projectId = searchParams.get("project");
   const { user, loading: authLoading } = useAuth();
+  const userId = user?.id ?? null;
   const { currentWorkspace, setCurrentWorkspaceId } = useWorkspace();
 
   const [rows, setRows] = useState<DailyRow[] | null>(null);
@@ -120,8 +121,8 @@ const Index = () => {
 
   // Redireciona se não autenticado
   useEffect(() => {
-    if (!authLoading && !user) navigate("/auth", { replace: true });
-  }, [authLoading, user, navigate]);
+    if (!authLoading && !userId) navigate("/auth", { replace: true });
+  }, [authLoading, userId, navigate]);
 
   useEffect(() => {
     if (!currentProjectId) {
@@ -155,7 +156,7 @@ const Index = () => {
 
   // Carrega projeto se vier ?project=ID
   useEffect(() => {
-    if (!projectId || !user) return;
+    if (!projectId || !userId) return;
     setLoadingProject(true);
     void supabase
       .from("projects")
@@ -218,7 +219,7 @@ const Index = () => {
         }
         setLoadingProject(false);
       });
-  }, [currentWorkspace?.id, navigate, projectId, setCurrentWorkspaceId, user]);
+  }, [currentWorkspace?.id, navigate, projectId, setCurrentWorkspaceId, userId]);
 
   const reloadProject = async () => {
     if (!currentProjectId) return;

@@ -44,6 +44,7 @@ interface ProjectRow {
 export default function Projects() {
   const navigate = useNavigate();
   const { user, loading: authLoading } = useAuth();
+  const userId = user?.id ?? null;
   const { currentWorkspace, loading: workspaceLoading } = useWorkspace();
   const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -52,13 +53,13 @@ export default function Projects() {
   const [paletteOpen, setPaletteOpen] = useState(false);
 
   useEffect(() => {
-    if (!authLoading && !user) navigate("/auth", { replace: true });
-  }, [authLoading, user, navigate]);
+    if (!authLoading && !userId) navigate("/auth", { replace: true });
+  }, [authLoading, userId, navigate]);
 
   useEffect(() => {
-    if (!user || !currentWorkspace?.id) return;
+    if (!userId || !currentWorkspace?.id) return;
     void fetchProjects();
-  }, [currentWorkspace?.id, user]);
+  }, [currentWorkspace?.id, userId]);
 
   // Atalho ⌘K
   useEffect(() => {

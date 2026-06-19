@@ -141,6 +141,7 @@ export default function Connections() {
   const [params] = useSearchParams();
   const projectId = params.get("project");
   const { user, loading: authLoading } = useAuth();
+  const userId = user?.id ?? null;
   const { currentWorkspace, isWorkspaceAdmin, setCurrentWorkspaceId } = useWorkspace();
 
   const [loading, setLoading] = useState(true);
@@ -175,14 +176,14 @@ export default function Connections() {
   } | null>(null);
 
   useEffect(() => {
-    if (!authLoading && !user) navigate("/auth", { replace: true });
-  }, [authLoading, navigate, user]);
+    if (!authLoading && !userId) navigate("/auth", { replace: true });
+  }, [authLoading, navigate, userId]);
 
   useEffect(() => {
-    if (!user || !projectId) return;
+    if (!userId || !projectId) return;
     void load();
     void loadEvents();
-  }, [projectId, user]);
+  }, [projectId, userId]);
 
   async function load() {
     if (!projectId) return;

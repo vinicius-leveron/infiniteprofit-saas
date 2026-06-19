@@ -121,6 +121,7 @@ export default function Diagnostics() {
   const [params] = useSearchParams();
   const projectId = params.get("project");
   const { user, loading: authLoading } = useAuth();
+  const userId = user?.id ?? null;
   const { currentWorkspace, isOrganizationAdmin, isWorkspaceAdmin, setCurrentWorkspaceId } = useWorkspace();
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState<"meta" | "vturb" | "creative" | null>(null);
@@ -149,8 +150,8 @@ export default function Diagnostics() {
   });
 
   useEffect(() => {
-    if (!authLoading && !user) navigate("/auth", { replace: true });
-  }, [authLoading, navigate, user]);
+    if (!authLoading && !userId) navigate("/auth", { replace: true });
+  }, [authLoading, navigate, userId]);
 
   const load = useCallback(async () => {
     if (!projectId) return;
@@ -254,9 +255,9 @@ export default function Diagnostics() {
   }, [currentWorkspace?.id, navigate, projectId, setCurrentWorkspaceId]);
 
   useEffect(() => {
-    if (!user || !projectId) return;
+    if (!userId || !projectId) return;
     void load();
-  }, [load, projectId, user]);
+  }, [load, projectId, userId]);
 
   async function refreshAlerts() {
     if (!project?.id) return;

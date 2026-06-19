@@ -46,6 +46,7 @@ const STEPS: Array<{ id: StepId; label: string }> = [
 export default function SetupOperation() {
   const navigate = useNavigate();
   const { user, loading: authLoading } = useAuth();
+  const userId = user?.id ?? null;
   const { currentWorkspace } = useWorkspace();
   const [step, setStep] = useState<StepId>("nome");
   const [saving, setSaving] = useState(false);
@@ -67,8 +68,8 @@ export default function SetupOperation() {
   const [vturbTestResult, setVturbTestResult] = useState<{ ok: boolean; players?: VturbDetectedPlayer[]; error?: string } | null>(null);
 
   useEffect(() => {
-    if (!authLoading && !user) navigate("/auth", { replace: true });
-  }, [authLoading, navigate, user]);
+    if (!authLoading && !userId) navigate("/auth", { replace: true });
+  }, [authLoading, navigate, userId]);
 
   const draftStorageKey = useMemo(
     () => `${SETUP_DRAFT_STORAGE_KEY}.${currentWorkspace?.id ?? "global"}`,
