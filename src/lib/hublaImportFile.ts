@@ -1,9 +1,12 @@
-import type { WorkBook, WorkSheet } from "xlsx";
-
 export type HublaImportFileResult = {
   csv: string;
   kind: "csv" | "xlsx";
   sheetName?: string;
+};
+
+type HublaSheet = {
+  sheet: string;
+  data: ReadonlyArray<ReadonlyArray<unknown>>;
 };
 
 const EXCEL_FILE_PATTERN = /\.(xlsx|xls)$/i;
@@ -14,8 +17,7 @@ const EXCEL_MIME_TYPES = new Set([
 
 export async function readHublaImportFile(file: File): Promise<HublaImportFileResult> {
   if (isExcelFile(file)) {
-    const buffer = await file.arrayBuffer();
-    const converted = await hublaWorkbookArrayBufferToCsv(buffer);
+    const converted = await hublaWorkbookFileToCsv(file);
     return { ...converted, kind: "xlsx" };
   }
 
@@ -25,21 +27,22 @@ export async function readHublaImportFile(file: File): Promise<HublaImportFileRe
   };
 }
 
-type XlsxRuntime = typeof import("xlsx");
+export async function hublaWorkbookFileToCsv(file: File | Blob | ArrayBuffer) {
+  const { default: readXlsxFile } = await import("read-excel-file/browser");
+  const sheets = await readXlsxFile(file);
+  return hublaSheetsToCsv(sheets);
+}
 
-export async function hublaWorkbookArrayBufferToCsv(buffer: ArrayBuffer) {
-  const XLSX = await import("xlsx");
-  const workbook = XLSX.read(buffer, { type: "array", cellDates: false });
-  const sheetName = pickHublaWorksheet(workbook, XLSX);
-  const worksheet = workbook.Sheets[sheetName];
-  const rows = worksheetToRows(worksheet, XLSX);
+export function hublaSheetsToCsv(sheets: HublaSheet[]) {
+  const sheet = pickHublaSheet(sheets);
+  const rows = sheetDataToRows(sheet.data);
 
   if (rows.length === 0) {
     throw new Error("XLSX vazio ou sem linhas reconhecíveis");
   }
 
   return {
-    sheetName,
+    sheetName: sheet.sheet,
     csv: rowsToCsv(rows),
   };
 }
@@ -48,12 +51,12 @@ function isExcelFile(file: File) {
   return EXCEL_FILE_PATTERN.test(file.name) || EXCEL_MIME_TYPES.has(file.type);
 }
 
-function pickHublaWorksheet(workbook: WorkBook, XLSX: XlsxRuntime) {
-  const ranked = workbook.SheetNames
-    .map((name, index) => ({
-      name,
+function pickHublaSheet(sheets: HublaSheet[]) {
+  const ranked = sheets
+    .map((sheet, index) => ({
+      sheet,
       index,
-      score: scoreWorksheet(workbook.Sheets[name], XLSX),
+      score: scoreSheet(sheet),
     }))
     .sort((a, b) => b.score - a.score || a.index - b.index);
 
@@ -62,11 +65,11 @@ function pickHublaWorksheet(workbook: WorkBook, XLSX: XlsxRuntime) {
     throw new Error("XLSX não parece ser um export de faturas/vendas da Hubla");
   }
 
-  return best.name;
+  return best.sheet;
 }
 
-function scoreWorksheet(worksheet: WorkSheet, XLSX: XlsxRuntime) {
-  const headers = firstHeaderRow(worksheet, XLSX);
+function scoreSheet(sheet: HublaSheet) {
+  const headers = firstHeaderRow(sheet);
   const hasAny = (aliases: string[]) => aliases.some((alias) => headers.has(alias));
   let score = 0;
 
@@ -81,23 +84,33 @@ function scoreWorksheet(worksheet: WorkSheet, XLSX: XlsxRuntime) {
   return score;
 }
 
-function firstHeaderRow(worksheet: WorkSheet, XLSX: XlsxRuntime) {
-  const rows = worksheetToRows(worksheet, XLSX);
-  const row = rows.find((item) => item.some((cell) => String(cell ?? "").trim())) ?? [];
+function firstHeaderRow(sheet: HublaSheet) {
+  const rows = sheetDataToRows(sheet.data);
+  const row = rows.find((item) => item.some((cell) => cell.trim())) ?? [];
   return new Set(row.map(normalizeHeader).filter(Boolean));
 }
 
-function worksheetToRows(worksheet: WorkSheet, XLSX: XlsxRuntime) {
-  const rows = XLSX.utils.sheet_to_json<Array<string | number | boolean>>(worksheet, {
-    header: 1,
-    defval: "",
-    blankrows: false,
-    raw: false,
-  });
-
-  return rows
-    .map((row) => trimTrailingEmptyCells(row.map((cell) => String(cell ?? "").trim())))
+function sheetDataToRows(data: HublaSheet["data"]) {
+  return data
+    .map((row) => trimTrailingEmptyCells(row.map(formatCell)))
     .filter((row) => row.some((cell) => cell));
+}
+
+function formatCell(value: unknown) {
+  if (value == null) return "";
+  if (value instanceof Date) return formatDateCell(value);
+  return String(value).trim();
+}
+
+function formatDateCell(value: Date) {
+  const day = String(value.getDate()).padStart(2, "0");
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const year = value.getFullYear();
+  const hour = String(value.getHours()).padStart(2, "0");
+  const minute = String(value.getMinutes()).padStart(2, "0");
+  const second = String(value.getSeconds()).padStart(2, "0");
+  const hasTime = value.getHours() || value.getMinutes() || value.getSeconds();
+  return hasTime ? `${day}/${month}/${year} ${hour}:${minute}:${second}` : `${day}/${month}/${year}`;
 }
 
 function trimTrailingEmptyCells(row: string[]) {
