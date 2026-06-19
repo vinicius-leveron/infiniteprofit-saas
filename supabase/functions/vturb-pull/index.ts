@@ -129,6 +129,7 @@ Deno.serve(async (req) => {
         let projectSyncedAt: string | null = null;
         const vturbRuntime = createVturbRuntime();
         const playerMetadata = await loadPlayerMetadataMap(apiKey, vturbRuntime);
+        await refreshPlayerLabels(sb, players, playerMetadata);
 
         for (const player of players) {
           try {
@@ -405,7 +406,11 @@ async function loadPlayerMetadataMap(apiKey: string, runtime: VturbRuntime) {
           return [
             id,
             {
-              name: stringOrNull(player?.name ?? player?.title ?? player?.video_name ?? player?.label),
+              name: stringOrNull(player?.name) ??
+                stringOrNull(player?.title) ??
+                stringOrNull(player?.video_name) ??
+                stringOrNull(player?.label) ??
+                stringOrNull(player?.player_name),
               duration: positiveNumber(player?.duration),
               pitchTime: positiveNumber(player?.pitch_time),
             },
@@ -419,6 +424,35 @@ async function loadPlayerMetadataMap(apiKey: string, runtime: VturbRuntime) {
   }
 }
 
+async function refreshPlayerLabels(
+  sb: ReturnType<typeof createClient>,
+  players: PlayerBinding[],
+  playerMetadata: Map<string, PlayerMetadata>,
+) {
+  for (const player of players) {
+    const name = playerMetadata.get(player.player_id)?.name;
+    if (!name) continue;
+
+    const currentLabel = stringOrNull(player.label);
+    if (currentLabel && currentLabel !== player.player_id) continue;
+
+    const { error } = await sb
+      .from("workspace_vturb_players")
+      .update({ label: name })
+      .eq("id", player.id);
+
+    if (error) {
+      console.warn("vturb player label update failed", {
+        player_id: player.player_id,
+        error: error.message,
+      });
+      continue;
+    }
+
+    player.label = name;
+  }
+}
+
 async function vturbGetPlayers(runtime: VturbRuntime, apiKey: string): Promise<unknown> {
   for (let attempt = 0; attempt <= VTURB_MAX_RATE_LIMIT_RETRIES; attempt += 1) {
     await waitForVturbSlot(runtime);
@@ -427,6 +461,7 @@ async function vturbGetPlayers(runtime: VturbRuntime, apiKey: string): Promise<u
       method: "GET",
       headers: {
         "X-Api-Token": apiKey,
+        "X-Api-Version": "v1",
         "Content-Type": "application/json",
       },
     });

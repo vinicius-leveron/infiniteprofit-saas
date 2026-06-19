@@ -71,10 +71,8 @@ interface TestResult {
 
 interface WorkspaceIntegrationRow {
   workspace_id: string;
-  vturb_api_key: string | null;
   vturb_last_event_at: string | null;
   gateway_provider: GatewayProvider | null;
-  gateway_webhook_secret: string | null;
   gateway_webhook_token: string;
   gateway_last_event_at: string | null;
 }
@@ -82,7 +80,6 @@ interface WorkspaceIntegrationRow {
 interface MetaAccountRow {
   id: string;
   account_id: string;
-  access_token: string;
   label: string | null;
   last_synced_at: string | null;
 }
@@ -213,12 +210,12 @@ export default function Connections() {
       ] = await Promise.all([
         supabase
           .from("workspace_integrations")
-          .select("workspace_id, vturb_api_key, vturb_last_event_at, gateway_provider, gateway_webhook_secret, gateway_webhook_token, gateway_last_event_at")
+          .select("workspace_id, vturb_last_event_at, gateway_provider, gateway_webhook_token, gateway_last_event_at")
           .eq("workspace_id", projectData.workspace_id)
           .maybeSingle(),
         supabase
           .from("workspace_meta_accounts")
-          .select("id, account_id, access_token, label, last_synced_at")
+          .select("id, account_id, label, last_synced_at")
           .eq("workspace_id", projectData.workspace_id)
           .order("created_at", { ascending: true }),
         supabase
@@ -378,7 +375,7 @@ export default function Connections() {
     setTestingAccountId(account.id);
     try {
       const { data, error } = await supabase.functions.invoke("meta-test", {
-        body: { account_id: account.account_id, access_token: account.access_token },
+        body: { meta_account_id: account.id },
       });
       if (error) throw error;
       const result = data as TestResult;
@@ -425,14 +422,14 @@ export default function Connections() {
   }
 
   async function testVturbKey() {
-    if (!workspaceIntegration?.vturb_api_key?.trim()) {
+    if (!currentWorkspace?.id || !workspaceIntegration) {
       toast.error("Configure a API key da VTurb em Workspace Settings");
       return;
     }
     setVturbTesting(true);
     try {
       const { data, error } = await supabase.functions.invoke("vturb-test", {
-        body: { api_key: workspaceIntegration.vturb_api_key.trim() },
+        body: { workspace_id: currentWorkspace.id },
       });
       if (error) throw error;
       const result = data as { ok: boolean; platforms?: string[]; error?: string };
@@ -665,7 +662,7 @@ export default function Connections() {
           connected={selectedPlayers.length > 0}
           lastEvent={workspaceIntegration?.vturb_last_event_at ?? null}
         >
-          {!workspaceIntegration?.vturb_api_key ? (
+          {!workspaceIntegration ? (
             <EmptyState text="Configure a API key da VTurb em Workspace Settings antes de vincular players." />
           ) : vturbPlayers.length === 0 ? (
             <EmptyState text="Nenhum player VTurb disponível. Cadastre players em Workspace Settings." />

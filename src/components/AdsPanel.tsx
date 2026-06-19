@@ -76,6 +76,10 @@ import {
   type CreativeTranscriptStatus,
   type FixedCreativeGroupKey,
 } from "@/lib/creativeAssets";
+import {
+  applyCreativeAssetSignedUrls,
+  type CreativeAssetSignedUrl,
+} from "@/lib/creativeAssetSignedUrls";
 import { AdsFunnelView } from "@/components/ads/AdsFunnelView";
 import { AdsPathsView } from "@/components/ads/AdsPathsView";
 import { useAuth } from "@/hooks/useAuth";
@@ -124,6 +128,38 @@ const EMPTY_GROUP_FORM: GroupFormState = {
   minSpend: "",
   sortKey: "purchases",
 };
+
+interface CreativeAssetSignedUrlResponse {
+  ok?: boolean;
+  error?: string;
+  assets?: CreativeAssetSignedUrl[];
+}
+
+async function loadSignedCreativeAssetUrls(projectId: string, assets: CreativeAssetRow[]) {
+  const assetIds = assets
+    .filter((asset) => asset.media_storage_path || asset.poster_storage_path)
+    .map((asset) => asset.id);
+
+  if (assetIds.length === 0) return assets;
+
+  try {
+    const { data, error } = await supabase.functions.invoke("creative-asset-urls", {
+      body: {
+        project_id: projectId,
+        asset_ids: assetIds,
+      },
+    });
+    if (error) throw error;
+
+    const response = data as CreativeAssetSignedUrlResponse | null;
+    if (response?.error) throw new Error(response.error);
+
+    return applyCreativeAssetSignedUrls(assets, response?.assets ?? []);
+  } catch (error) {
+    console.warn("Failed to load signed creative asset URLs", error);
+    return assets;
+  }
+}
 
 export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
   const { user } = useAuth();
@@ -203,8 +239,11 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
           .limit(1),
       ]);
 
+      const loadedAssets = (assetRows ?? []) as unknown as CreativeAssetRow[];
+      const assetsWithSignedUrls = await loadSignedCreativeAssetUrls(projectId, loadedAssets);
+
       setWorkspaceId((projectRow as { workspace_id?: string } | null)?.workspace_id ?? null);
-      setAssets((assetRows ?? []) as unknown as CreativeAssetRow[]);
+      setAssets(assetsWithSignedUrls);
       setAssetAds((adRows ?? []) as unknown as CreativeAssetAdRow[]);
       setMetrics((metricRows ?? []) as unknown as CreativeAssetMetricRow[]);
       setAnalyses((analysisRows ?? []) as unknown as CreativeAssetAnalysisRow[]);
@@ -267,9 +306,11 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
       if ((data as { error?: string } | null)?.error) {
         throw new Error((data as { error: string }).error);
       }
-      toast.success(card.mediaType === "video" && reprocessScope === "transcript"
-        ? "Transcrição enviada para a fila"
-        : "Análise enviada para a fila");
+      toast.success(
+        reprocessScope === "transcript"
+          ? "Transcrição e análise enfileiradas"
+          : "Análise enfileirada",
+      );
       await load();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Erro ao enfileirar análise");
@@ -835,16 +876,16 @@ function CreativeCard({
   card,
   expanded,
   metricScale,
-  onToggle,
-  onAnalyze,
   analyzing,
+  onAnalyze,
+  onToggle,
 }: {
   card: CreativeAssetCard;
   expanded: boolean;
   metricScale: { ctr: number; cpm: number; hookRate: number };
+  analyzing: boolean;
   onToggle: () => void;
   onAnalyze: () => void;
-  analyzing: boolean;
 }) {
   const title = card.headline || card.adNames[0] || card.assetKey;
   const previewText = card.primaryText || card.summary || "";
@@ -856,7 +897,13 @@ function CreativeCard({
       : card.pipelineStatus === "ready"
         ? "Reanalisar"
         : "Analisar";
-  const canAnalyze = card.mediaType !== "unknown" && card.pipelineStatus !== "missing_media";
+  const actionDisabled =
+    analyzing ||
+    card.mediaType === "unknown" ||
+    card.pipelineStatus === "analyzing" ||
+    card.pipelineStatus === "transcribing" ||
+    card.pipelineStatus === "oversized_queued" ||
+    card.pipelineStatus === "missing_media";
 
   return (
     <article
@@ -1040,7 +1087,7 @@ function CreativeCard({
             variant="outline"
             size="sm"
             onClick={onAnalyze}
-            disabled={analyzing || !canAnalyze}
+            disabled={actionDisabled}
             className="h-9 gap-2 rounded-xl border-border/60 bg-background/40 text-xs"
           >
             {analyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}

@@ -1,6 +1,13 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { isAutomationRequest } from "../_shared/automation.ts";
+import {
+  creativeQueueAlerts,
+  type AlertCandidate,
+  type CreativeJobRow,
+  type CreativeWorkerHeartbeatRow,
+} from "./core.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -10,6 +17,7 @@ const corsHeaders = {
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
+type SupabaseClientAny = ReturnType<typeof createClient<any, "public", any>>;
 
 type Caller = { kind: "service" } | { kind: "user"; userId: string };
 
@@ -18,16 +26,6 @@ interface ProjectContext {
   user_id: string;
   workspace_id: string;
   source: string | null;
-}
-
-interface AlertCandidate {
-  source: "meta" | "vturb" | "gateway" | "coverage" | "funnel";
-  type: string;
-  severity: "info" | "warning" | "critical";
-  title: string;
-  message: string;
-  dedupe_key: string;
-  details?: Record<string, unknown>;
 }
 
 interface ExistingAlertRow {
@@ -138,8 +136,17 @@ Deno.serve(async (req) => {
   }
 });
 
-async function buildAlerts(sb: ReturnType<typeof createClient>, project: ProjectContext): Promise<AlertCandidate[]> {
-  const [{ data: events }, { data: metrics }, { data: metaBindings }, { data: playerBindings }, { data: checkout }, { data: syncRuns }] =
+async function buildAlerts(sb: SupabaseClientAny, project: ProjectContext): Promise<AlertCandidate[]> {
+  const [
+    { data: events },
+    { data: metrics },
+    { data: metaBindings },
+    { data: playerBindings },
+    { data: checkout },
+    { data: syncRuns },
+    { data: creativeJobs },
+    { data: workerHeartbeats },
+  ] =
     await Promise.all([
       sb
         .from("raw_events")
@@ -161,6 +168,18 @@ async function buildAlerts(sb: ReturnType<typeof createClient>, project: Project
         .select("source, status, error_message, created_at")
         .eq("project_id", project.id)
         .order("created_at", { ascending: false })
+        .limit(10),
+      sb
+        .from("creative_asset_jobs")
+        .select("id, status, attempt_count, max_attempts, available_at, locked_at, locked_by, last_error, created_at")
+        .eq("project_id", project.id)
+        .in("status", ["queued", "running", "failed"])
+        .order("created_at", { ascending: false })
+        .limit(200),
+      sb
+        .from("creative_worker_heartbeats")
+        .select("worker_id, status, active_job_id, last_seen_at, processed_count, failed_count, last_error")
+        .order("last_seen_at", { ascending: false })
         .limit(10),
     ]);
 
@@ -241,7 +260,7 @@ async function buildAlerts(sb: ReturnType<typeof createClient>, project: Project
   for (const run of (syncRuns ?? []) as SyncRunRow[]) {
     if (run.status !== "failed") continue;
     alerts.push({
-      source: String(run.source) === "meta" ? "meta" : String(run.source) === "vturb" ? "vturb" : "coverage",
+      source: sourceForSyncRun(run.source),
       type: "sync_failed",
       severity: "critical",
       title: `Sync ${run.source} falhou`,
@@ -297,6 +316,10 @@ async function buildAlerts(sb: ReturnType<typeof createClient>, project: Project
 
   const missingCoverage = coverageGaps(rows, rawEvents);
   alerts.push(...missingCoverage);
+  alerts.push(...creativeQueueAlerts(
+    (creativeJobs ?? []) as CreativeJobRow[],
+    (workerHeartbeats ?? []) as CreativeWorkerHeartbeatRow[],
+  ));
 
   return alerts;
 }
@@ -361,6 +384,11 @@ function severityRank(severity: AlertCandidate["severity"]) {
   return 1;
 }
 
+function sourceForSyncRun(source: string): AlertCandidate["source"] {
+  if (source === "meta" || source === "vturb" || source === "gateway" || source === "creative") return source;
+  return "coverage";
+}
+
 async function resolveCaller(req: Request): Promise<Caller | null> {
   if (isAutomationRequest(req)) return { kind: "service" };
 
@@ -378,7 +406,7 @@ async function resolveCaller(req: Request): Promise<Caller | null> {
   return { kind: "user", userId: data.user.id };
 }
 
-async function getProjectOrThrow(sb: ReturnType<typeof createClient>, projectId: string): Promise<ProjectContext> {
+async function getProjectOrThrow(sb: SupabaseClientAny, projectId: string): Promise<ProjectContext> {
   const { data, error } = await sb
     .from("projects")
     .select("id, user_id, workspace_id, source")
@@ -388,7 +416,7 @@ async function getProjectOrThrow(sb: ReturnType<typeof createClient>, projectId:
   return data as ProjectContext;
 }
 
-async function assertWorkspaceMember(sb: ReturnType<typeof createClient>, workspaceId: string, userId: string) {
+async function assertWorkspaceMember(sb: SupabaseClientAny, workspaceId: string, userId: string) {
   const { data: workspaceMembership } = await sb
     .from("workspace_members")
     .select("role")

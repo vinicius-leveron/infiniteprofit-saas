@@ -23,6 +23,9 @@ verify_jwt = true
 [functions.ai-settings]
 verify_jwt = true
 
+[functions.accept-invite]
+verify_jwt = true
+
 [functions.pull-sheet]
 verify_jwt = true
 
@@ -31,6 +34,12 @@ verify_jwt = false
 
 [functions.meta-pull]
 verify_jwt = false
+
+[functions.creative-sync]
+verify_jwt = false
+
+[functions.creative-asset-urls]
+verify_jwt = true
 
 [functions.aggregate-daily]
 verify_jwt = false
@@ -55,3 +64,9 @@ verify_jwt = false
 
 [functions.generate-alerts]
 verify_jwt = false
+
+[functions.workspace-credentials]
+verify_jwt = true
+
+[functions.creative-jobs-admin]
+verify_jwt = true

@@ -84,6 +84,22 @@ export function buildProcessingFingerprint(parts) {
   return crypto.createHash("sha256").update(parts.map((part) => String(part ?? "")).join("|")).digest("hex");
 }
 
+export function computeRetryDelayMs({
+  attemptCount,
+  baseMs = 10_000,
+  maxMs = 15 * 60_000,
+  jitterRatio = 0.2,
+  random = Math.random,
+} = {}) {
+  const safeAttempt = Math.max(1, Math.floor(Number(attemptCount) || 1));
+  const cappedExponent = Math.min(safeAttempt - 1, 7);
+  const exponentialMs = Math.min(maxMs, baseMs * 2 ** cappedExponent);
+  const safeJitterRatio = Math.max(0, Math.min(Number(jitterRatio) || 0, 1));
+  const jitterWindow = exponentialMs * safeJitterRatio;
+  const jitter = jitterWindow === 0 ? 0 : (Number(random()) - 0.5) * 2 * jitterWindow;
+  return Math.max(baseMs, Math.min(maxMs, Math.round(exponentialMs + jitter)));
+}
+
 export function formatTimestamp(ms) {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
   const minutes = Math.floor(totalSeconds / 60);

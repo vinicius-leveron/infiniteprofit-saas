@@ -330,7 +330,7 @@ function HierarchyView({
             </div>
             {/* Funil da Campanha */}
             <div className="flex items-center gap-1 text-[10px] ml-7">
-              <FunnelStep label="Cliques" value={campaign.clicks} />
+              <FunnelStep label="Cliques no link" value={campaign.clicks} />
               <FunnelArrow rate={campaign.click_to_view} />
               <FunnelStep label="Views" value={campaign.vturb_views} highlight={campaign.has_vturb_data} />
               <FunnelArrow rate={campaign.view_to_pitch} />
@@ -377,7 +377,7 @@ function HierarchyView({
                     </div>
                     {/* Funil do Adset */}
                     <div className="flex items-center gap-1 text-[10px] ml-5">
-                      <FunnelStep label="Cliques" value={adset.clicks} size="sm" />
+                      <FunnelStep label="Cliques no link" value={adset.clicks} size="sm" />
                       <FunnelArrow rate={adset.click_to_view} />
                       <FunnelStep label="Views" value={adset.vturb_views} highlight={adset.has_vturb_data} size="sm" />
                       <FunnelArrow rate={adset.view_to_pitch} />
@@ -415,7 +415,7 @@ function HierarchyView({
 
                           {/* Funil Completo do Ad */}
                           <div className="flex items-center gap-1 text-[10px]">
-                            <FunnelStep label="Cliques" value={ad.clicks} size="sm" />
+                            <FunnelStep label="Cliques no link" value={ad.clicks} size="sm" />
                             <FunnelArrow rate={ad.click_to_view} />
                             <FunnelStep label="Views" value={ad.vturb_views} highlight={ad.has_vturb_data} size="sm" />
                             <FunnelArrow rate={ad.view_to_pitch} />
@@ -458,7 +458,7 @@ function FlatTable({ ads }: { ads: AdFunnelMetric[] }) {
             <th className="text-left py-2 pr-3">Anúncio</th>
             <th className="text-left py-2 pr-3">Campanha</th>
             <th className="text-right py-2 pr-3">Gasto</th>
-            <th className="text-right py-2 pr-3">Cliques</th>
+            <th className="text-right py-2 pr-3">Cliques link</th>
             <th className="text-right py-2 pr-3">Views</th>
             <th className="text-right py-2 pr-3">Pitch</th>
             <th className="text-right py-2 pr-3">Play</th>

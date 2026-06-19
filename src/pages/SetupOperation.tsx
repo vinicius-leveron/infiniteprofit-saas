@@ -30,6 +30,11 @@ type SetupDraft = {
   webhookToken: string;
 };
 
+type VturbDetectedPlayer = {
+  id: string;
+  name?: string | null;
+};
+
 const STEPS: Array<{ id: StepId; label: string }> = [
   { id: "nome", label: "Funil" },
   { id: "meta", label: "Meta" },
@@ -59,7 +64,7 @@ export default function SetupOperation() {
   const [testingMeta, setTestingMeta] = useState(false);
   const [metaTestResult, setMetaTestResult] = useState<{ ok: boolean; name?: string; error?: string } | null>(null);
   const [testingVturb, setTestingVturb] = useState(false);
-  const [vturbTestResult, setVturbTestResult] = useState<{ ok: boolean; players?: Array<{ id: string; name?: string | null }>; error?: string } | null>(null);
+  const [vturbTestResult, setVturbTestResult] = useState<{ ok: boolean; players?: VturbDetectedPlayer[]; error?: string } | null>(null);
 
   useEffect(() => {
     if (!authLoading && !user) navigate("/auth", { replace: true });
@@ -74,11 +79,6 @@ export default function SetupOperation() {
   const playerIds = useMemo(
     () => playersText.split(/\n|,|;/).map((value) => value.trim()).filter(Boolean),
     [playersText],
-  );
-  const playerLabelById = useMemo(
-    () => new Map((vturbTestResult?.players ?? [])
-      .map((player) => [player.id, player.name?.trim() || player.id] as const)),
-    [vturbTestResult?.players],
   );
   const webhookUrl = useMemo(
     () => `${SUPABASE_URL}/functions/v1/webhook-gateway/hubla/${webhookToken}`,
@@ -157,17 +157,16 @@ export default function SetupOperation() {
       let metaRowId: string | null = null;
       if (metaAccountId.trim() && metaToken.trim()) {
         const normalized = normalizeAccountId(metaAccountId);
-        const { data: metaRow, error: metaError } = await supabase
-          .from("workspace_meta_accounts")
-          .upsert({
+        const { data: metaData, error: metaError } = await supabase.functions.invoke("workspace-credentials", {
+          body: {
+            action: "upsert_meta_account",
             workspace_id: currentWorkspace.id,
             account_id: normalized,
             access_token: metaToken.trim(),
             label: metaLabel.trim() || normalized,
-            created_by: user.id,
-          }, { onConflict: "workspace_id,account_id" })
-          .select("id")
-          .single();
+          },
+        });
+        const metaRow = metaData?.meta_account;
         if (metaError || !metaRow) throw metaError ?? new Error("Falha ao salvar Meta");
         metaRowId = metaRow.id;
         const { error } = await supabase.from("project_meta_accounts").insert({
@@ -178,24 +177,35 @@ export default function SetupOperation() {
       }
 
       if (vturbKey.trim() || hublaSecret.trim()) {
-        const { error } = await supabase.from("workspace_integrations").upsert({
+        const integrationBody: Record<string, unknown> = {
+          action: "upsert_workspace_integration",
           workspace_id: currentWorkspace.id,
-          vturb_api_key: vturbKey.trim() || null,
-          gateway_provider: hublaSecret.trim() ? "hubla" : null,
-          gateway_webhook_secret: hublaSecret.trim() || null,
-          created_by: user.id,
-        }, { onConflict: "workspace_id" });
+          vturb_api_key: vturbKey.trim() || undefined,
+          gateway_webhook_secret: hublaSecret.trim() || undefined,
+        };
+        if (hublaSecret.trim()) integrationBody.gateway_provider = "hubla";
+
+        const { error } = await supabase.functions.invoke("workspace-credentials", {
+          body: integrationBody,
+        });
         if (error) throw error;
       }
 
       if (playerIds.length > 0) {
+        const vturbNamesById = new Map(
+          (vturbTestResult?.players ?? [])
+            .map((player) => [player.id.trim(), player.name?.trim() ?? ""] as const)
+            .filter(([id, playerName]) => id && playerName),
+        );
+
         for (const playerId of playerIds) {
+          const playerLabel = vturbNamesById.get(playerId) || playerId;
           const { data: player, error: playerError } = await supabase
             .from("workspace_vturb_players")
             .upsert({
               workspace_id: currentWorkspace.id,
               player_id: playerId,
-              label: playerLabelById.get(playerId) ?? playerId,
+              label: playerLabel,
               created_by: user.id,
             }, { onConflict: "workspace_id,player_id" })
             .select("id")

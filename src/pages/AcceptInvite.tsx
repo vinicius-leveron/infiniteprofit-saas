@@ -26,15 +26,16 @@ export default function AcceptInvite() {
     let cancelled = false;
     void (async () => {
       try {
-        const rpcName =
-          kind === "organization" ? "accept_organization_invite" : "accept_workspace_invite";
-        const { data, error } = await supabase.rpc(rpcName, { _token: token });
+        const { data, error } = await supabase.functions.invoke("accept-invite", {
+          body: { kind, token },
+        });
         if (error) throw error;
 
         await refreshAccess();
 
-        if (kind === "workspace" && typeof data === "string") {
-          setCurrentWorkspaceId(data);
+        const acceptedId = typeof data?.id === "string" ? data.id : null;
+        if (kind === "workspace" && acceptedId) {
+          setCurrentWorkspaceId(acceptedId);
         }
 
         toast.success("Convite aceito");

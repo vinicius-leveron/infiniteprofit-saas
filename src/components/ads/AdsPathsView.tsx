@@ -136,7 +136,7 @@ export function AdsPathsView({ projectId }: AdsPathsViewProps) {
 
       const current = metaByContent.get(adId) ?? { spend: 0, clicks: 0, ad_name: adName };
       current.spend += toNumber(payload.spend);
-      current.clicks += toNumber(payload.clicks);
+      current.clicks += extractLinkClicks(payload);
       metaByContent.set(adId, current);
     }
 
@@ -258,7 +258,7 @@ export function AdsPathsView({ projectId }: AdsPathsViewProps) {
       {/* Summary Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3 pt-4 border-t border-border/50">
         <SummaryStat label="Gasto Total" value={fBRL(totals.spend)} icon={BarChart3} />
-        <SummaryStat label="Cliques" value={fNum(totals.clicks)} icon={Play} />
+        <SummaryStat label="Cliques no link" value={fNum(totals.clicks)} icon={Play} />
         <SummaryStat label="Views VTurb" value={fNum(totals.views)} icon={Play} />
         <SummaryStat label="Checkouts" value={fNum(totals.checkouts)} icon={ShoppingCart} />
         <SummaryStat label="Vendas" value={fNum(totals.purchases)} icon={CreditCard} />
@@ -340,7 +340,7 @@ function PathCard({ path, rank }: { path: PathMetric; rank: number }) {
 
           {/* Funnel Visualization */}
           <div className="flex items-center gap-1 text-xs">
-            <FunnelStep label="Cliques" value={path.clicks} />
+            <FunnelStep label="Cliques no link" value={path.clicks} />
             <FunnelArrow rate={path.click_to_view} />
             <FunnelStep label="Views" value={path.views} />
             <FunnelArrow rate={path.view_to_pitch} />
@@ -448,6 +448,38 @@ function createEmptyPath(id: string): PathMetric {
 function toNumber(value: unknown) {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function extractLinkClicks(payload: RawEventPayload): number {
+  return (
+    actionValueFromUnknown(payload.actions, ["link_click"]) ??
+    actionValueFromUnknown(payload.actions, ["omni_link_click"]) ??
+    actionValueFromUnknown(payload.outbound_clicks, ["outbound_click", "link_click"]) ??
+    toNumber(payload.clicks)
+  );
+}
+
+function actionValueFromUnknown(value: unknown, actionTypes: string[]): number | null {
+  if (Array.isArray(value)) {
+    for (const actionType of actionTypes) {
+      let found = false;
+      let total = 0;
+      for (const item of value) {
+        const action = item as { action_type?: unknown; value?: unknown };
+        if (String(action.action_type ?? "").toLowerCase() !== actionType) continue;
+        found = true;
+        total += toNumber(action.value);
+      }
+      if (found) return total;
+    }
+    return null;
+  }
+
+  if (typeof value === "number" || typeof value === "string") {
+    return toNumber(value);
+  }
+
+  return null;
 }
 
 function valueForSort(path: PathMetric, key: SortKey) {

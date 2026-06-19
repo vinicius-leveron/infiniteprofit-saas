@@ -6,8 +6,8 @@ import os from "node:os";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import {
-  buildKeyframeTimestamps,
   computeAudioChunkPlan,
+  computeRetryDelayMs,
   formatTimestamp,
   mergeTranscriptChunks,
   normalizeAnalysisResponse,
@@ -24,12 +24,16 @@ const PROMPT_VERSION = process.env.CREATIVE_ANALYSIS_PROMPT_VERSION || "creative
 const POLL_INTERVAL_MS = Number(process.env.CREATIVE_WORKER_POLL_INTERVAL_MS || "5000");
 const BATCH_SIZE = Number(process.env.CREATIVE_WORKER_BATCH_SIZE || "2");
 const WORKER_ID = process.env.CREATIVE_WORKER_ID || process.env.RENDER_SERVICE_NAME || os.hostname();
+const HEARTBEAT_INTERVAL_MS = Number(process.env.CREATIVE_WORKER_HEARTBEAT_INTERVAL_MS || "30000");
 const FFMPEG_BIN = process.env.FFMPEG_PATH || "ffmpeg";
 const FFPROBE_BIN = process.env.FFPROBE_PATH || "ffprobe";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
+let processedCount = 0;
+let failedCount = 0;
+let lastHeartbeatAt = 0;
 
 main().catch((error) => {
   console.error("creative worker fatal error", error);
@@ -38,21 +42,69 @@ main().catch((error) => {
 
 async function main() {
   console.log(`creative worker started as ${WORKER_ID}`);
+  await reportHeartbeat({ status: "starting", force: true });
   while (true) {
     try {
+      await reportHeartbeat({ status: "claiming" });
       const jobs = await claimJobs(BATCH_SIZE);
       if (jobs.length === 0) {
+        await reportHeartbeat({ status: "idle" });
         await sleep(POLL_INTERVAL_MS);
         continue;
       }
 
       for (const job of jobs) {
-        await processJob(job);
+        await reportHeartbeat({ status: "processing", activeJobId: job.id, force: true });
+        const succeeded = await processJob(job);
+        if (succeeded) {
+          processedCount += 1;
+        } else {
+          failedCount += 1;
+        }
+        await reportHeartbeat({ status: "idle", force: true });
       }
     } catch (error) {
       console.error("creative worker loop error", error);
+      await reportHeartbeat({ status: "error", lastError: error instanceof Error ? error.message : String(error), force: true });
       await sleep(POLL_INTERVAL_MS);
     }
+  }
+}
+
+async function reportHeartbeat({ status, activeJobId = null, lastError = null, force = false }) {
+  const now = Date.now();
+  if (!force && now - lastHeartbeatAt < HEARTBEAT_INTERVAL_MS) return;
+  lastHeartbeatAt = now;
+
+  try {
+    const { error } = await supabase
+      .from("creative_worker_heartbeats")
+      .upsert({
+        worker_id: WORKER_ID,
+        status,
+        active_job_id: activeJobId,
+        last_seen_at: new Date(now).toISOString(),
+        processed_count: processedCount,
+        failed_count: failedCount,
+        last_error: lastError,
+        metadata: {
+          hostname: os.hostname(),
+          pid: process.pid,
+          bucket: CREATIVE_BUCKET,
+          batch_size: BATCH_SIZE,
+          poll_interval_ms: POLL_INTERVAL_MS,
+          prompt_version: PROMPT_VERSION,
+          transcription_provider: TRANSCRIPTION_PROVIDER,
+          transcription_model: TRANSCRIPTION_MODEL,
+          analysis_provider: ANALYSIS_PROVIDER,
+          analysis_model: ANALYSIS_MODEL,
+        },
+      }, { onConflict: "worker_id" });
+    if (error) {
+      console.warn("creative worker heartbeat failed", error.message);
+    }
+  } catch (error) {
+    console.warn("creative worker heartbeat failed", error);
   }
 }
 
@@ -120,7 +172,7 @@ async function processJob(job) {
         },
       });
       await completeJob(job.id);
-      return;
+      return true;
     }
 
     const probe = await probeMedia(sourceFile);
@@ -133,27 +185,6 @@ async function processJob(job) {
       storagePath: payload.media_storage_path || `${payload.project_id}/source/${sanitizePathSegment(payload.asset_key)}.mp4`,
       contentType: "video/mp4",
     });
-
-    const posterPath = path.join(tempDir, "poster.jpg");
-    await generatePoster(sourceFile, posterPath);
-    const posterStored = await uploadToStorage({
-      localPath: posterPath,
-      storagePath: `${payload.project_id}/poster/${sanitizePathSegment(payload.asset_key)}.jpg`,
-      contentType: "image/jpeg",
-    });
-
-    const keyframeTimestamps = buildKeyframeTimestamps(durationMs);
-    const keyframeUrls = [];
-    for (const timestampMs of keyframeTimestamps) {
-      const frameLocalPath = path.join(tempDir, `frame-${timestampMs}.jpg`);
-      await generateFrame(sourceFile, frameLocalPath, timestampMs);
-      const uploaded = await uploadToStorage({
-        localPath: frameLocalPath,
-        storagePath: `${payload.project_id}/keyframes/${sanitizePathSegment(payload.asset_key)}-${timestampMs}.jpg`,
-        contentType: "image/jpeg",
-      });
-      keyframeUrls.push({ url: uploaded.publicUrl, timestampMs });
-    }
 
     const audioPath = path.join(tempDir, "audio.m4a");
     await extractAudio(sourceFile, audioPath);
@@ -226,8 +257,8 @@ async function processJob(job) {
       transcriptSegments,
       transcriptLanguage,
       transcriptStatus,
-      posterPath: posterStored.storagePath,
-      posterUrl: posterStored.publicUrl,
+      posterPath: asset.poster_storage_path ?? payload.poster_storage_path,
+      posterUrl: payload.thumbnail_url ?? asset.thumbnail_url,
       mediaStoragePath: storedVideo.storagePath,
       mediaBytes,
       mediaDurationMs: durationMs,
@@ -235,9 +266,11 @@ async function processJob(job) {
       analysis,
     });
     await completeJob(job.id);
+    return true;
   } catch (error) {
     console.error(`creative worker job ${job.id} failed`, error);
     await persistFailure(job, normalizeJobPayload(job.payload), error);
+    return false;
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
   }
@@ -550,7 +583,7 @@ async function persistFailure(job, payload, error) {
 
   const nextStatus = job.attempt_count >= job.max_attempts ? "failed" : "queued";
   const availableAt = nextStatus === "queued"
-    ? new Date(Date.now() + Math.min(60_000, 5_000 * Math.max(job.attempt_count, 1))).toISOString()
+    ? new Date(Date.now() + computeRetryDelayMs({ attemptCount: job.attempt_count })).toISOString()
     : new Date().toISOString();
 
   await supabase
@@ -632,25 +665,6 @@ async function probeMedia(filePath) {
     filePath,
   ]);
   return JSON.parse(stdout || "{}");
-}
-
-async function generatePoster(inputPath, outputPath) {
-  await runCommand(FFMPEG_BIN, ["-y", "-ss", "0", "-i", inputPath, "-frames:v", "1", "-q:v", "2", outputPath]);
-}
-
-async function generateFrame(inputPath, outputPath, timestampMs) {
-  await runCommand(FFMPEG_BIN, [
-    "-y",
-    "-ss",
-    String(timestampMs / 1000),
-    "-i",
-    inputPath,
-    "-frames:v",
-    "1",
-    "-q:v",
-    "2",
-    outputPath,
-  ]);
 }
 
 async function extractAudio(inputPath, outputPath) {

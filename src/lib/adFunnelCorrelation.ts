@@ -140,10 +140,10 @@ function firstPositiveNumber(...values: unknown[]) {
 }
 
 function extractLinkClicks(payload: RawMetaPayload) {
-  const linkClick = actionValue(payload.actions, ["link_click"]);
+  const linkClick = actionValue(payload.actions, ["link_click", "omni_link_click"]);
   if (linkClick > 0) return linkClick;
 
-  const outboundClick = actionValue(payload.outbound_clicks, ["outbound_click"]);
+  const outboundClick = actionValue(payload.outbound_clicks, ["outbound_click", "link_click"]);
   if (outboundClick > 0) return outboundClick;
 
   return toNumber(payload.clicks);
@@ -521,7 +521,7 @@ export function labelForFunnelSort(key: FunnelSortKey): string {
     case "spend":
       return "Gasto";
     case "clicks":
-      return "Cliques";
+      return "Cliques no link";
     case "roas":
       return "ROAS Pixel";
     case "cpa":

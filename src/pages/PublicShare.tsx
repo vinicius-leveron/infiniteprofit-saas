@@ -178,7 +178,7 @@ export default function PublicShare() {
         ) : (
           <div ref={reportRef} className="space-y-6">
             <OverviewPanel rows={current} previous={previous} />
-            <AttributionPanel rows={current} />
+            <AttributionPanel rows={current} projectId={project?.id} />
             <ExecutiveReportPanel current={current} previous={previous} />
           </div>
         )}

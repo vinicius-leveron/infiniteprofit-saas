@@ -1,0 +1,23 @@
+{
+  "projectRef": "nztnctrkmfrgclrnflfa",
+  "expectedRemoteFunctions": [
+    "accept-invite",
+    "aggregate-daily",
+    "ai-settings",
+    "creative-asset-urls",
+    "creative-jobs-admin",
+    "creative-sync",
+    "generate-alerts",
+    "hubla-csv-import",
+    "insights",
+    "meta-pull",
+    "meta-test",
+    "public-share",
+    "pull-sheet",
+    "vturb-pull",
+    "vturb-test",
+    "webhook-gateway",
+    "workspace-credentials"
+  ],
+  "documentedExternalFunctions": []
+}

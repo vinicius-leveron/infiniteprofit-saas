@@ -124,12 +124,12 @@ export default function WorkspaceSettings() {
       ] = await Promise.all([
         supabase
           .from("workspace_integrations")
-          .select("workspace_id, vturb_api_key, vturb_last_event_at, gateway_provider, gateway_webhook_secret, gateway_webhook_token, gateway_last_event_at")
+          .select("workspace_id, vturb_last_event_at, gateway_provider, gateway_webhook_token, gateway_last_event_at")
           .eq("workspace_id", currentWorkspace.id)
           .maybeSingle(),
         supabase
           .from("workspace_meta_accounts")
-          .select("id, account_id, access_token, label, last_synced_at")
+          .select("id, account_id, label, last_synced_at")
           .eq("workspace_id", currentWorkspace.id)
           .order("created_at", { ascending: true }),
         supabase
@@ -175,12 +175,16 @@ export default function WorkspaceSettings() {
       }
 
       setWorkspaceIntegration(
-        (integrationRow as WorkspaceIntegrationRow | null) ?? {
+        integrationRow ? {
+          ...(integrationRow as Omit<WorkspaceIntegrationRow, "vturb_api_key" | "gateway_webhook_secret">),
+          vturb_api_key: null,
+          gateway_webhook_secret: null,
+        } : {
           workspace_id: currentWorkspace.id,
           vturb_api_key: null,
           vturb_last_event_at: null,
           gateway_provider: null,
-          gateway_webhook_secret: randomSecret(),
+          gateway_webhook_secret: null,
           gateway_webhook_token: randomSecret(),
           gateway_last_event_at: null,
         },
@@ -188,6 +192,7 @@ export default function WorkspaceSettings() {
       setMetaAccounts(
         typedMetaRows.map((row) => ({
           ...row,
+          access_token: "",
           original_account_id: row.account_id,
           boundProjectCount: metaBindingCounts.get(row.id ?? "") ?? 0,
         })),
@@ -212,36 +217,48 @@ export default function WorkspaceSettings() {
     if (!user || !currentWorkspace?.id || !workspaceIntegration) return;
     setSaving(true);
     try {
-      const { error: integrationError } = await supabase.from("workspace_integrations").upsert({
+      const integrationPayload: Record<string, unknown> = {
+        action: "upsert_workspace_integration",
         workspace_id: currentWorkspace.id,
-        created_by: user.id,
-        vturb_api_key: workspaceIntegration.vturb_api_key?.trim() || null,
         gateway_provider: workspaceIntegration.gateway_provider || null,
-        gateway_webhook_secret: workspaceIntegration.gateway_webhook_secret?.trim() || null,
         gateway_webhook_token: workspaceIntegration.gateway_webhook_token,
+      };
+      const vturbApiKey = workspaceIntegration.vturb_api_key?.trim();
+      const gatewaySecret = workspaceIntegration.gateway_webhook_secret?.trim();
+      if (vturbApiKey) integrationPayload.vturb_api_key = vturbApiKey;
+      if (gatewaySecret) integrationPayload.gateway_webhook_secret = gatewaySecret;
+
+      const { error: integrationError } = await supabase.functions.invoke("workspace-credentials", {
+        body: integrationPayload,
       });
       if (integrationError) throw integrationError;
 
-      const validMeta = metaAccounts.filter((account) => account.account_id.trim() && account.access_token.trim());
+      const validMeta = metaAccounts.filter((account) => account.account_id.trim());
       for (const account of validMeta) {
         const normalizedAccountId = normalizeMetaAccountId(account.account_id);
         if ((account.boundProjectCount ?? 0) > 0 && account.original_account_id && account.original_account_id !== normalizedAccountId) {
           throw new Error("Desvincule a conta Meta dos projetos em Conexões antes de trocar o Ad Account ID.");
         }
 
-        const { error } = await supabase.from("workspace_meta_accounts").upsert({
-          workspace_id: currentWorkspace.id,
-          created_by: user.id,
-          account_id: normalizedAccountId,
-          access_token: account.access_token.trim(),
-          label: account.label?.trim() || null,
-        }, { onConflict: "workspace_id,account_id" });
-        if (error) throw error;
+        const nextToken = account.access_token.trim();
+        const sameExistingAccount =
+          Boolean(account.id) && account.original_account_id === normalizedAccountId;
 
-        if (account.id && account.original_account_id && account.original_account_id !== normalizedAccountId) {
-          const { error: deleteOldError } = await supabase.from("workspace_meta_accounts").delete().eq("id", account.id);
-          if (deleteOldError) throw deleteOldError;
+        if (!sameExistingAccount && !nextToken) {
+          throw new Error("Informe um novo token Meta para cadastrar ou trocar o Ad Account ID.");
         }
+
+        const { error } = await supabase.functions.invoke("workspace-credentials", {
+          body: {
+            action: "upsert_meta_account",
+            workspace_id: currentWorkspace.id,
+            meta_account_id: account.id,
+            account_id: normalizedAccountId,
+            access_token: nextToken || undefined,
+            label: account.label?.trim() || null,
+          },
+        });
+        if (error) throw error;
       }
 
       const validPlayers = vturbPlayers.filter((player) => player.player_id.trim());
@@ -308,8 +325,8 @@ export default function WorkspaceSettings() {
 
   async function resolveVturbPlayerNames() {
     const apiKey = workspaceIntegration?.vturb_api_key?.trim();
-    if (!apiKey) {
-      toast.error("Informe a API key da VTurb antes de buscar os nomes");
+    if (!apiKey && !currentWorkspace?.id) {
+      toast.error("Informe ou salve uma API key da VTurb antes de buscar os nomes");
       return;
     }
 
@@ -322,7 +339,7 @@ export default function WorkspaceSettings() {
     setResolvingVturbNames(true);
     try {
       const { data, error } = await supabase.functions.invoke("vturb-test", {
-        body: { api_key: apiKey },
+        body: apiKey ? { api_key: apiKey } : { workspace_id: currentWorkspace.id },
       });
       if (error) throw error;
 
@@ -409,6 +426,7 @@ export default function WorkspaceSettings() {
                 <Input
                   type="password"
                   value={workspaceIntegration?.vturb_api_key ?? ""}
+                  placeholder="Deixe vazio para manter a chave atual"
                   disabled={!isWorkspaceAdmin}
                   onChange={(event) =>
                     setWorkspaceIntegration((current) => current
@@ -445,6 +463,7 @@ export default function WorkspaceSettings() {
                   <Label>Chave secreta</Label>
                   <Input
                     value={workspaceIntegration?.gateway_webhook_secret ?? ""}
+                    placeholder="Deixe vazio para manter o secret atual"
                     disabled={!isWorkspaceAdmin}
                     onChange={(event) =>
                       setWorkspaceIntegration((current) => current
@@ -479,59 +498,59 @@ export default function WorkspaceSettings() {
               <div className="max-h-[420px] space-y-3 overflow-y-auto pr-1">
                 {metaAccounts.map((account, index) => (
                   <div key={account.id ?? `meta-${index}`} className="rounded-lg border border-border/50 p-3 space-y-2">
-                  <Input
-                    value={account.label ?? ""}
-                    disabled={!isWorkspaceAdmin}
-                    placeholder="Apelido"
-                    onChange={(event) =>
-                      setMetaAccounts((current) =>
-                        current.map((entry, currentIndex) =>
-                          currentIndex === index ? { ...entry, label: event.target.value } : entry,
-                        ),
-                      )
-                    }
-                  />
-                  <div className="grid sm:grid-cols-2 gap-2">
                     <Input
-                      value={account.account_id}
-                      disabled={!isWorkspaceAdmin || (account.boundProjectCount ?? 0) > 0}
-                      placeholder="act_1234567890"
-                      onChange={(event) =>
-                        setMetaAccounts((current) =>
-                          current.map((entry, currentIndex) =>
-                            currentIndex === index ? { ...entry, account_id: event.target.value } : entry,
-                          ),
-                        )
-                      }
-                    />
-                    <Input
-                      type="password"
-                      value={account.access_token}
+                      value={account.label ?? ""}
                       disabled={!isWorkspaceAdmin}
-                      placeholder="EAAB..."
+                      placeholder="Apelido"
                       onChange={(event) =>
                         setMetaAccounts((current) =>
                           current.map((entry, currentIndex) =>
-                            currentIndex === index ? { ...entry, access_token: event.target.value } : entry,
+                            currentIndex === index ? { ...entry, label: event.target.value } : entry,
                           ),
                         )
                       }
                     />
-                  </div>
-                  {(account.boundProjectCount ?? 0) > 0 && (
-                    <p className="text-[11px] text-amber-600">
-                      {formatBoundProjects(account.boundProjectCount ?? 0)}. Para trocar o Ad Account ID, desvincule
-                      a conta em Conexões primeiro.
-                    </p>
-                  )}
-                  {isWorkspaceAdmin && (
-                    <div className="flex justify-end">
-                      <Button type="button" variant="ghost" size="sm" onClick={() => deleteMetaAccount(account, index)}>
-                        <Trash2 className="w-4 h-4 mr-2" />
-                        Remover
-                      </Button>
+                    <div className="grid sm:grid-cols-2 gap-2">
+                      <Input
+                        value={account.account_id}
+                        disabled={!isWorkspaceAdmin || (account.boundProjectCount ?? 0) > 0}
+                        placeholder="act_1234567890"
+                        onChange={(event) =>
+                          setMetaAccounts((current) =>
+                            current.map((entry, currentIndex) =>
+                              currentIndex === index ? { ...entry, account_id: event.target.value } : entry,
+                            ),
+                          )
+                        }
+                      />
+                      <Input
+                        type="password"
+                        value={account.access_token}
+                        disabled={!isWorkspaceAdmin}
+                        placeholder={account.id ? "Deixe vazio para manter o token atual" : "EAAB..."}
+                        onChange={(event) =>
+                          setMetaAccounts((current) =>
+                            current.map((entry, currentIndex) =>
+                              currentIndex === index ? { ...entry, access_token: event.target.value } : entry,
+                            ),
+                          )
+                        }
+                      />
                     </div>
-                  )}
+                    {(account.boundProjectCount ?? 0) > 0 && (
+                      <p className="text-[11px] text-amber-600">
+                        {formatBoundProjects(account.boundProjectCount ?? 0)}. Para trocar o Ad Account ID, desvincule
+                        a conta em Conexões primeiro.
+                      </p>
+                    )}
+                    {isWorkspaceAdmin && (
+                      <div className="flex justify-end">
+                        <Button type="button" variant="ghost" size="sm" onClick={() => deleteMetaAccount(account, index)}>
+                          <Trash2 className="w-4 h-4 mr-2" />
+                          Remover
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -571,46 +590,46 @@ export default function WorkspaceSettings() {
               <div className="max-h-[420px] space-y-3 overflow-y-auto pr-1">
                 {vturbPlayers.map((player, index) => (
                   <div key={player.id ?? `vturb-${index}`} className="rounded-lg border border-border/50 p-3 space-y-2">
-                  <div className="grid sm:grid-cols-[1fr,220px] gap-2">
-                    <Input
-                      value={player.player_id}
-                      disabled={!isWorkspaceAdmin || (player.boundProjectCount ?? 0) > 0}
-                      placeholder="player_id"
-                      onChange={(event) =>
-                        setVturbPlayers((current) =>
-                          current.map((entry, currentIndex) =>
-                            currentIndex === index ? { ...entry, player_id: event.target.value } : entry,
-                          ),
-                        )
-                      }
-                    />
-                    <Input
-                      value={player.label ?? ""}
-                      disabled={!isWorkspaceAdmin}
-                      placeholder="Apelido"
-                      onChange={(event) =>
-                        setVturbPlayers((current) =>
-                          current.map((entry, currentIndex) =>
-                            currentIndex === index ? { ...entry, label: event.target.value } : entry,
-                          ),
-                        )
-                      }
-                    />
-                  </div>
-                  {(player.boundProjectCount ?? 0) > 0 && (
-                    <p className="text-[11px] text-amber-600">
-                      {formatBoundProjects(player.boundProjectCount ?? 0)}. Para trocar o player ID, desvincule o
-                      projeto em Conexões primeiro.
-                    </p>
-                  )}
-                  {isWorkspaceAdmin && (
-                    <div className="flex justify-end">
-                      <Button type="button" variant="ghost" size="sm" onClick={() => deleteVturbPlayer(player, index)}>
-                        <Trash2 className="w-4 h-4 mr-2" />
-                        Remover
-                      </Button>
+                    <div className="grid sm:grid-cols-[1fr,220px] gap-2">
+                      <Input
+                        value={player.player_id}
+                        disabled={!isWorkspaceAdmin || (player.boundProjectCount ?? 0) > 0}
+                        placeholder="player_id"
+                        onChange={(event) =>
+                          setVturbPlayers((current) =>
+                            current.map((entry, currentIndex) =>
+                              currentIndex === index ? { ...entry, player_id: event.target.value } : entry,
+                            ),
+                          )
+                        }
+                      />
+                      <Input
+                        value={player.label ?? ""}
+                        disabled={!isWorkspaceAdmin}
+                        placeholder="Apelido"
+                        onChange={(event) =>
+                          setVturbPlayers((current) =>
+                            current.map((entry, currentIndex) =>
+                              currentIndex === index ? { ...entry, label: event.target.value } : entry,
+                            ),
+                          )
+                        }
+                      />
                     </div>
-                  )}
+                    {(player.boundProjectCount ?? 0) > 0 && (
+                      <p className="text-[11px] text-amber-600">
+                        {formatBoundProjects(player.boundProjectCount ?? 0)}. Para trocar o player ID, desvincule o
+                        projeto em Conexões primeiro.
+                      </p>
+                    )}
+                    {isWorkspaceAdmin && (
+                      <div className="flex justify-end">
+                        <Button type="button" variant="ghost" size="sm" onClick={() => deleteVturbPlayer(player, index)}>
+                          <Trash2 className="w-4 h-4 mr-2" />
+                          Remover
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type React from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
   AlertTriangle,
+  ArchiveX,
   ArrowLeft,
   CheckCircle2,
   Copy,
@@ -13,12 +14,24 @@ import {
   Megaphone,
   PlayCircle,
   RefreshCw,
+  RotateCcw,
   Settings2,
+  Sparkles,
   Zap,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import {
@@ -27,6 +40,14 @@ import {
   type CoverageRow,
   type CoverageStatus,
 } from "@/lib/dashboardCoverage";
+import {
+  canDeadLetterCreativeJob,
+  canRequeueCreativeJob,
+  creativeJobStatusLabel,
+  getRecentActionableCreativeJobs,
+  summarizeCreativeJobs,
+  type CreativeJobQueueRow,
+} from "@/lib/creativeJobQueue";
 import { cn } from "@/lib/utils";
 import {
   Tooltip,
@@ -60,10 +81,12 @@ interface DailyMetricRow {
 interface BindingState {
   metaAccounts: number;
   vturbPlayers: number;
+  creativeAssets: number;
   checkoutToken: string | null;
   gatewayProvider: string | null;
   lastMetaSync: string | null;
   lastVturbSync: string | null;
+  lastCreativeSync: string | null;
   lastGatewayEvent: string | null;
 }
 
@@ -78,11 +101,19 @@ interface OperationalAlertRow {
 }
 
 interface SyncRunRow {
-  source: "meta" | "vturb";
+  source: "meta" | "vturb" | "creative";
   status: "queued" | "running" | "succeeded" | "failed";
   error_message: string | null;
   details: unknown;
   created_at: string;
+}
+
+type CreativeJobRow = CreativeJobQueueRow;
+type CreativeJobAdminAction = "requeue" | "dead_letter";
+
+interface CreativeJobActionState {
+  action: CreativeJobAdminAction;
+  job: CreativeJobRow;
 }
 
 export default function Diagnostics() {
@@ -90,23 +121,30 @@ export default function Diagnostics() {
   const [params] = useSearchParams();
   const projectId = params.get("project");
   const { user, loading: authLoading } = useAuth();
-  const { currentWorkspace, setCurrentWorkspaceId } = useWorkspace();
+  const { currentWorkspace, isOrganizationAdmin, isWorkspaceAdmin, setCurrentWorkspaceId } = useWorkspace();
   const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState<"meta" | "vturb" | null>(null);
+  const [syncing, setSyncing] = useState<"meta" | "vturb" | "creative" | null>(null);
   const [generatingAlerts, setGeneratingAlerts] = useState(false);
+  const [jobAction, setJobAction] = useState<CreativeJobActionState | null>(null);
+  const [jobActionReason, setJobActionReason] = useState("");
+  const [jobActionResetAttempts, setJobActionResetAttempts] = useState(true);
+  const [jobActionSubmitting, setJobActionSubmitting] = useState(false);
   const [project, setProject] = useState<ProjectRow | null>(null);
   const [events, setEvents] = useState<RawEventRow[]>([]);
   const [metrics, setMetrics] = useState<DailyMetricRow[]>([]);
   const [operationalAlerts, setOperationalAlerts] = useState<OperationalAlertRow[]>([]);
   const [syncRuns, setSyncRuns] = useState<SyncRunRow[]>([]);
+  const [creativeJobs, setCreativeJobs] = useState<CreativeJobRow[]>([]);
   const [lastLoadedAt, setLastLoadedAt] = useState<Date | null>(null);
   const [bindings, setBindings] = useState<BindingState>({
     metaAccounts: 0,
     vturbPlayers: 0,
+    creativeAssets: 0,
     checkoutToken: null,
     gatewayProvider: null,
     lastMetaSync: null,
     lastVturbSync: null,
+    lastCreativeSync: null,
     lastGatewayEvent: null,
   });
 
@@ -114,12 +152,7 @@ export default function Diagnostics() {
     if (!authLoading && !user) navigate("/auth", { replace: true });
   }, [authLoading, navigate, user]);
 
-  useEffect(() => {
-    if (!user || !projectId) return;
-    void load();
-  }, [projectId, user]);
-
-  async function load() {
+  const load = useCallback(async () => {
     if (!projectId) return;
     setLoading(true);
     try {
@@ -141,10 +174,12 @@ export default function Diagnostics() {
         { data: metricRows },
         { data: metaRows },
         { data: playerRows },
+        { data: creativeAssetRows },
         { data: checkoutRow },
         { data: integrationRow },
         { data: alertRows },
         { data: syncRunRows },
+        { data: creativeJobRows },
       ] = await Promise.all([
         supabase
           .from("raw_events")
@@ -159,6 +194,7 @@ export default function Diagnostics() {
           .order("event_date", { ascending: false }),
         supabase.from("project_meta_accounts").select("meta_account_id").eq("project_id", typedProject.id),
         supabase.from("project_vturb_players").select("vturb_player_id").eq("project_id", typedProject.id),
+        supabase.from("creative_assets" as never).select("id").eq("project_id", typedProject.id),
         supabase
           .from("project_checkout_bindings")
           .select("webhook_token, enabled")
@@ -179,25 +215,35 @@ export default function Diagnostics() {
           .from("sync_runs")
           .select("source, status, error_message, details, created_at")
           .eq("project_id", typedProject.id)
-          .in("source", ["meta", "vturb"])
+          .in("source", ["meta", "vturb", "creative"])
           .order("created_at", { ascending: false })
           .limit(12),
+        supabase
+          .from("creative_asset_jobs" as never)
+          .select("id, asset_id, status, attempt_count, max_attempts, last_error, created_at, updated_at, available_at, locked_at, locked_by, finished_at")
+          .eq("project_id", typedProject.id)
+          .order("created_at", { ascending: false })
+          .limit(1000),
       ]);
 
       const typedEvents = (rawRows ?? []) as RawEventRow[];
       setEvents(typedEvents);
       setMetrics((metricRows ?? []) as DailyMetricRow[]);
+      const typedSyncRuns = (syncRunRows ?? []) as SyncRunRow[];
       setBindings({
         metaAccounts: (metaRows ?? []).length,
         vturbPlayers: (playerRows ?? []).length,
+        creativeAssets: (creativeAssetRows ?? []).length,
         checkoutToken: checkoutRow?.enabled ? checkoutRow.webhook_token : null,
         gatewayProvider: integrationRow?.gateway_provider ?? null,
         lastMetaSync: lastReceivedAt(typedEvents, "meta"),
         lastVturbSync: integrationRow?.vturb_last_event_at ?? lastReceivedAt(typedEvents, "vturb"),
+        lastCreativeSync: typedSyncRuns.find((row) => row.source === "creative" && row.status === "succeeded")?.created_at ?? null,
         lastGatewayEvent: integrationRow?.gateway_last_event_at ?? lastReceivedAt(typedEvents, "gateway"),
       });
       setOperationalAlerts((alertRows ?? []) as unknown as OperationalAlertRow[]);
-      setSyncRuns((syncRunRows ?? []) as SyncRunRow[]);
+      setSyncRuns(typedSyncRuns);
+      setCreativeJobs((creativeJobRows ?? []) as unknown as CreativeJobRow[]);
       setLastLoadedAt(new Date());
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Falha ao carregar diagnóstico");
@@ -205,7 +251,12 @@ export default function Diagnostics() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [currentWorkspace?.id, navigate, projectId, setCurrentWorkspaceId]);
+
+  useEffect(() => {
+    if (!user || !projectId) return;
+    void load();
+  }, [load, projectId, user]);
 
   async function refreshAlerts() {
     if (!project?.id) return;
@@ -222,6 +273,37 @@ export default function Diagnostics() {
       toast.error(error instanceof Error ? error.message : "Erro ao atualizar alertas");
     } finally {
       setGeneratingAlerts(false);
+    }
+  }
+
+  function openJobAction(action: CreativeJobAdminAction, job: CreativeJobRow) {
+    setJobAction({ action, job });
+    setJobActionReason("");
+    setJobActionResetAttempts(true);
+  }
+
+  async function confirmJobAction() {
+    if (!jobAction) return;
+    setJobActionSubmitting(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("creative-jobs-admin", {
+        body: {
+          action: jobAction.action,
+          job_id: jobAction.job.id,
+          reason: jobActionReason.trim() || null,
+          reset_attempts: jobActionResetAttempts,
+        },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      toast.success(jobAction.action === "requeue" ? "Job reenfileirado" : "Job movido para dead letter");
+      setJobAction(null);
+      await load();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Erro ao atualizar job");
+    } finally {
+      setJobActionSubmitting(false);
     }
   }
 
@@ -260,24 +342,40 @@ export default function Diagnostics() {
       return row;
     });
   }, [events, metrics, syncRuns]);
+  const creativeJobSummary = useMemo(() => {
+    return summarizeCreativeJobs(creativeJobs);
+  }, [creativeJobs]);
+  const actionableCreativeJobs = useMemo(() => getRecentActionableCreativeJobs(creativeJobs), [creativeJobs]);
 
   const coverageSummary = summarizeCoverage(coverageRows);
   const groupedCoverage = groupBy(coverageRows, (row) => row.group);
+  const canAdminCreativeJobs = isWorkspaceAdmin || isOrganizationAdmin;
   const webhookUrl =
     bindings.gatewayProvider && bindings.checkoutToken
       ? `${SUPABASE_URL}/functions/v1/webhook-gateway/${bindings.gatewayProvider}/${bindings.checkoutToken}`
       : "";
   const alerts = buildAlerts(bindings, coverageRows, events, syncRuns, metrics);
 
-  async function sync(source: "meta" | "vturb") {
+  async function sync(source: "meta" | "vturb" | "creative", options?: { reprocessScope?: "all" | "analysis" | "transcript" | "media" }) {
     if (!project?.id) return;
     setSyncing(source);
     try {
-      const { error } = await supabase.functions.invoke(source === "meta" ? "meta-pull" : "vturb-pull", {
-        body: { project_id: project.id, days: 30 },
+      const fn = source === "meta" ? "meta-pull" : source === "vturb" ? "vturb-pull" : "creative-sync";
+      const { error } = await supabase.functions.invoke(fn, {
+        body: {
+          project_id: project.id,
+          days: 30,
+          ...(source === "creative"
+            ? {
+              reprocess: Boolean(options?.reprocessScope),
+              reprocess_scope: options?.reprocessScope ?? "all",
+              queue_analysis: Boolean(options?.reprocessScope),
+            }
+            : {}),
+        },
       });
       if (error) throw error;
-      toast.success(source === "meta" ? "Meta sincronizada" : "VTurb sincronizada");
+      toast.success(source === "meta" ? "Meta sincronizada" : source === "vturb" ? "VTurb sincronizada" : "Criativos sincronizados");
       await load();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Erro ao sincronizar");
@@ -325,9 +423,10 @@ export default function Diagnostics() {
         </div>
       </header>
 
-      <div className="grid md:grid-cols-4 gap-3 mb-5">
+      <div className="grid md:grid-cols-5 gap-3 mb-5">
         <SourceCard icon={<Megaphone className="w-5 h-5" />} label="Meta" connected={bindings.metaAccounts > 0} count={`${bindings.metaAccounts} conta(s)`} last={bindings.lastMetaSync} />
         <SourceCard icon={<PlayCircle className="w-5 h-5" />} label="VTurb" connected={bindings.vturbPlayers > 0} count={`${bindings.vturbPlayers} player(s)`} last={bindings.lastVturbSync} />
+        <SourceCard icon={<Sparkles className="w-5 h-5" />} label="Criativos" connected={bindings.creativeAssets > 0} count={`${bindings.creativeAssets} asset(s)`} last={bindings.lastCreativeSync} />
         <SourceCard icon={<CreditCard className="w-5 h-5" />} label="Hubla" connected={!!bindings.checkoutToken} count={bindings.gatewayProvider ?? "sem gateway"} last={bindings.lastGatewayEvent} />
         <div className="section-card">
           <div className="text-xs text-muted-foreground mb-2">Cobertura</div>
@@ -355,6 +454,14 @@ export default function Diagnostics() {
               {syncing === "vturb" ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
               Sincronizar VTurb
             </Button>
+            <Button size="sm" variant="outline" onClick={() => sync("creative")} disabled={syncing === "creative"} className="gap-2">
+              {syncing === "creative" ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+              Sincronizar criativos
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => sync("creative", { reprocessScope: "analysis" })} disabled={syncing === "creative"} className="gap-2">
+              {syncing === "creative" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+              Reprocessar análises
+            </Button>
             <Button
               size="sm"
               variant="outline"
@@ -374,6 +481,88 @@ export default function Diagnostics() {
             </Button>
           </div>
         </div>
+      </div>
+
+      <div className="section-card mb-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold">Fila de criativos</h2>
+            <p className="text-xs text-muted-foreground">Jobs assíncronos do worker para transcript e análise multimodal.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <StatusPill status="Parcial" /> {creativeJobSummary.queued + creativeJobSummary.running}
+            <StatusPill status="OK" /> {creativeJobSummary.succeeded}
+            <StatusPill status="Faltando" /> {creativeJobSummary.failed + creativeJobSummary.dead_letter}
+          </div>
+        </div>
+        <div className="mt-3 grid gap-3 md:grid-cols-5">
+          <QueueMetric label="Queued" value={creativeJobSummary.queued} tone="amber" />
+          <QueueMetric label="Running" value={creativeJobSummary.running} tone="cyan" />
+          <QueueMetric label="Succeeded" value={creativeJobSummary.succeeded} tone="emerald" />
+          <QueueMetric label="Failed" value={creativeJobSummary.failed} tone="red" />
+          <QueueMetric label="Dead letter" value={creativeJobSummary.dead_letter} tone="slate" />
+        </div>
+        {actionableCreativeJobs.length > 0 && (
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-xs text-muted-foreground border-b border-border/50">
+                <tr>
+                  <th className="text-left py-2 pr-3">Status</th>
+                  <th className="text-left py-2 pr-3">Job</th>
+                  <th className="text-right py-2 pr-3">Tentativas</th>
+                  <th className="text-left py-2 pr-3">Atualizado</th>
+                  <th className="text-left py-2 pr-3">Erro</th>
+                  {canAdminCreativeJobs && <th className="text-right py-2">Ações</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {actionableCreativeJobs.map((job) => (
+                  <tr key={job.id} className="border-b border-border/30 last:border-0">
+                    <td className="py-2 pr-3">
+                      <JobStatusPill status={job.status} />
+                    </td>
+                    <td className="py-2 pr-3">
+                      <div className="font-mono text-xs">{job.id.slice(0, 8)}</div>
+                      <div className="text-[10px] text-muted-foreground">asset {job.asset_id.slice(0, 8)}</div>
+                    </td>
+                    <td className="py-2 pr-3 text-right tabular-nums">
+                      {job.attempt_count ?? 0}/{job.max_attempts ?? 0}
+                    </td>
+                    <td className="py-2 pr-3 text-xs text-muted-foreground whitespace-nowrap">
+                      {formatDistanceToNow(new Date(job.updated_at), { addSuffix: true, locale: ptBR })}
+                    </td>
+                    <td className="py-2 pr-3 text-xs text-muted-foreground max-w-[280px]">
+                      <span className="line-clamp-2 break-words">{job.last_error ?? "Sem erro registrado"}</span>
+                    </td>
+                    {canAdminCreativeJobs && (
+                      <td className="py-2 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          {canRequeueCreativeJob(job.status) && (
+                            <JobActionButton
+                              label="Reenfileirar"
+                              onClick={() => openJobAction("requeue", job)}
+                            >
+                              <RotateCcw className="w-4 h-4" />
+                            </JobActionButton>
+                          )}
+                          {canDeadLetterCreativeJob(job.status) && (
+                            <JobActionButton
+                              label="Dead letter"
+                              destructive
+                              onClick={() => openJobAction("dead_letter", job)}
+                            >
+                              <ArchiveX className="w-4 h-4" />
+                            </JobActionButton>
+                          )}
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {operationalAlerts.length === 0 && alerts.length === 0 && (
@@ -480,6 +669,59 @@ export default function Diagnostics() {
           )}
         </div>
       </div>
+
+      <Dialog
+        open={!!jobAction}
+        onOpenChange={(open) => {
+          if (!open && !jobActionSubmitting) setJobAction(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {jobAction?.action === "requeue" ? "Reenfileirar job" : "Mover job para dead letter"}
+            </DialogTitle>
+            <DialogDescription>
+              {jobAction?.job ? `${creativeJobStatusLabel(jobAction.job.status)} · ${jobAction.job.id.slice(0, 8)}` : ""}
+            </DialogDescription>
+          </DialogHeader>
+          {jobAction?.action === "requeue" && (
+            <label className="flex items-center gap-2 rounded-md border border-border/60 px-3 py-2 text-sm">
+              <Checkbox
+                checked={jobActionResetAttempts}
+                onCheckedChange={(checked) => setJobActionResetAttempts(checked === true)}
+              />
+              Zerar tentativas
+            </label>
+          )}
+          <Textarea
+            value={jobActionReason}
+            onChange={(event) => setJobActionReason(event.target.value)}
+            placeholder="Motivo da alteração"
+            maxLength={1000}
+            rows={4}
+          />
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={jobActionSubmitting}
+              onClick={() => setJobAction(null)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              variant={jobAction?.action === "dead_letter" ? "destructive" : "default"}
+              disabled={jobActionSubmitting}
+              onClick={confirmJobAction}
+            >
+              {jobActionSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
+              Confirmar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </main>
   );
 }
@@ -529,6 +771,83 @@ function StatusPill({ status, reason }: { status: CoverageStatus; reason?: strin
         <TooltipTrigger asChild>{pill}</TooltipTrigger>
         <TooltipContent>
           <p className="text-xs max-w-[200px]">{reason}</p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+function QueueMetric({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "amber" | "cyan" | "emerald" | "red" | "slate";
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-lg border px-3 py-3",
+        tone === "amber" && "border-amber-500/20 bg-amber-500/5",
+        tone === "cyan" && "border-cyan-500/20 bg-cyan-500/5",
+        tone === "emerald" && "border-emerald-500/20 bg-emerald-500/5",
+        tone === "red" && "border-red-500/20 bg-red-500/5",
+        tone === "slate" && "border-slate-500/20 bg-slate-500/5",
+      )}
+    >
+      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className="mt-1 text-xl font-semibold tabular-nums">{value}</div>
+    </div>
+  );
+}
+
+function JobStatusPill({ status }: { status: string }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold",
+        status === "queued" && "bg-amber-500/10 text-amber-600",
+        status === "running" && "bg-cyan-500/10 text-cyan-600",
+        status === "succeeded" && "bg-green-500/10 text-green-600",
+        status === "failed" && "bg-red-500/10 text-red-600",
+        status === "dead_letter" && "bg-slate-500/10 text-slate-600",
+      )}
+    >
+      {creativeJobStatusLabel(status)}
+    </span>
+  );
+}
+
+function JobActionButton({
+  children,
+  destructive,
+  label,
+  onClick,
+}: {
+  children: React.ReactNode;
+  destructive?: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            size="icon"
+            variant={destructive ? "destructive" : "outline"}
+            className="h-8 w-8"
+            onClick={onClick}
+          >
+            {children}
+            <span className="sr-only">{label}</span>
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>
+          <p className="text-xs">{label}</p>
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>

@@ -476,13 +476,14 @@ function aggregateMetrics(metrics: CreativeAssetMetricRow[]) {
     const rowImpressions = numberOrZero(row.impressions);
     const rowClicks = numberOrZero(row.clicks);
     const rowOutboundClicks = numberOrZero(row.outbound_clicks);
+    const rowLinkClicks = rowOutboundClicks || rowClicks;
     const rowPurchases = numberOrZero(row.purchases);
     const rowRevenue = numberOrZero(row.revenue);
     const rowHookRate = parseNumber(row.hook_rate);
 
     spend += rowSpend;
     impressions += rowImpressions;
-    clicks += rowClicks;
+    clicks += rowLinkClicks;
     outboundClicks += rowOutboundClicks;
     purchases += rowPurchases;
     revenue += rowRevenue;
@@ -497,7 +498,7 @@ function aggregateMetrics(metrics: CreativeAssetMetricRow[]) {
   }
 
   const ctr = impressions > 0 ? (clicks / impressions) * 100 : null;
-  const linkCtr = impressions > 0 && outboundClicks > 0 ? (outboundClicks / impressions) * 100 : null;
+  const linkCtr = impressions > 0 ? (clicks / impressions) * 100 : null;
   const cpm = impressions > 0 && spend > 0 ? (spend / impressions) * 1000 : null;
   const roas = spend > 0 && revenue > 0 ? revenue / spend : null;
   const cpa = spend > 0 && purchases > 0 ? spend / purchases : null;

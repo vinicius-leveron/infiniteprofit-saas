@@ -1,28 +1,56 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // deno-lint-ignore-file no-explicit-any
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
+type SupabaseClientAny = ReturnType<typeof createClient<any, "public", any>>;
+
 /**
- * Testa rapidamente uma API key da VTurb Analytics.
- * Body: { api_key: string }
- * Resp: { ok: true, platforms: string[], players: Array<{ id, name, duration, pitch_time, created_at }> } | { ok: false, error }
+ * Tests VTurb Analytics access.
+ * Body, unsaved setup mode: { api_key: string }
+ * Body, stored workspace mode: { workspace_id: uuid }
  */
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
     const body = await req.json().catch(() => ({}));
-    const apiKey = String(body.api_key ?? "").trim();
-    if (!apiKey) return json({ ok: false, error: "api_key obrigatória" }, 400);
+    const workspaceId = stringOrNull(body.workspace_id);
+    let apiKey = stringOrNull(body.api_key);
+
+    if (workspaceId) {
+      const authHeader = req.headers.get("Authorization");
+      const caller = await resolveUser(authHeader);
+      if (!caller) return json({ ok: false, error: "Unauthorized" }, 401);
+
+      const sb = createClient(SUPABASE_URL, SERVICE_KEY, {
+        auth: { persistSession: false },
+      });
+      await assertWorkspaceAdmin(sb, workspaceId, caller.userId);
+
+      const { data: integration, error } = await sb
+        .from("workspace_integrations")
+        .select("vturb_api_key")
+        .eq("workspace_id", workspaceId)
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+      apiKey = stringOrNull(integration?.vturb_api_key);
+    }
+
+    if (!apiKey) return json({ ok: false, error: "api_key obrigatoria" }, 400);
 
     const today = new Date();
     const past = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
     const startDate = `${past.toISOString().slice(0, 10)} 00:00:00 -0300`;
 
-    const r = await fetch("https://analytics.vturb.net/conversions/active_platforms", {
+    const response = await fetch("https://analytics.vturb.net/conversions/active_platforms", {
       method: "POST",
       headers: {
         "X-Api-Token": apiKey,
@@ -32,11 +60,11 @@ Deno.serve(async (req) => {
       body: JSON.stringify({ start_date: startDate, timezone: "America/Sao_Paulo" }),
     });
 
-    const data: any = await r.json().catch(() => ({}));
-    if (!r.ok) {
+    const data: any = await response.json().catch(() => ({}));
+    if (!response.ok) {
       return json({
         ok: false,
-        error: data?.message ?? data?.error ?? `HTTP ${r.status}`,
+        error: data?.message ?? data?.error ?? `HTTP ${response.status}`,
       });
     }
 
@@ -47,13 +75,13 @@ Deno.serve(async (req) => {
       platforms: Array.isArray(data) ? data : [],
       players,
     });
-  } catch (e) {
-    return json({ ok: false, error: e instanceof Error ? e.message : "Erro inesperado" }, 500);
+  } catch (error) {
+    return json({ ok: false, error: error instanceof Error ? error.message : "Erro inesperado" }, 500);
   }
 });
 
 async function fetchPlayers(apiKey: string) {
-  const r = await fetch("https://analytics.vturb.net/players/list", {
+  const response = await fetch("https://analytics.vturb.net/players/list", {
     method: "GET",
     headers: {
       "X-Api-Token": apiKey,
@@ -62,7 +90,7 @@ async function fetchPlayers(apiKey: string) {
     },
   });
 
-  const data: any = await r.json().catch(() => []);
+  const data: any = await response.json().catch(() => []);
   const players = Array.isArray(data)
     ? data
     : Array.isArray(data?.data)
@@ -70,7 +98,7 @@ async function fetchPlayers(apiKey: string) {
       : Array.isArray(data?.players)
         ? data.players
         : [];
-  if (!r.ok || !Array.isArray(players)) return [];
+  if (!response.ok || !Array.isArray(players)) return [];
 
   return players.map((player: any) => ({
     id: String(player?.id ?? ""),
@@ -79,6 +107,58 @@ async function fetchPlayers(apiKey: string) {
     pitch_time: typeof player?.pitch_time === "number" ? player.pitch_time : null,
     created_at: typeof player?.created_at === "string" ? player.created_at : null,
   })).filter((player) => player.id);
+}
+
+async function resolveUser(authHeader: string | null) {
+  if (!authHeader?.startsWith("Bearer ")) return null;
+  const userClient = createClient(SUPABASE_URL, ANON_KEY, {
+    global: { headers: { Authorization: authHeader } },
+    auth: { persistSession: false },
+  });
+  const { data, error } = await userClient.auth.getUser();
+  if (error || !data.user?.id) return null;
+  return { userId: data.user.id };
+}
+
+async function assertWorkspaceAdmin(
+  sb: SupabaseClientAny,
+  workspaceId: string,
+  userId: string,
+) {
+  const { data: workspaceMembership } = await sb
+    .from("workspace_members")
+    .select("role")
+    .eq("workspace_id", workspaceId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (workspaceMembership?.role === "owner" || workspaceMembership?.role === "admin") {
+    return;
+  }
+
+  const { data: workspace } = await sb
+    .from("workspaces")
+    .select("organization_id")
+    .eq("id", workspaceId)
+    .maybeSingle();
+
+  const { data: orgMembership } = await sb
+    .from("organization_members")
+    .select("role")
+    .eq("organization_id", workspace?.organization_id ?? "")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (orgMembership?.role === "owner" || orgMembership?.role === "admin") {
+    return;
+  }
+
+  throw new Error("Sem permissao para testar esta chave VTurb");
+}
+
+function stringOrNull(value: unknown) {
+  const trimmed = String(value ?? "").trim();
+  return trimmed ? trimmed : null;
 }
 
 function json(body: unknown, status = 200) {
