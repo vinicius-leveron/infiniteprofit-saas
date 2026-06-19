@@ -26,6 +26,95 @@ describe("hubla csv import core", () => {
     expect(result.events[0].payload.utm_source).toBe("meta");
   });
 
+  it("parses official Hubla invoice export headers with order bump columns", () => {
+    const csv = [
+      [
+        "ID da fatura",
+        "Tipo de fatura",
+        "Detalhamento da fatura",
+        "Status da fatura",
+        "Método de pagamento",
+        "Data de criação",
+        "Data de pagamento",
+        "Data de reembolso",
+        "Itens na fatura",
+        "Nome da oferta",
+        "ID do produto",
+        "Nome do produto",
+        "ID do produto de orderbump",
+        "Nome do produto de orderbump",
+        "ID do cliente",
+        "Email do cliente",
+        "Valor do produto",
+        "Valor total",
+        "Valor Líquido",
+        "UTM Origem",
+        "UTM Mídia",
+        "UTM Campanha",
+        "UTM Conteúdo",
+        "UTM Termo",
+      ].join(";"),
+      [
+        "fat-1",
+        "Venda",
+        "Fatura regular",
+        "Aprovada",
+        "Pix",
+        "01/06/2026 09:00",
+        "01/06/2026 10:00",
+        "",
+        "2",
+        "Oferta Rickson",
+        "prod-front",
+        "Produto Front",
+        "prod-bump",
+        "Alongue-se Bem",
+        "cli-1",
+        "buyer@example.com",
+        "R$ 197,00",
+        "R$ 241,42",
+        "R$ 220,00",
+        "Meta",
+        "cpc",
+        "Campanha Junho",
+        "ad-123",
+        "term",
+      ].join(";"),
+    ].join("\n");
+
+    const result = parseHublaCsv(csv);
+
+    expect(result.warnings).toEqual([]);
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]).toMatchObject({
+      line: 2,
+      event_type: "purchase.approved",
+      event_date: "2026-06-01",
+      external_id: "fat-1",
+    });
+    expect(result.events[0].payload.total).toBeCloseTo(241.42);
+    expect(result.events[0].payload.net).toBeCloseTo(220);
+    expect(result.events[0].payload.payment_method).toBe("pix");
+    expect(result.events[0].payload.buyer_email).toBe("buyer@example.com");
+    expect(result.events[0].payload.product_id).toBe("prod-front");
+    expect(result.events[0].payload.utm_source).toBe("meta");
+    expect(result.events[0].payload.utm_medium).toBe("cpc");
+    expect(result.events[0].payload.items).toEqual([
+      expect.objectContaining({
+        external_id: "prod-front",
+        name: "Produto Front",
+        price: 197,
+        is_bump: false,
+      }),
+      expect.objectContaining({
+        external_id: "prod-bump",
+        name: "Alongue-se Bem",
+        is_bump: true,
+      }),
+    ]);
+    expect(result.events[0].payload.items[1].price).toBeCloseTo(44.42);
+  });
+
   it("parses refused and refunded rows without requiring an approved status", () => {
     const csv = [
       "transaction,status,amount,created_at",

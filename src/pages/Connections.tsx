@@ -20,6 +20,7 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorkspace } from "@/hooks/useWorkspace";
+import { readHublaImportFile } from "@/lib/hublaImportFile";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -475,7 +476,7 @@ export default function Connections() {
       return;
     }
     if (!hublaCsv.trim()) {
-      toast.error("Cole ou selecione um CSV da Hubla");
+      toast.error("Cole ou selecione um CSV/XLSX da Hubla");
       return;
     }
 
@@ -796,7 +797,7 @@ export default function Connections() {
                         className="gap-2"
                       >
                         <FileUp className="w-4 h-4" />
-                        Importar CSV Hubla
+                        Importar CSV/XLSX Hubla
                       </Button>
                       <span className="text-xs text-muted-foreground">
                         Use para vendas retroativas sem payload bruto do webhook.
@@ -984,22 +985,33 @@ export default function Connections() {
       <Dialog open={hublaImportOpen} onOpenChange={setHublaImportOpen}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Importar CSV Hubla</DialogTitle>
+            <DialogTitle>Importar CSV/XLSX Hubla</DialogTitle>
             <DialogDescription>
               Importe vendas retroativas para preencher faturamento e vendas quando os webhooks antigos não têm payload bruto.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-1.5">
-              <Label>Arquivo CSV</Label>
+              <Label>Arquivo CSV ou XLSX</Label>
               <Input
                 type="file"
-                accept=".csv,.txt,text/csv,text/plain"
+                accept=".csv,.txt,.xlsx,.xls,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
                 onChange={async (event) => {
                   const file = event.target.files?.[0];
                   if (!file) return;
                   setHublaImportPreview(null);
-                  setHublaCsv(await file.text());
+                  try {
+                    const result = await readHublaImportFile(file);
+                    setHublaCsv(result.csv);
+                    if (result.kind === "xlsx") {
+                      toast.success(`XLSX convertido usando a aba "${result.sheetName}"`);
+                    }
+                  } catch (error) {
+                    setHublaCsv("");
+                    toast.error(error instanceof Error ? error.message : "Erro ao ler arquivo Hubla");
+                  } finally {
+                    event.currentTarget.value = "";
+                  }
                 }}
               />
             </div>
@@ -1012,7 +1024,7 @@ export default function Connections() {
                   setHublaCsv(event.target.value);
                 }}
                 rows={10}
-                placeholder="Cole aqui o export da Hubla com colunas como transação, data, status, valor, email, produto e UTMs."
+                placeholder="Cole aqui o export da Hubla com colunas como ID da fatura, status, data, valor, email, produto e UTMs."
                 className="font-mono text-xs"
               />
             </div>

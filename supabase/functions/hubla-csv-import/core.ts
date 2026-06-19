@@ -52,25 +52,54 @@ function rowToHublaRaw(headers: string[], row: string[], line: number): RowConve
     return "";
   };
 
-  const status = get("status", "situacao", "situacao_da_compra", "order_status", "payment_status");
+  const status = get("status_da_fatura", "status", "situacao", "situacao_da_compra", "order_status", "payment_status");
   const type = eventTypeFromStatus(status || get("evento", "event", "tipo"));
   if (!type) {
     return { raw: null, line, warning: `Linha ${line}: status não reconhecido (${status || "vazio"})`, reason: "status" };
   }
 
-  const transaction = get("transacao", "transacao_id", "transaction", "transaction_id", "id", "pedido", "order_id", "invoice_id");
+  const transaction = get("id_da_fatura", "fatura_id", "fatura", "transacao", "transacao_id", "transaction", "transaction_id", "id", "pedido", "order_id", "invoice_id");
   if (!transaction) {
     return { raw: null, line, warning: `Linha ${line}: transação/id ausente`, reason: "external_id" };
   }
 
-  const total = parseMoney(get("valor", "valor_total", "total", "amount", "amount_paid", "preco", "price", "receita"));
-  const net = parseMoney(get("valor_liquido", "liquido", "net", "net_amount")) || total;
-  const date = parseDate(get("data_pagamento", "data_aprovacao", "paid_at", "approved_at", "data", "created_at", "criado_em"));
+  const total = parseMoney(get("valor_total", "valor", "total", "amount", "amount_paid", "preco", "price", "receita"));
+  const productTotal = parseMoney(get("valor_do_produto", "valor_produto", "product_amount", "product_value"));
+  const net = parseMoney(get("valor_liquido", "valor_liquido_da_fatura", "liquido", "net", "net_amount")) || total;
+  const paidDate = get("data_de_pagamento", "data_pagamento", "data_aprovacao", "paid_at", "approved_at");
+  const createdDate = get("data_de_criacao", "data_criacao", "created_at", "criado_em", "data");
+  const refundedDate = get("data_de_reembolso", "data_reembolso", "refunded_at");
+  const date = parseDate(type === "invoice.refunded" ? (refundedDate || paidDate || createdDate) : (paidDate || createdDate));
 
-  const productName = get("produto", "produto_nome", "product", "product_name", "oferta", "offer");
-  const productId = get("produto_id", "product_id", "offer_id");
-  const itemType = get("tipo_produto", "tipo_oferta", "item_type", "offer_type", "tipo").toLowerCase();
+  const productName = get("nome_do_produto", "produto", "produto_nome", "product", "product_name", "nome_da_oferta", "oferta", "offer");
+  const productId = get("id_do_produto", "produto_id", "product_id", "offer_id");
+  const orderBumpProductId = get("id_do_produto_de_orderbump", "produto_orderbump_id", "orderbump_product_id", "bump_product_id");
+  const orderBumpProductName = get("nome_do_produto_de_orderbump", "produto_orderbump", "orderbump_product_name", "bump_product_name");
+  const itemType = get("tipo_de_fatura", "detalhamento_da_fatura", "tipo_produto", "tipo_oferta", "item_type", "offer_type", "tipo").toLowerCase();
   const isBump = itemType.includes("bump") || itemType.includes("upsell") || itemType.includes("order");
+  const hasOrderBump = Boolean(orderBumpProductId || orderBumpProductName);
+  const mainItemPrice = hasOrderBump && productTotal > 0 ? productTotal : total;
+  const orderBumpPrice = hasOrderBump && productTotal > 0 ? Math.max(0, total - productTotal) : 0;
+  const items = [
+    ...(productName || productId
+      ? [{
+        id: productId || transaction,
+        name: productName || productId || transaction,
+        price: mainItemPrice,
+        type: isBump ? "orderbump" : "main",
+        is_bump: isBump,
+      }]
+      : []),
+    ...(hasOrderBump
+      ? [{
+        id: orderBumpProductId || `${transaction}-orderbump`,
+        name: orderBumpProductName || orderBumpProductId || "Order bump",
+        price: orderBumpPrice,
+        type: "orderbump",
+        is_bump: true,
+      }]
+      : []),
+  ];
 
   return {
     line,
@@ -81,28 +110,20 @@ function rowToHublaRaw(headers: string[], row: string[], line: number): RowConve
           id: transaction,
           amount_paid: Math.round(total * 100),
           net_amount: Math.round(net * 100),
-          payment_method: get("metodo_pagamento", "forma_pagamento", "payment_method", "method"),
-          customer_email: get("email", "comprador_email", "buyer_email", "customer_email"),
+          payment_method: get("metodo_de_pagamento", "metodo_pagamento", "forma_pagamento", "payment_method", "method"),
+          customer_email: get("email_do_cliente", "email", "comprador_email", "buyer_email", "customer_email"),
           product_id: productId,
           product: { id: productId, name: productName },
           paid_at: date,
           created_at: date,
           is_offer: isBump,
-          items: productName || productId
-            ? [{
-              id: productId || transaction,
-              name: productName || productId || transaction,
-              price: total,
-              type: isBump ? "orderbump" : "main",
-              is_bump: isBump,
-            }]
-            : [],
+          items,
           metadata: {
-            utm_source: get("utm_source", "source"),
-            utm_medium: get("utm_medium", "medium"),
-            utm_campaign: get("utm_campaign", "campaign"),
-            utm_content: get("utm_content", "content", "ad_id"),
-            utm_term: get("utm_term", "term"),
+            utm_source: get("utm_origem", "utm_source", "source"),
+            utm_medium: get("utm_midia", "utm_medium", "medium"),
+            utm_campaign: get("utm_campanha", "utm_campaign", "campaign"),
+            utm_content: get("utm_conteudo", "utm_content", "content", "ad_id"),
+            utm_term: get("utm_termo", "utm_term", "term"),
           },
         },
       },
