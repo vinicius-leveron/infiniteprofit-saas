@@ -476,8 +476,9 @@ export default function WorkspaceSettings() {
                   </Button>
                 )}
               </div>
-              {metaAccounts.map((account, index) => (
-                <div key={account.id ?? `meta-${index}`} className="rounded-lg border border-border/50 p-3 space-y-2">
+              <div className="max-h-[420px] space-y-3 overflow-y-auto pr-1">
+                {metaAccounts.map((account, index) => (
+                  <div key={account.id ?? `meta-${index}`} className="rounded-lg border border-border/50 p-3 space-y-2">
                   <Input
                     value={account.label ?? ""}
                     disabled={!isWorkspaceAdmin}
@@ -531,8 +532,9 @@ export default function WorkspaceSettings() {
                       </Button>
                     </div>
                   )}
-                </div>
-              ))}
+                  </div>
+                ))}
+              </div>
             </div>
 
             <div className="space-y-3">
@@ -566,8 +568,9 @@ export default function WorkspaceSettings() {
                   </div>
                 )}
               </div>
-              {vturbPlayers.map((player, index) => (
-                <div key={player.id ?? `vturb-${index}`} className="rounded-lg border border-border/50 p-3 space-y-2">
+              <div className="max-h-[420px] space-y-3 overflow-y-auto pr-1">
+                {vturbPlayers.map((player, index) => (
+                  <div key={player.id ?? `vturb-${index}`} className="rounded-lg border border-border/50 p-3 space-y-2">
                   <div className="grid sm:grid-cols-[1fr,220px] gap-2">
                     <Input
                       value={player.player_id}
@@ -608,8 +611,9 @@ export default function WorkspaceSettings() {
                       </Button>
                     </div>
                   )}
-                </div>
-              ))}
+                  </div>
+                ))}
+              </div>
             </div>
 
             {isWorkspaceAdmin && (

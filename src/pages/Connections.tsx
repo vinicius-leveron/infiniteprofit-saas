@@ -586,65 +586,67 @@ export default function Connections() {
             <EmptyState text="Nenhuma conta Meta disponível. Cadastre as credenciais em Workspace Settings." />
           ) : (
             <div className="space-y-3">
-              {metaAccounts.map((account) => (
-                <div key={account.id} className="rounded-lg border border-border/40 p-3 space-y-3 bg-background/40">
-                  <div className="flex items-start justify-between gap-3">
-                    <label className="flex items-start gap-3 cursor-pointer">
-                      <Checkbox
-                        checked={selectedMetaIds.includes(account.id)}
-                        onCheckedChange={(checked) => {
-                          setSelectedMetaIds((current) =>
-                            checked
-                              ? [...current, account.id]
-                              : current.filter((id) => id !== account.id),
-                          );
-                        }}
-                        disabled={!isWorkspaceAdmin}
-                      />
-                      <div>
-                        <div className="text-sm font-medium">{account.label || account.account_id}</div>
-                        <div className="text-xs text-muted-foreground font-mono">{account.account_id}</div>
-                      </div>
-                    </label>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => testAccount(account)}
-                        disabled={testingAccountId === account.id}
-                      >
-                        {testingAccountId === account.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
-                      </Button>
-                      {selectedMetaIds.includes(account.id) && (
+              <div className="max-h-[420px] space-y-3 overflow-y-auto pr-1">
+                {metaAccounts.map((account) => (
+                  <div key={account.id} className="rounded-lg border border-border/40 p-3 space-y-3 bg-background/40">
+                    <div className="flex items-start justify-between gap-3">
+                      <label className="flex items-start gap-3 cursor-pointer">
+                        <Checkbox
+                          checked={selectedMetaIds.includes(account.id)}
+                          onCheckedChange={(checked) => {
+                            setSelectedMetaIds((current) =>
+                              checked
+                                ? [...current, account.id]
+                                : current.filter((id) => id !== account.id),
+                            );
+                          }}
+                          disabled={!isWorkspaceAdmin}
+                        />
+                        <div>
+                          <div className="text-sm font-medium">{account.label || account.account_id}</div>
+                          <div className="text-xs text-muted-foreground font-mono">{account.account_id}</div>
+                        </div>
+                      </label>
+                      <div className="flex items-center gap-1">
                         <Button
                           type="button"
                           variant="ghost"
                           size="sm"
-                          onClick={() => syncMeta(account.account_id)}
-                          disabled={syncingAccountId === account.account_id}
+                          onClick={() => testAccount(account)}
+                          disabled={testingAccountId === account.id}
                         >
-                          {syncingAccountId === account.account_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                          {testingAccountId === account.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
                         </Button>
-                      )}
+                        {selectedMetaIds.includes(account.id) && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => syncMeta(account.account_id)}
+                            disabled={syncingAccountId === account.account_id}
+                          >
+                            {syncingAccountId === account.account_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                          </Button>
+                        )}
+                      </div>
                     </div>
+
+                    {testResults[account.id] && (
+                      <div className={`text-[10px] px-2 py-1 rounded ${testResults[account.id].ok ? "bg-green-500/10 text-green-600" : "bg-red-500/10 text-red-600"}`}>
+                        {testResults[account.id].ok
+                          ? `✓ ${testResults[account.id].name ?? "OK"}`
+                          : `✗ ${humanizeMetaError(testResults[account.id].error ?? "")}`}
+                      </div>
+                    )}
+
+                    {account.last_synced_at && (
+                      <div className="text-[10px] text-muted-foreground">
+                        Última sync: {format(new Date(account.last_synced_at), "dd/MM HH:mm", { locale: ptBR })}
+                      </div>
+                    )}
                   </div>
-
-                  {testResults[account.id] && (
-                    <div className={`text-[10px] px-2 py-1 rounded ${testResults[account.id].ok ? "bg-green-500/10 text-green-600" : "bg-red-500/10 text-red-600"}`}>
-                      {testResults[account.id].ok
-                        ? `✓ ${testResults[account.id].name ?? "OK"}`
-                        : `✗ ${humanizeMetaError(testResults[account.id].error ?? "")}`}
-                    </div>
-                  )}
-
-                  {account.last_synced_at && (
-                    <div className="text-[10px] text-muted-foreground">
-                      Última sync: {format(new Date(account.last_synced_at), "dd/MM HH:mm", { locale: ptBR })}
-                    </div>
-                  )}
-                </div>
-              ))}
+                ))}
+              </div>
 
               {selectedMetaAccounts.length > 1 && (
                 <Button onClick={() => syncMeta()} disabled={syncing} variant="secondary" size="sm" className="gap-2">
@@ -684,45 +686,47 @@ export default function Connections() {
                 </div>
               )}
 
-              {vturbPlayers.map((player) => (
-                <div key={player.id} className="rounded-lg border border-border/40 p-3 space-y-3 bg-background/40">
-                  <div className="flex items-start justify-between gap-3">
-                    <label className="flex items-start gap-3 cursor-pointer">
-                      <Checkbox
-                        checked={selectedPlayerIds.includes(player.id)}
-                        onCheckedChange={(checked) => {
-                          setSelectedPlayerIds((current) =>
-                            checked
-                              ? [...current, player.id]
-                              : current.filter((id) => id !== player.id),
-                          );
-                        }}
-                        disabled={!isWorkspaceAdmin}
-                      />
-                      <div>
-                        <div className="text-sm font-medium">{player.label || player.player_id}</div>
-                        <div className="text-xs text-muted-foreground font-mono">{player.player_id}</div>
+              <div className="max-h-[420px] space-y-3 overflow-y-auto pr-1">
+                {vturbPlayers.map((player) => (
+                  <div key={player.id} className="rounded-lg border border-border/40 p-3 space-y-3 bg-background/40">
+                    <div className="flex items-start justify-between gap-3">
+                      <label className="flex items-start gap-3 cursor-pointer">
+                        <Checkbox
+                          checked={selectedPlayerIds.includes(player.id)}
+                          onCheckedChange={(checked) => {
+                            setSelectedPlayerIds((current) =>
+                              checked
+                                ? [...current, player.id]
+                                : current.filter((id) => id !== player.id),
+                            );
+                          }}
+                          disabled={!isWorkspaceAdmin}
+                        />
+                        <div>
+                          <div className="text-sm font-medium">{player.label || player.player_id}</div>
+                          <div className="text-xs text-muted-foreground font-mono">{player.player_id}</div>
+                        </div>
+                      </label>
+                      {selectedPlayerIds.includes(player.id) && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => syncVturb(player.player_id)}
+                          disabled={vturbSyncingPlayerId === player.player_id}
+                        >
+                          {vturbSyncingPlayerId === player.player_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                        </Button>
+                      )}
+                    </div>
+                    {player.last_synced_at && (
+                      <div className="text-[10px] text-muted-foreground">
+                        Última sync: {format(new Date(player.last_synced_at), "dd/MM HH:mm", { locale: ptBR })}
                       </div>
-                    </label>
-                    {selectedPlayerIds.includes(player.id) && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => syncVturb(player.player_id)}
-                        disabled={vturbSyncingPlayerId === player.player_id}
-                      >
-                        {vturbSyncingPlayerId === player.player_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-                      </Button>
                     )}
                   </div>
-                  {player.last_synced_at && (
-                    <div className="text-[10px] text-muted-foreground">
-                      Última sync: {format(new Date(player.last_synced_at), "dd/MM HH:mm", { locale: ptBR })}
-                    </div>
-                  )}
-                </div>
-              ))}
+                ))}
+              </div>
 
               {selectedPlayers.length > 1 && (
                 <Button onClick={() => syncVturb()} disabled={vturbSyncing} variant="secondary" size="sm" className="gap-2">
@@ -836,50 +840,52 @@ export default function Connections() {
             {publicLinks.length === 0 ? (
               <EmptyState text="Nenhum link público criado. Gere um link para enviar dashboard e relatório ao cliente sem expor conexões." />
             ) : (
-              publicLinks.map((link) => {
-                const shareUrl = `${publicOrigin}/share/${link.token}`;
-                return (
-                  <div key={link.id} className="rounded-lg border border-border/40 p-3 space-y-3 bg-background/40">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium">{link.label || "Cliente"}</div>
-                        <div className="text-xs text-muted-foreground font-mono truncate">{shareUrl}</div>
-                        <div className="text-[10px] text-muted-foreground mt-1">
-                          {link.last_accessed_at
-                            ? `Último acesso: ${format(new Date(link.last_accessed_at), "dd/MM HH:mm", { locale: ptBR })}`
-                            : "Ainda não acessado"}
+              <div className="max-h-[360px] space-y-3 overflow-y-auto pr-1">
+                {publicLinks.map((link) => {
+                  const shareUrl = `${publicOrigin}/share/${link.token}`;
+                  return (
+                    <div key={link.id} className="rounded-lg border border-border/40 p-3 space-y-3 bg-background/40">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium">{link.label || "Cliente"}</div>
+                          <div className="text-xs text-muted-foreground font-mono truncate">{shareUrl}</div>
+                          <div className="text-[10px] text-muted-foreground mt-1">
+                            {link.last_accessed_at
+                              ? `Último acesso: ${format(new Date(link.last_accessed_at), "dd/MM HH:mm", { locale: ptBR })}`
+                              : "Ainda não acessado"}
+                          </div>
                         </div>
-                      </div>
-                      <div className="flex items-center gap-1 shrink-0">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          onClick={() => {
-                            navigator.clipboard.writeText(shareUrl);
-                            toast.success("Link copiado");
-                          }}
-                        >
-                          <Copy className="w-3.5 h-3.5" />
-                        </Button>
-                        {isWorkspaceAdmin && (
+                        <div className="flex items-center gap-1 shrink-0">
                           <Button
                             type="button"
-                            variant={link.enabled ? "secondary" : "outline"}
-                            size="sm"
-                            onClick={() => togglePublicLink(link)}
+                            variant="outline"
+                            size="icon"
+                            onClick={() => {
+                              navigator.clipboard.writeText(shareUrl);
+                              toast.success("Link copiado");
+                            }}
                           >
-                            {link.enabled ? "Desativar" : "Ativar"}
+                            <Copy className="w-3.5 h-3.5" />
                           </Button>
-                        )}
+                          {isWorkspaceAdmin && (
+                            <Button
+                              type="button"
+                              variant={link.enabled ? "secondary" : "outline"}
+                              size="sm"
+                              onClick={() => togglePublicLink(link)}
+                            >
+                              {link.enabled ? "Desativar" : "Ativar"}
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                      <div className={`text-[10px] px-2 py-1 rounded w-fit ${link.enabled ? "bg-green-500/10 text-green-600" : "bg-amber-500/10 text-amber-600"}`}>
+                        {link.enabled ? "ativo" : "desativado"}
                       </div>
                     </div>
-                    <div className={`text-[10px] px-2 py-1 rounded w-fit ${link.enabled ? "bg-green-500/10 text-green-600" : "bg-amber-500/10 text-amber-600"}`}>
-                      {link.enabled ? "ativo" : "desativado"}
-                    </div>
-                  </div>
-                );
-              })
+                  );
+                })}
+              </div>
             )}
 
             {isWorkspaceAdmin && (
@@ -935,9 +941,9 @@ export default function Connections() {
               {eventsLoading ? "Carregando…" : "Nenhum evento recebido ainda."}
             </p>
           ) : (
-            <div className="border border-border/40 rounded-md overflow-hidden">
+            <div className="max-h-[360px] overflow-auto rounded-md border border-border/40">
               <table className="w-full text-xs">
-                <thead className="bg-secondary/50 text-muted-foreground">
+                <thead className="sticky top-0 z-10 bg-secondary text-muted-foreground">
                   <tr>
                     <th className="text-left px-3 py-2 font-medium">Quando</th>
                     <th className="text-left px-3 py-2 font-medium">Fonte</th>

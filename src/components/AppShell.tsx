@@ -199,12 +199,19 @@ export function AppShell() {
 
         {/* Navigation */}
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-          {/* Projetos Collapsible */}
+          <NavItem
+            icon={FolderKanban}
+            label="Projetos"
+            onClick={() => navigate("/projects")}
+            active={isActive("/projects")}
+          />
+
+          {/* Projetos recentes */}
           <Collapsible open={projectsOpen} onOpenChange={setProjectsOpen}>
             <CollapsibleTrigger className="w-full flex items-center justify-between px-3 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors rounded-lg hover:bg-muted">
               <div className="flex items-center gap-3">
                 <FolderKanban className="w-4 h-4" />
-                <span>Projetos</span>
+                <span>Projetos recentes</span>
               </div>
               <div className="flex items-center gap-1">
                 <button
@@ -255,6 +262,26 @@ export function AppShell() {
               </button>
             </CollapsibleContent>
           </Collapsible>
+
+          {projectId && (
+            <div className="mt-4 pt-4 border-t border-border/40 space-y-1">
+              <div className="px-3 py-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                Operação atual
+              </div>
+              <NavItem
+                icon={BarChart3}
+                label="Dashboard"
+                onClick={() => navigate(`/dashboard?project=${projectId}`)}
+                active={location.pathname === "/dashboard"}
+              />
+              <NavItem
+                icon={Settings}
+                label="Conexões / sync"
+                onClick={() => navigate(`/connections?project=${projectId}`)}
+                active={location.pathname === "/connections"}
+              />
+            </div>
+          )}
 
           {/* Dashboard tabs - aparecem quando projeto selecionado */}
           {isOnDashboard && (
