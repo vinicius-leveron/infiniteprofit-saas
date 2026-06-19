@@ -50,9 +50,6 @@ verify_jwt = true
 [functions.vturb-pull]
 verify_jwt = false
 
-[functions.creative-sync]
-verify_jwt = false
-
 [functions.hubla-csv-import]
 verify_jwt = true
 
