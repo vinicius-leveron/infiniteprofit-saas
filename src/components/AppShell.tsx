@@ -5,6 +5,8 @@ import {
   BarChart3 as ProjectIcon,
   Building2,
   ChevronDown,
+  ChevronsUpDown,
+  Check,
   Gift,
   LogOut,
   Megaphone,
@@ -17,6 +19,7 @@ import {
   Users,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,6 +27,11 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { buildAuthRedirect } from "@/lib/authRedirect";
 import { supabase } from "@/integrations/supabase/client";
 import { useState, useEffect } from "react";
@@ -49,6 +57,7 @@ const DASHBOARD_TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
 export function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
+  const isMobile = useIsMobile();
   const [searchParams] = useSearchParams();
   const projectId = searchParams.get("project");
   const currentTab = (searchParams.get("tab") as Tab) || "geral";
@@ -56,6 +65,7 @@ export function AppShell() {
   const {
     loading,
     workspaces,
+    organizations,
     currentWorkspaceId,
     currentOrganization,
     hasWorkspaces,
@@ -64,17 +74,25 @@ export function AppShell() {
     setCurrentWorkspaceId,
   } = useWorkspace();
   const [configOpen, setConfigOpen] = useState(false);
-  const [contextOpen, setContextOpen] = useState(true);
-  const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(
-    () => new Set(),
-  );
+  const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [switcherStacksBelow, setSwitcherStacksBelow] = useState(false);
+  const [switcherWorkspaceId, setSwitcherWorkspaceId] = useState<string | null>(null);
   const [projects, setProjects] = useState<SidebarProject[]>([]);
   const currentProject = projects.find((project) => project.id === projectId);
   const currentWorkspace = workspaces.find((workspace) => workspace.id === currentWorkspaceId);
-  const projectsByWorkspace = workspaces.map((workspace) => ({
-    workspace,
-    projects: projects.filter((project) => project.workspace_id === workspace.id),
-  }));
+  const switcherWorkspace =
+    workspaces.find((workspace) => workspace.id === switcherWorkspaceId) ??
+    currentWorkspace ??
+    workspaces[0] ??
+    null;
+  const switcherProjects = switcherWorkspace
+    ? projects.filter((project) => project.workspace_id === switcherWorkspace.id)
+    : [];
+  const contextLabel =
+    currentProject?.name ??
+    currentWorkspace?.name ??
+    currentOrganization?.name ??
+    "Infinite Profit";
 
   useEffect(() => {
     const workspaceIds = workspaces.map((workspace) => workspace.id);
@@ -93,14 +111,17 @@ export function AppShell() {
   }, [workspaces]);
 
   useEffect(() => {
-    if (!currentWorkspaceId) return;
-    setExpandedWorkspaceIds((current) => {
-      if (current.has(currentWorkspaceId)) return current;
-      const next = new Set(current);
-      next.add(currentWorkspaceId);
-      return next;
-    });
+    setSwitcherWorkspaceId(currentWorkspaceId);
   }, [currentWorkspaceId]);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(max-width: 920px)");
+    const updatePlacement = () => setSwitcherStacksBelow(mediaQuery.matches);
+
+    updatePlacement();
+    mediaQuery.addEventListener("change", updatePlacement);
+    return () => mediaQuery.removeEventListener("change", updatePlacement);
+  }, []);
 
   useEffect(() => {
     if (
@@ -198,6 +219,7 @@ export function AppShell() {
       setCurrentWorkspaceId(nextProject.workspace_id);
     }
     navigate(`/dashboard?project=${nextProject.id}`);
+    setSwitcherOpen(false);
   };
 
   const projectPath = (path: "/connections" | "/diagnostics") => {
@@ -205,160 +227,204 @@ export function AppShell() {
     return `${path}?project=${projectId}`;
   };
 
-  const toggleWorkspace = (workspaceId: string) => {
-    setExpandedWorkspaceIds((current) => {
-      const next = new Set(current);
-      if (next.has(workspaceId)) {
-        next.delete(workspaceId);
-      } else {
-        next.add(workspaceId);
-      }
-      return next;
-    });
+  const selectWorkspace = (workspaceId: string) => {
+    setSwitcherWorkspaceId(workspaceId);
+    setCurrentWorkspaceId(workspaceId);
+    if (currentProject && currentProject.workspace_id !== workspaceId) {
+      navigate("/projects");
+    }
+  };
+
+  const openWorkspaceSettings = (workspaceId: string) => {
+    selectWorkspace(workspaceId);
+    setSwitcherOpen(false);
+    navigate("/workspace-settings");
+  };
+
+  const openOrganizationSettings = (organizationId: string) => {
+    const firstWorkspace = workspaces.find(
+      (workspace) => workspace.organization_id === organizationId,
+    );
+    if (firstWorkspace) selectWorkspace(firstWorkspace.id);
+    setSwitcherOpen(false);
+    navigate("/organization-settings");
+  };
+
+  const openWorkspaceCreation = () => {
+    setSwitcherOpen(false);
+    navigate(isOrganizationAdmin ? "/organization-settings" : "/workspace-settings");
+  };
+
+  const openProjectCreation = () => {
+    setSwitcherOpen(false);
+    navigate("/setup-operation");
   };
 
   return (
     <div className="flex min-h-screen flex-col bg-background md:flex-row">
       {/* Sidebar */}
       <aside className="flex w-full shrink-0 flex-col border-b border-border/70 bg-sidebar/95 backdrop-blur-sm md:h-screen md:w-[276px] md:border-b-0 md:border-r">
-        {/* Logo & Org */}
-        <div className="border-b border-border/40 p-4">
-          <button
-            type="button"
-            onClick={() => navigate("/projects")}
-            className="flex w-full items-center gap-3 rounded-lg text-left transition-opacity hover:opacity-90"
-          >
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-brand shadow-glow">
-              <Building2 className="h-[18px] w-[18px] text-primary-foreground" />
-            </div>
-            <div className="min-w-0 text-left">
-              <div className="truncate text-sm font-semibold text-foreground">
-                {currentOrganization?.name ?? "Infinite Profit"}
+        {/* Context switcher */}
+        <div className="border-b border-border/40 p-3">
+          <Popover open={switcherOpen} onOpenChange={setSwitcherOpen}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className="flex h-12 w-full items-center gap-3 rounded-xl border border-border/60 bg-muted/35 px-3 text-left transition-colors hover:border-border hover:bg-muted/50"
+              >
+                <span className="h-8 w-8 shrink-0 rounded-full bg-kpi-orange" />
+                <span className="min-w-0 flex-1 truncate text-[15px] font-semibold text-foreground">
+                  {contextLabel}
+                </span>
+                <ChevronsUpDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent
+              side={switcherStacksBelow || isMobile ? "bottom" : "right"}
+              align="start"
+              sideOffset={switcherStacksBelow || isMobile ? 8 : 10}
+              collisionPadding={12}
+              className="w-[calc(100vw-24px)] overflow-hidden rounded-lg border-border/80 bg-popover p-0 shadow-2xl sm:w-[560px]"
+            >
+              <div className="grid sm:grid-cols-[240px_minmax(0,1fr)]">
+                <div className="border-b border-border/60 sm:border-b-0 sm:border-r">
+                  <div className="border-b border-border/60 px-5 py-4 text-[15px] font-semibold text-foreground">
+                    Organizações
+                  </div>
+                  <div className="p-2">
+                    {(organizations.length ? organizations : currentOrganization ? [currentOrganization] : []).map((organization) => {
+                      const active = organization.id === currentOrganization?.id;
+
+                      return (
+                        <div
+                          key={organization.id}
+                          className="group flex h-11 items-center gap-1 rounded-md text-[14px] text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const firstWorkspace = workspaces.find(
+                                (workspace) => workspace.organization_id === organization.id,
+                              );
+                              if (firstWorkspace) selectWorkspace(firstWorkspace.id);
+                            }}
+                            className="flex min-w-0 flex-1 items-center gap-3 px-3 text-left"
+                          >
+                            <span className="min-w-0 flex-1 truncate">{organization.name}</span>
+                            {active && <Check className="h-4 w-4 shrink-0 text-foreground" />}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openOrganizationSettings(organization.id)}
+                            className="mr-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground/80 transition-colors hover:bg-background/80 hover:text-foreground"
+                            aria-label={`Configurar organização ${organization.name}`}
+                          >
+                            <Settings className="h-4 w-4" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div>
+                  <div className="flex items-center gap-3 border-b border-border/60 px-5 py-4">
+                    <div className="min-w-0 flex-1 text-[15px] font-semibold text-foreground">
+                      Espaços de Trabalho
+                    </div>
+                    <button
+                      type="button"
+                      onClick={openWorkspaceCreation}
+                      className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+                      aria-label="Criar workspace"
+                    >
+                      <Plus className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="max-h-[340px] overflow-y-auto p-2">
+                    {workspaces.map((workspace) => {
+                      const active = workspace.id === currentWorkspaceId;
+                      const selected = workspace.id === switcherWorkspace?.id;
+
+                      return (
+                        <div
+                          key={workspace.id}
+                          className={cn(
+                            "group flex h-11 w-full items-center gap-1 rounded-md text-[14px] transition-colors",
+                            selected
+                              ? "bg-muted/55 text-foreground"
+                              : "text-muted-foreground hover:bg-muted/45 hover:text-foreground"
+                          )}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => selectWorkspace(workspace.id)}
+                            className="flex min-w-0 flex-1 items-center gap-3 px-3 text-left"
+                          >
+                            <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
+                            {active && <Check className="h-4 w-4 shrink-0 text-foreground" />}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openWorkspaceSettings(workspace.id)}
+                            className="mr-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground/80 transition-colors hover:bg-background/80 hover:text-foreground"
+                            aria-label={`Configurar workspace ${workspace.name}`}
+                          >
+                            <Settings className="h-4 w-4" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                    <div className="my-2 h-px bg-border/60" />
+                    <div className="flex items-center gap-3 px-3 py-2">
+                      <div className="min-w-0 flex-1 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground/70">
+                        Projetos
+                      </div>
+                      <button
+                        type="button"
+                        onClick={openProjectCreation}
+                        className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+                        aria-label="Nova operação"
+                      >
+                        <Plus className="h-4 w-4" />
+                      </button>
+                    </div>
+                    {switcherProjects.length === 0 ? (
+                      <div className="px-3 py-2 text-sm text-muted-foreground">
+                        Nenhum projeto neste workspace
+                      </div>
+                    ) : (
+                      switcherProjects.map((project) => {
+                        const active = project.id === projectId;
+
+                        return (
+                          <button
+                            key={project.id}
+                            type="button"
+                            onClick={() => navigateToProject(project)}
+                            className={cn(
+                              "flex h-10 w-full items-center gap-3 rounded-md px-3 text-left text-[14px] transition-colors",
+                              active
+                                ? "bg-muted/55 text-foreground"
+                                : "text-muted-foreground hover:bg-muted/45 hover:text-foreground"
+                            )}
+                          >
+                            <ProjectIcon className="h-4 w-4 shrink-0 text-muted-foreground/80" />
+                            <span className="min-w-0 flex-1 truncate">{project.name}</span>
+                            {active && <Check className="h-4 w-4 shrink-0 text-foreground" />}
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
               </div>
-              <div className="truncate text-[11px] text-muted-foreground">
-                {user.email}
-              </div>
-            </div>
-          </button>
+            </PopoverContent>
+          </Popover>
         </div>
 
         {/* Navigation */}
         <nav className="max-h-[64vh] flex-1 space-y-4 overflow-y-auto px-3 py-3 md:max-h-none">
-          {showProjectNavigation && (
-            <div className="space-y-2">
-              <div className="px-2.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground/70">
-                Contexto
-              </div>
-              <Collapsible open={contextOpen} onOpenChange={setContextOpen}>
-                <CollapsibleTrigger
-                  type="button"
-                  className="group w-full rounded-md border border-border/45 bg-muted/20 px-2.5 py-2 text-left transition-colors hover:border-border/70 hover:bg-muted/35"
-                >
-                  <div className="flex items-center gap-2">
-                    <Building2 className="h-4 w-4 shrink-0 text-muted-foreground/80 group-hover:text-foreground" />
-                    <span className="min-w-0 flex-1 truncate text-xs font-medium text-muted-foreground">
-                      {currentWorkspace?.name ?? "Workspace"}
-                    </span>
-                    <ChevronDown
-                      className={cn(
-                        "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
-                        contextOpen && "rotate-180"
-                      )}
-                    />
-                  </div>
-                  <div className="mt-1 flex items-center gap-2">
-                    <ProjectIcon className="h-4 w-4 shrink-0 text-primary" />
-                    <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-foreground">
-                      {currentProject?.name ?? "Selecione um projeto"}
-                    </span>
-                  </div>
-                </CollapsibleTrigger>
-                <CollapsibleContent className="mt-2 space-y-1">
-                  {projectsByWorkspace.map(({ workspace, projects: workspaceProjects }) => {
-                    const workspaceOpen = expandedWorkspaceIds.has(workspace.id);
-                    const isCurrentWorkspace = workspace.id === currentWorkspaceId;
-
-                    return (
-                      <div key={workspace.id} className="space-y-0.5">
-                        <button
-                          type="button"
-                          onClick={() => toggleWorkspace(workspace.id)}
-                          className="group flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-                        >
-                          <Building2
-                            className={cn(
-                              "h-3.5 w-3.5 shrink-0",
-                              isCurrentWorkspace && "text-primary"
-                            )}
-                          />
-                          <span className="min-w-0 flex-1 truncate text-left">{workspace.name}</span>
-                          <span className="text-[10px] text-muted-foreground/60">
-                            {workspaceProjects.length}
-                          </span>
-                          <ChevronDown
-                            className={cn(
-                              "h-3.5 w-3.5 shrink-0 transition-transform",
-                              workspaceOpen && "rotate-180"
-                            )}
-                          />
-                        </button>
-                        {workspaceOpen && (
-                          <div className="space-y-0.5">
-                            {workspaceProjects.length === 0 ? (
-                              <div className="px-8 py-1.5 text-xs text-muted-foreground/70">
-                                Nenhum projeto
-                              </div>
-                            ) : (
-                              workspaceProjects.map((project) => {
-                                const isCurrentProject = project.id === projectId;
-
-                                return (
-                                  <button
-                                    key={project.id}
-                                    type="button"
-                                    onClick={() => navigateToProject(project)}
-                                    className={cn(
-                                      "group relative flex h-8 w-full items-center gap-2 rounded-md px-2.5 pl-7 text-[13px] transition-colors",
-                                      isCurrentProject
-                                        ? "bg-muted/55 text-foreground"
-                                        : "text-muted-foreground hover:bg-muted/45 hover:text-foreground"
-                                    )}
-                                  >
-                                    {isCurrentProject && (
-                                      <span className="absolute left-2 h-1.5 w-1.5 rounded-full bg-primary" />
-                                    )}
-                                    <ProjectIcon
-                                      className={cn(
-                                        "h-3.5 w-3.5 shrink-0",
-                                        isCurrentProject
-                                          ? "text-primary"
-                                          : "text-muted-foreground/70 group-hover:text-foreground"
-                                      )}
-                                    />
-                                    <span className="truncate text-left">{project.name}</span>
-                                  </button>
-                                );
-                              })
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                  <button
-                    type="button"
-                    onClick={() => navigate("/setup-operation")}
-                    className="mt-1 flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    Nova operação
-                  </button>
-                </CollapsibleContent>
-              </Collapsible>
-            </div>
-          )}
-
-          <div className="space-y-1 border-t border-border/45 pt-4">
+          <div className="space-y-1">
             <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground/70">
               Dashboard
             </div>
