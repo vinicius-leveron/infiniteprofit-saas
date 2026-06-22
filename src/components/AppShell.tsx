@@ -1,6 +1,7 @@
 import { Outlet, useLocation, useNavigate, useSearchParams, Navigate } from "react-router-dom";
 import {
   BarChart3,
+  BarChart3 as ProjectIcon,
   Building2,
   ChevronDown,
   FolderKanban,
@@ -9,6 +10,7 @@ import {
   Megaphone,
   Plus,
   Radio,
+  RefreshCw,
   Settings,
   Sliders,
   Target,
@@ -33,7 +35,6 @@ import { buildAuthRedirect } from "@/lib/authRedirect";
 import { supabase } from "@/integrations/supabase/client";
 import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
-import { BarChart3 as ProjectIcon } from "lucide-react";
 
 interface SidebarProject {
   id: string;
@@ -43,11 +44,11 @@ interface SidebarProject {
 type Tab = "geral" | "trafego" | "funil" | "bumps" | "anuncios" | "simulador";
 
 const DASHBOARD_TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
-  { id: "geral", label: "Visao Geral", icon: BarChart3 },
-  { id: "trafego", label: "Trafego", icon: Radio },
+  { id: "geral", label: "Visão Geral", icon: BarChart3 },
+  { id: "trafego", label: "Tráfego", icon: Radio },
   { id: "funil", label: "Funil VSL", icon: Target },
   { id: "bumps", label: "Bumps & Upsell", icon: Gift },
-  { id: "anuncios", label: "Anuncios", icon: Megaphone },
+  { id: "anuncios", label: "Anúncios", icon: Megaphone },
   { id: "simulador", label: "Simulador", icon: Sliders },
 ];
 
@@ -71,6 +72,7 @@ export function AppShell() {
   const [configOpen, setConfigOpen] = useState(false);
   const [projectsOpen, setProjectsOpen] = useState(true);
   const [projects, setProjects] = useState<SidebarProject[]>([]);
+  const currentProject = projects.find((project) => project.id === projectId);
 
   // Fetch projects for sidebar
   useEffect(() => {
@@ -127,24 +129,36 @@ export function AppShell() {
     active?: boolean;
     indent?: boolean;
     shortcut?: string;
-  }) => (
-    <button
-      onClick={onClick}
-      className={cn(
-        "w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors",
-        indent && "pl-6",
-        active
-          ? "bg-primary/10 text-primary font-medium"
-          : "text-muted-foreground hover:bg-muted hover:text-foreground"
-      )}
-    >
-      <Icon className="w-4 h-4 shrink-0" />
-      <span className="truncate flex-1 text-left">{label}</span>
-      {shortcut && (
-        <span className="text-[10px] font-mono opacity-50">{shortcut}</span>
-      )}
-    </button>
-  );
+  }) => {
+    const isNestedActive = Boolean(shortcut);
+
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className={cn(
+          "group relative flex h-9 w-full items-center gap-2.5 rounded-md px-2.5 text-[13px] font-medium transition-colors",
+          indent && "pl-8",
+          active && !isNestedActive && "bg-primary/10 text-primary shadow-[inset_2px_0_0_hsl(var(--primary))]",
+          active && isNestedActive && "bg-muted/55 text-foreground shadow-[inset_2px_0_0_hsl(var(--primary)/0.7)]",
+          !active && "text-muted-foreground hover:bg-muted/70 hover:text-foreground"
+        )}
+      >
+        <Icon
+          className={cn(
+            "h-4 w-4 shrink-0 transition-colors",
+            active ? "text-primary" : "text-muted-foreground/80 group-hover:text-foreground"
+          )}
+        />
+        <span className="truncate flex-1 text-left">{label}</span>
+        {shortcut && (
+          <span className="min-w-5 rounded border border-border/50 px-1 text-center text-[10px] font-mono text-muted-foreground/70">
+            {shortcut}
+          </span>
+        )}
+      </button>
+    );
+  };
 
   const handleTabClick = (tabId: Tab) => {
     const params = new URLSearchParams(searchParams);
@@ -155,21 +169,22 @@ export function AppShell() {
   return (
     <div className="min-h-screen bg-background flex">
       {/* Sidebar */}
-      <aside className="w-64 border-r border-border/60 bg-background/95 backdrop-blur-sm flex flex-col shrink-0">
+      <aside className="flex w-[276px] shrink-0 flex-col border-r border-border/70 bg-sidebar/95 backdrop-blur-sm">
         {/* Logo & Org */}
-        <div className="p-4 border-b border-border/40">
+        <div className="border-b border-border/40 p-4">
           <button
+            type="button"
             onClick={() => navigate("/projects")}
-            className="flex items-center gap-3 w-full"
+            className="flex w-full items-center gap-3 rounded-lg text-left transition-opacity hover:opacity-90"
           >
-            <div className="w-10 h-10 rounded-xl bg-gradient-brand flex items-center justify-center shadow-glow shrink-0">
-              <Building2 className="w-5 h-5 text-primary-foreground" />
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-brand shadow-glow">
+              <Building2 className="h-[18px] w-[18px] text-primary-foreground" />
             </div>
             <div className="min-w-0 text-left">
-              <div className="text-sm font-semibold text-foreground truncate">
+              <div className="truncate text-sm font-semibold text-foreground">
                 {currentOrganization?.name ?? "Infinite Profit"}
               </div>
-              <div className="text-[11px] text-muted-foreground truncate">
+              <div className="truncate text-[11px] text-muted-foreground">
                 {user.email}
               </div>
             </div>
@@ -178,12 +193,12 @@ export function AppShell() {
 
         {/* Workspace Picker */}
         {showWorkspacePicker && (
-          <div className="p-3 border-b border-border/40">
+          <div className="border-b border-border/40 p-3">
             <Select
               value={currentWorkspaceId ?? ""}
               onValueChange={(value) => setCurrentWorkspaceId(value)}
             >
-              <SelectTrigger className="w-full">
+              <SelectTrigger className="h-9 w-full border-border/60 bg-muted/30 text-[13px]">
                 <SelectValue placeholder="Selecione um workspace" />
               </SelectTrigger>
               <SelectContent>
@@ -198,65 +213,86 @@ export function AppShell() {
         )}
 
         {/* Navigation */}
-        <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-          <NavItem
-            icon={FolderKanban}
-            label="Projetos"
-            onClick={() => navigate("/projects")}
-            active={isActive("/projects")}
-          />
+        <nav className="flex-1 space-y-4 overflow-y-auto px-3 py-3">
+          <div className="space-y-1">
+            <NavItem
+              icon={FolderKanban}
+              label="Projetos"
+              onClick={() => navigate("/projects")}
+              active={isActive("/projects")}
+            />
+          </div>
 
           {/* Projetos recentes */}
-          <Collapsible open={projectsOpen} onOpenChange={setProjectsOpen}>
-            <CollapsibleTrigger className="w-full flex items-center justify-between px-3 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors rounded-lg hover:bg-muted">
-              <div className="flex items-center gap-3">
-                <FolderKanban className="w-4 h-4" />
-                <span>Projetos recentes</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    navigate("/setup-operation");
-                  }}
-                  className="p-1 hover:bg-muted-foreground/20 rounded"
-                  title="Novo projeto"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                </button>
+          <Collapsible open={projectsOpen} onOpenChange={setProjectsOpen} className="space-y-1">
+            <div className="flex items-center gap-1">
+              <CollapsibleTrigger
+                type="button"
+                className="group flex h-9 min-w-0 flex-1 items-center gap-2.5 rounded-md px-2.5 text-[13px] font-medium text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
+              >
+                <FolderKanban className="h-4 w-4 shrink-0 text-muted-foreground/80 transition-colors group-hover:text-foreground" />
+                <span className="truncate text-left">Projetos recentes</span>
                 <ChevronDown
                   className={cn(
-                    "w-4 h-4 transition-transform",
+                    "ml-auto h-4 w-4 shrink-0 transition-transform",
                     projectsOpen && "rotate-180"
                   )}
                 />
-              </div>
-            </CollapsibleTrigger>
-            <CollapsibleContent className="space-y-0.5 mt-1">
+              </CollapsibleTrigger>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigate("/setup-operation");
+                }}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
+                title="Novo projeto"
+                aria-label="Novo projeto"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+            </div>
+            <CollapsibleContent className="space-y-0.5">
               {projects.length === 0 ? (
-                <div className="px-3 py-2 text-xs text-muted-foreground">
+                <div className="px-2.5 py-2 text-xs text-muted-foreground">
                   Nenhum projeto
                 </div>
               ) : (
-                projects.map((p) => (
-                  <button
-                    key={p.id}
-                    onClick={() => navigate(`/dashboard?project=${p.id}`)}
-                    className={cn(
-                      "w-full flex items-center gap-2 px-3 py-1.5 pl-9 rounded-lg text-sm transition-colors truncate",
-                      projectId === p.id
-                        ? "bg-primary/10 text-primary font-medium"
-                        : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                    )}
-                  >
-                    <ProjectIcon className="w-3.5 h-3.5 shrink-0" />
-                    <span className="truncate">{p.name}</span>
-                  </button>
-                ))
+                projects.map((p) => {
+                  const isCurrentProject = projectId === p.id;
+
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => navigate(`/dashboard?project=${p.id}`)}
+                      className={cn(
+                        "group relative flex h-8 w-full items-center gap-2 rounded-md px-2.5 pl-7 text-[13px] transition-colors",
+                        isCurrentProject
+                          ? "bg-muted/60 text-foreground"
+                          : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                      )}
+                    >
+                      {isCurrentProject && (
+                        <span className="absolute left-2 h-1.5 w-1.5 rounded-full bg-primary" />
+                      )}
+                      <ProjectIcon
+                        className={cn(
+                          "h-3.5 w-3.5 shrink-0 transition-colors",
+                          isCurrentProject
+                            ? "text-primary"
+                            : "text-muted-foreground/70 group-hover:text-foreground"
+                        )}
+                      />
+                      <span className="truncate text-left">{p.name}</span>
+                    </button>
+                  );
+                })
               )}
               <button
+                type="button"
                 onClick={() => navigate("/projects")}
-                className="w-full flex items-center gap-2 px-3 py-1.5 pl-9 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                className="flex h-8 w-full items-center rounded-md px-2.5 pl-7 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
               >
                 Ver todos
               </button>
@@ -264,29 +300,36 @@ export function AppShell() {
           </Collapsible>
 
           {projectId && (
-            <div className="mt-4 pt-4 border-t border-border/40 space-y-1">
-              <div className="px-3 py-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
-                Operação atual
+            <div className="space-y-2 border-t border-border/45 pt-4">
+              <div className="px-2.5">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground/70">
+                  Operação atual
+                </div>
+                <div className="mt-1 truncate text-[13px] font-semibold text-foreground">
+                  {currentProject?.name ?? "Projeto selecionado"}
+                </div>
               </div>
-              <NavItem
-                icon={BarChart3}
-                label="Dashboard"
-                onClick={() => navigate(`/dashboard?project=${projectId}`)}
-                active={location.pathname === "/dashboard"}
-              />
-              <NavItem
-                icon={Settings}
-                label="Conexões / sync"
-                onClick={() => navigate(`/connections?project=${projectId}`)}
-                active={location.pathname === "/connections"}
-              />
+              <div className="space-y-1">
+                <NavItem
+                  icon={BarChart3}
+                  label="Dashboard"
+                  onClick={() => navigate(`/dashboard?project=${projectId}`)}
+                  active={location.pathname === "/dashboard"}
+                />
+                <NavItem
+                  icon={RefreshCw}
+                  label="Conexões e sync"
+                  onClick={() => navigate(`/connections?project=${projectId}`)}
+                  active={location.pathname === "/connections"}
+                />
+              </div>
             </div>
           )}
 
           {/* Dashboard tabs - aparecem quando projeto selecionado */}
           {isOnDashboard && (
-            <div className="mt-4 pt-4 border-t border-border/40 space-y-1">
-              <div className="px-3 py-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+            <div className="space-y-1 border-t border-border/45 pt-4">
+              <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground/70">
                 Dashboard
               </div>
               {DASHBOARD_TABS.map(({ id, label, icon }, index) => (
@@ -302,23 +345,24 @@ export function AppShell() {
             </div>
           )}
 
-          {/* Configuracoes + Sair */}
+          {/* Configurações */}
           {showWorkspacePicker && (
-            <div className="mt-4 pt-4 border-t border-border/40">
+            <div className="border-t border-border/45 pt-4">
               <Collapsible open={configOpen} onOpenChange={setConfigOpen}>
-                <CollapsibleTrigger className="w-full flex items-center justify-between px-3 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors rounded-lg hover:bg-muted">
-                  <div className="flex items-center gap-3">
-                    <Settings className="w-4 h-4" />
-                    <span>Configuracoes</span>
-                  </div>
+                <CollapsibleTrigger
+                  type="button"
+                  className="group flex h-9 w-full items-center gap-2.5 rounded-md px-2.5 text-[13px] font-medium text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
+                >
+                  <Settings className="h-4 w-4 shrink-0 text-muted-foreground/80 transition-colors group-hover:text-foreground" />
+                  <span className="min-w-0 flex-1 truncate text-left">Configurações</span>
                   <ChevronDown
                     className={cn(
-                      "w-4 h-4 transition-transform",
+                      "h-4 w-4 shrink-0 transition-transform",
                       configOpen && "rotate-180"
                     )}
                   />
                 </CollapsibleTrigger>
-                <CollapsibleContent className="space-y-1 mt-1">
+                <CollapsibleContent className="mt-1 space-y-1">
                   <NavItem
                     icon={Users}
                     label="Equipe"
@@ -329,7 +373,7 @@ export function AppShell() {
                   {isOrganizationAdmin && (
                     <NavItem
                       icon={Building2}
-                      label="Organizacao"
+                      label="Organização"
                       onClick={() => navigate("/organization-settings")}
                       active={isActive("/organization-settings")}
                       indent
@@ -339,22 +383,22 @@ export function AppShell() {
               </Collapsible>
             </div>
           )}
-
-          <div className={cn(showWorkspacePicker ? "pt-2" : "mt-4 pt-4 border-t border-border/40")}>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={async () => {
-                await supabase.auth.signOut();
-                navigate("/auth", { replace: true });
-              }}
-              className="w-full justify-start gap-2 text-muted-foreground hover:text-foreground"
-            >
-              <LogOut className="w-4 h-4" />
-              Sair
-            </Button>
-          </div>
         </nav>
+
+        <div className="border-t border-border/45 p-3">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={async () => {
+              await supabase.auth.signOut();
+              navigate("/auth", { replace: true });
+            }}
+            className="h-9 w-full justify-start gap-2 rounded-md px-2.5 text-[13px] text-muted-foreground hover:bg-muted/70 hover:text-foreground"
+          >
+            <LogOut className="h-4 w-4" />
+            Sair
+          </Button>
+        </div>
       </aside>
 
       {/* Main Content */}
