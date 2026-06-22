@@ -16,6 +16,11 @@ jobs:
   quality:
     name: Build, Test, And Smoke
     runs-on: ubuntu-latest
+    env:
+      VITE_SUPABASE_URL: https://nztnctrkmfrgclrnflfa.supabase.co
+      VITE_SUPABASE_PUBLISHABLE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im56dG5jdHJrbWZyZ2Nscm5mbGZhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc4NDEyNzEsImV4cCI6MjA5MzQxNzI3MX0.GpBf50JXc8sorlE29_W2ej0zNEeYpAuv3Fg3JiBQ-U4
+      VITE_SUPABASE_PROJECT_ID: nztnctrkmfrgclrnflfa
+      VITE_ENABLE_GOOGLE_AUTH: "false"
 
     steps:
       - name: Checkout
