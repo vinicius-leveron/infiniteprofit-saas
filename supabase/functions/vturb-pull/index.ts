@@ -2,6 +2,7 @@
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { buildAutomationHeaders, isAutomationRequest } from "../_shared/automation.ts";
+import { parseVturbBatchOptions, selectVturbPlayerBatch } from "./core.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -39,6 +40,7 @@ type PlayerBinding = {
   id: string;
   player_id: string;
   label: string | null;
+  last_synced_at?: string | null;
 };
 
 type VturbPath =
@@ -71,6 +73,7 @@ Deno.serve(async (req) => {
     const targetProjectId = stringOrNull(body.project_id);
     const targetPlayerId = stringOrNull(body.player_id);
     const days = Math.min(Math.max(Number(body.days) || 30, 1), 90);
+    const batchOptions = parseVturbBatchOptions(body);
 
     if (caller.kind === "user" && !targetProjectId) {
       return json({ error: "project_id é obrigatório para sync manual" }, 400);
@@ -103,7 +106,12 @@ Deno.serve(async (req) => {
         projectId: project.id,
         source: "vturb",
         initiatedBy: caller.kind === "user" ? caller.userId : null,
-        details: { days, player_filter: targetPlayerId },
+        details: {
+          days,
+          player_filter: targetPlayerId,
+          batch_cursor: targetPlayerId ? null : batchOptions.batchCursor,
+          batch_size: targetPlayerId ? null : batchOptions.batchSize,
+        },
       });
 
       try {
@@ -118,6 +126,16 @@ Deno.serve(async (req) => {
           throw new Error("Nenhum player VTurb vinculado a este projeto");
         }
 
+        const orderedPlayers = orderPlayersForSync(players, batchOptions.hasExplicitCursor);
+        const playerBatch = selectVturbPlayerBatch(orderedPlayers, {
+          batchCursor: batchOptions.batchCursor,
+          batchSize: batchOptions.batchSize,
+          targetPlayerId,
+        });
+        if (playerBatch.players.length === 0) {
+          throw new Error("Nenhum player VTurb encontrado neste lote");
+        }
+
         const { startDay, endDay } = inclusiveLocalDateRange(days);
         const startStr = `${startDay} 00:00:00 -0300`;
         const endStr = `${endDay} 23:59:59 -0300`;
@@ -128,7 +146,7 @@ Deno.serve(async (req) => {
         const playerMetadata = await loadPlayerMetadataMap(apiKey, vturbRuntime);
         await refreshPlayerLabels(sb, players, playerMetadata);
 
-        for (const player of players) {
+        for (const player of playerBatch.players) {
           try {
             const result = await pullOnePlayer(sb, {
               vturbRuntime,
@@ -191,11 +209,24 @@ Deno.serve(async (req) => {
         }
 
         const failed = projectResults.filter((result) => result.error);
+        const batchDetails = {
+          player_filter: targetPlayerId,
+          batch_cursor: playerBatch.batchCursor,
+          batch_size: playerBatch.batchSize,
+          players_total: playerBatch.totalPlayers,
+          players_processed: playerBatch.playersProcessed,
+          next_cursor: playerBatch.nextCursor,
+          has_more: playerBatch.hasMore,
+        };
+        results.push({
+          project_id: project.id,
+          batch: batchDetails,
+        });
         await finishSyncRun(sb, runId, {
           status: failed.length > 0 ? "failed" : "succeeded",
           details: {
             days,
-            player_filter: targetPlayerId,
+            ...batchDetails,
             results: projectResults,
           },
           errorMessage: failed.length
@@ -207,7 +238,12 @@ Deno.serve(async (req) => {
         results.push({ project_id: project.id, error: message });
         await finishSyncRun(sb, runId, {
           status: "failed",
-          details: { days, player_filter: targetPlayerId },
+          details: {
+            days,
+            player_filter: targetPlayerId,
+            batch_cursor: targetPlayerId ? null : batchOptions.batchCursor,
+            batch_size: targetPlayerId ? null : batchOptions.batchSize,
+          },
           errorMessage: message,
         });
       }
@@ -567,7 +603,7 @@ async function loadProjectPlayers(
 
   const { data: playerRows, error: playersError } = await sb
     .from("workspace_vturb_players")
-    .select("id, player_id, label")
+    .select("id, player_id, label, last_synced_at")
     .eq("workspace_id", project.workspace_id)
     .in("id", ids);
 
@@ -576,6 +612,22 @@ async function loadProjectPlayers(
   const players = (playerRows ?? []) as PlayerBinding[];
   if (!targetPlayerId) return players;
   return players.filter((player) => player.player_id === targetPlayerId);
+}
+
+function orderPlayersForSync(players: PlayerBinding[], stableCursorOrder: boolean) {
+  return [...players].sort((left, right) => {
+    if (!stableCursorOrder) {
+      const leftSyncedAt = Date.parse(left.last_synced_at ?? "");
+      const rightSyncedAt = Date.parse(right.last_synced_at ?? "");
+      const leftOrder = Number.isFinite(leftSyncedAt) ? leftSyncedAt : 0;
+      const rightOrder = Number.isFinite(rightSyncedAt) ? rightSyncedAt : 0;
+      if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+    }
+
+    const byPlayerId = left.player_id.localeCompare(right.player_id);
+    if (byPlayerId !== 0) return byPlayerId;
+    return left.id.localeCompare(right.id);
+  });
 }
 
 async function assertWorkspaceAdmin(

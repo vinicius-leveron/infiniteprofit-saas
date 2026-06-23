@@ -34,6 +34,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorkspace } from "@/hooks/useWorkspace";
+import { syncVturbUntilDone } from "@/lib/vturbSync";
 import {
   buildCoverageRows,
   summarizeCoverage,
@@ -368,21 +369,26 @@ export default function Diagnostics() {
     if (!project?.id) return;
     setSyncing(source);
     try {
-      const fn = source === "meta" ? "meta-pull" : source === "vturb" ? "vturb-pull" : "creative-sync";
-      const { error } = await supabase.functions.invoke(fn, {
-        body: {
-          project_id: project.id,
-          days: 30,
-          ...(source === "creative"
-            ? {
-              reprocess: Boolean(options?.reprocessScope),
-              reprocess_scope: options?.reprocessScope ?? "all",
-              queue_analysis: Boolean(options?.reprocessScope),
-            }
-            : {}),
-        },
-      });
-      if (error) throw error;
+      if (source === "vturb") {
+        const result = await syncVturbUntilDone({ projectId: project.id, days: 30 });
+        if (result.errors.length > 0) throw new Error(result.errors[0]);
+      } else {
+        const fn = source === "meta" ? "meta-pull" : "creative-sync";
+        const { error } = await supabase.functions.invoke(fn, {
+          body: {
+            project_id: project.id,
+            days: 30,
+            ...(source === "creative"
+              ? {
+                reprocess: Boolean(options?.reprocessScope),
+                reprocess_scope: options?.reprocessScope ?? "all",
+                queue_analysis: Boolean(options?.reprocessScope),
+              }
+              : {}),
+          },
+        });
+        if (error) throw error;
+      }
       toast.success(source === "meta" ? "Meta sincronizada" : source === "vturb" ? "VTurb sincronizada" : "Criativos sincronizados");
       await load();
     } catch (error) {

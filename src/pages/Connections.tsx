@@ -21,6 +21,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { readHublaImportFile } from "@/lib/hublaImportFile";
+import { syncVturbUntilDone } from "@/lib/vturbSync";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -453,14 +454,9 @@ export default function Connections() {
     if (playerId) setVturbSyncingPlayerId(playerId);
     else setVturbSyncing(true);
     try {
-      const { data, error } = await supabase.functions.invoke("vturb-pull", {
-        body: { project_id: project.id, days: 30, ...(playerId ? { player_id: playerId } : {}) },
-      });
-      if (error) throw error;
-      const results = (data?.results ?? []) as Array<{ player_id: string; error?: string }>;
-      const failed = results.find((result) => result.error);
-      if (failed?.error) toast.error(failed.error);
-      else toast.success(playerId ? "Player sincronizado" : "VTurb sincronizada");
+      const result = await syncVturbUntilDone({ projectId: project.id, days: 30, playerId });
+      if (result.errors.length > 0) toast.error(result.errors[0]);
+      else toast.success(playerId ? "Player sincronizado" : `VTurb sincronizada (${result.playersProcessed} player(s))`);
       await load();
       await loadEvents();
     } catch (error) {

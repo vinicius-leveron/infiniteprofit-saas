@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { cn } from "@/lib/utils";
+import { syncVturbUntilDone } from "@/lib/vturbSync";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SETUP_DRAFT_STORAGE_KEY = "infiniteprofit.setupOperationDraft";
@@ -602,6 +603,14 @@ function emptySetupDraft(): SetupDraft {
 }
 
 async function runInitialSync(projectId: string, source: SyncSource) {
+  if (source === "vturb") {
+    const result = await syncVturbUntilDone({ projectId, days: 30 });
+    return {
+      source,
+      errors: result.errors,
+    };
+  }
+
   const { data, error } = await supabase.functions.invoke(source === "meta" ? "meta-pull" : "vturb-pull", {
     body: { project_id: projectId, days: 30 },
   });
