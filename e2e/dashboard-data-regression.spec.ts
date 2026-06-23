@@ -25,7 +25,7 @@ test.describe("dashboard data regression", () => {
     await expect(page.getByText("Nenhum dia no período")).toHaveCount(0);
 
     await page.goto(`/dashboard?project=${qaProjectId}&tab=funil`);
-    await expect(page.getByText(/Funil VSL|Play Rate|Pitch/i)).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Funil VSL" })).toBeVisible();
     await expect(page.getByText("Nenhum dia no período")).toHaveCount(0);
 
     await page.goto(`/dashboard?project=${qaProjectId}&tab=diagnostico`);
@@ -40,7 +40,7 @@ test.describe("dashboard data regression", () => {
     await expect(page.getByText("Agregado", { exact: true }).first()).toBeVisible();
 
     await page.goto(`/connections?project=${qaProjectId}`);
-    await expect(page.getByText("Conexões", { exact: false })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /Conexões/i })).toBeVisible();
     await expect(page.getByText("Meta Ads")).toBeVisible();
     await expect(page.getByText("VTurb")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Gateway de Pagamento" })).toBeVisible();
