@@ -6,6 +6,7 @@ export type HublaCsvParseResult = {
   events: HublaCsvEvent[];
   warnings: string[];
   dataRows: number;
+  headers: string[];
 };
 
 type RowConversion =
@@ -39,7 +40,7 @@ export function parseHublaCsv(csv: string): HublaCsvParseResult {
     }
   }
 
-  return { events, warnings, dataRows: dataRows.length };
+  return { events, warnings, dataRows: dataRows.length, headers };
 }
 
 function rowToHublaRaw(headers: string[], row: string[], line: number): RowConversion {
@@ -77,6 +78,7 @@ function rowToHublaRaw(headers: string[], row: string[], line: number): RowConve
   const orderBumpProductName = get("nome_do_produto_de_orderbump", "produto_orderbump", "orderbump_product_name", "bump_product_name");
   const itemType = get("tipo_de_fatura", "detalhamento_da_fatura", "tipo_produto", "tipo_oferta", "item_type", "offer_type", "tipo").toLowerCase();
   const isBump = itemType.includes("bump") || itemType.includes("upsell") || itemType.includes("order");
+  const offerType = itemType.includes("upsell") ? "upsell" : "orderbump";
   const hasOrderBump = Boolean(orderBumpProductId || orderBumpProductName);
   const mainItemPrice = hasOrderBump && productTotal > 0 ? productTotal : total;
   const orderBumpPrice = hasOrderBump && productTotal > 0 ? Math.max(0, total - productTotal) : 0;
@@ -86,7 +88,7 @@ function rowToHublaRaw(headers: string[], row: string[], line: number): RowConve
         id: productId || transaction,
         name: productName || productId || transaction,
         price: mainItemPrice,
-        type: isBump ? "orderbump" : "main",
+        type: isBump ? offerType : "main",
         is_bump: isBump,
       }]
       : []),
@@ -95,7 +97,7 @@ function rowToHublaRaw(headers: string[], row: string[], line: number): RowConve
         id: orderBumpProductId || `${transaction}-orderbump`,
         name: orderBumpProductName || orderBumpProductId || "Order bump",
         price: orderBumpPrice,
-        type: "orderbump",
+        type: offerType,
         is_bump: true,
       }]
       : []),

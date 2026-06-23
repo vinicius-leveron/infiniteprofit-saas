@@ -39,4 +39,31 @@ describe("hublaImportFile", () => {
 
     expect(result.csv).toContain("fat-1;Aprovada;01/06/2026 10:30:00;R$ 241,42");
   });
+
+  it("rejects Hubla XLSX sheets that only contain headers", () => {
+    expect(() =>
+      hublaSheetsToCsv([
+        {
+          sheet: "01-06-2026 - 19-06-2026",
+          data: [
+            ["ID da fatura", "Status da fatura", "Data de pagamento", "Valor total", "Email do cliente"],
+          ],
+        },
+      ]),
+    ).toThrow("sem linhas de venda");
+  });
+
+  it("rejects spreadsheets that are not Hubla invoice exports", () => {
+    expect(() =>
+      hublaSheetsToCsv([
+        {
+          sheet: "Dashboard",
+          data: [
+            ["Data", "Investimento", "Cliques", "Faturamento líquido"],
+            ["01/06/2026", "R$ 100,00", "20", "R$ 500,00"],
+          ],
+        },
+      ]),
+    ).toThrow("não parece ser um export");
+  });
 });

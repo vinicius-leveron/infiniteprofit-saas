@@ -350,6 +350,13 @@ export default function Diagnostics() {
 
   const coverageSummary = summarizeCoverage(coverageRows);
   const groupedCoverage = groupBy(coverageRows, (row) => row.group);
+  const coverageIssues = useMemo(
+    () => coverageRows
+      .filter((row) => row.status !== "OK")
+      .sort(compareCoverageIssues)
+      .slice(0, 6),
+    [coverageRows],
+  );
   const canAdminCreativeJobs = isWorkspaceAdmin || isOrganizationAdmin;
   const webhookUrl =
     bindings.gatewayProvider && bindings.checkoutToken
@@ -436,7 +443,9 @@ export default function Diagnostics() {
             <StatusPill status="Parcial" /> {coverageSummary.Parcial}
             <StatusPill status="Faltando" /> {coverageSummary.Faltando}
           </div>
-          <p className="text-[11px] text-muted-foreground mt-3">{metrics.length} dia(s) com dados</p>
+          <p className="text-[11px] text-muted-foreground mt-3">
+            {metrics.length} dia(s) com dados. Cada número é um grupo de KPI com fonte utilizável, parcial ou ausente.
+          </p>
         </div>
       </div>
 
@@ -614,12 +623,36 @@ export default function Diagnostics() {
         </div>
       )}
 
+      {coverageIssues.length > 0 && (
+        <div className="section-card mb-5">
+          <div className="flex items-center gap-2 mb-3">
+            <AlertTriangle className="w-4 h-4 text-amber-500" />
+            <h2 className="text-sm font-semibold">O que precisa de ação</h2>
+          </div>
+          <div className="grid md:grid-cols-2 gap-2">
+            {coverageIssues.map((row) => (
+              <div key={`${row.group}-${row.kpi}-issue`} className="rounded-md border border-border/50 px-3 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold truncate">{row.group}</span>
+                  <StatusPill status={row.status} reason={row.reason} />
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">{row.kpi}</p>
+                <p className="mt-2 text-xs">{row.nextAction}</p>
+                <p className="mt-1 text-[10px] text-muted-foreground">
+                  Eventos {row.rawFound} · Agregado {row.metricFilled}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="grid lg:grid-cols-[1fr_360px] gap-5">
         <div className="space-y-5">
           {[...groupedCoverage.entries()].map(([group, rows]) => (
             <div key={group} className="section-card">
               <h2 className="text-sm font-semibold mb-3">{group}</h2>
-              <div className="overflow-x-auto">
+              <div className="max-h-[420px] overflow-auto">
                 <table className="w-full text-sm">
                   <thead className="text-xs text-muted-foreground border-b border-border/50">
                     <tr>
@@ -628,7 +661,8 @@ export default function Diagnostics() {
                       <th className="text-right py-2 pr-3">Eventos</th>
                       <th className="text-right py-2 pr-3">Agregado</th>
                       <th className="text-left py-2 pr-3">Status</th>
-                      <th className="text-left py-2">Motivo</th>
+                      <th className="text-left py-2 pr-3">Motivo</th>
+                      <th className="text-left py-2">Ação</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -639,7 +673,8 @@ export default function Diagnostics() {
                         <td className="py-2 pr-3 text-right tabular-nums">{row.rawFound}</td>
                         <td className="py-2 pr-3 text-right tabular-nums">{row.metricFilled}</td>
                         <td className="py-2 pr-3"><StatusPill status={row.status} reason={row.reason} /></td>
-                        <td className="py-2 text-xs text-muted-foreground min-w-[240px]">{row.reason}</td>
+                        <td className="py-2 pr-3 text-xs text-muted-foreground min-w-[240px]">{row.reason}</td>
+                        <td className="py-2 text-xs text-muted-foreground min-w-[220px]">{row.nextAction}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -944,4 +979,13 @@ function numericValue(value: unknown) {
     return Number.isFinite(parsed) ? parsed : 0;
   }
   return 0;
+}
+
+function compareCoverageIssues(a: CoverageRow, b: CoverageRow) {
+  const rank = (row: CoverageRow) => {
+    if (row.status === "Faltando") return 0;
+    if (row.rawFound > 0 && row.metricFilled === 0) return 1;
+    return 2;
+  };
+  return rank(a) - rank(b) || b.rawFound - a.rawFound || a.group.localeCompare(b.group);
 }

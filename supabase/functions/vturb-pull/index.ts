@@ -118,10 +118,7 @@ Deno.serve(async (req) => {
           throw new Error("Nenhum player VTurb vinculado a este projeto");
         }
 
-        const endDate = new Date();
-        const startDate = new Date(endDate.getTime() - days * 24 * 60 * 60 * 1000);
-        const startDay = startDate.toISOString().slice(0, 10);
-        const endDay = endDate.toISOString().slice(0, 10);
+        const { startDay, endDay } = inclusiveLocalDateRange(days);
         const startStr = `${startDay} 00:00:00 -0300`;
         const endStr = `${endDay} 23:59:59 -0300`;
         const projectResults: Array<Record<string, unknown>> = [];
@@ -805,6 +802,30 @@ function parseRetryAfterValue(headerValue: string | null) {
 
 function clampRetryDelay(ms: number) {
   return Math.min(Math.max(ms + 150, VTURB_DEFAULT_RETRY_AFTER_MS), VTURB_MAX_RETRY_AFTER_MS);
+}
+
+function inclusiveLocalDateRange(days: number) {
+  const safeDays = Math.max(1, Math.floor(days || 1));
+  const endDay = formatLocalYmd(new Date());
+  const startDay = addLocalDays(endDay, -(safeDays - 1));
+  return { startDay, endDay };
+}
+
+function addLocalDays(ymd: string, delta: number) {
+  const [year, month, day] = ymd.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day + delta, 12, 0, 0));
+  return formatLocalYmd(date);
+}
+
+function formatLocalYmd(date: Date) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
 }
 
 function json(body: unknown, status = 200) {

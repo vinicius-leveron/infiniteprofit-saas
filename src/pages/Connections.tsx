@@ -173,6 +173,7 @@ export default function Connections() {
     skipped: number;
     dates: string[];
     warnings: string[];
+    headers: string[];
   } | null>(null);
 
   useEffect(() => {
@@ -498,8 +499,14 @@ export default function Connections() {
         skipped: Number(data?.skipped ?? 0),
         dates: Array.isArray(data?.dates) ? data.dates : [],
         warnings: Array.isArray(data?.warnings) ? data.warnings : [],
+        headers: Array.isArray(data?.headers) ? data.headers : [],
       };
       setHublaImportPreview(result);
+
+      if (result.imported === 0) {
+        toast.error("Nenhum evento Hubla reconhecido. Confira se o arquivo é export de faturas/vendas da Hubla com status, valor e data.");
+        return;
+      }
 
       if (dryRun) {
         toast.success(`Prévia: ${result.imported} evento(s) reconhecido(s)`);
@@ -1030,16 +1037,33 @@ export default function Connections() {
               />
             </div>
             {hublaImportPreview && (
-              <div className="rounded-lg border border-border/50 bg-muted/20 p-3 text-sm">
+              <div className={`rounded-lg border p-3 text-sm ${
+                hublaImportPreview.imported === 0
+                  ? "border-red-500/30 bg-red-500/5"
+                  : "border-border/50 bg-muted/20"
+              }`}>
                 <div className="font-medium">
                   {hublaImportPreview.imported} evento(s) reconhecido(s) · {hublaImportPreview.skipped} linha(s) ignorada(s)
                 </div>
+                {hublaImportPreview.imported === 0 && (
+                  <div className="mt-1 text-xs text-red-600">
+                    Importação bloqueada: o arquivo não gerou vendas, reembolsos, recusas ou checkouts reconhecíveis.
+                  </div>
+                )}
                 <div className="mt-1 text-xs text-muted-foreground">
                   Datas: {hublaImportPreview.dates.length > 0 ? hublaImportPreview.dates.join(", ") : "nenhuma"}
                 </div>
+                {hublaImportPreview.headers.length > 0 && (
+                  <div className="mt-2 rounded border border-border/40 bg-background/50 p-2 text-xs text-muted-foreground">
+                    <div className="font-medium text-foreground/80 mb-1">Cabeçalhos detectados</div>
+                    <div className="max-h-16 overflow-y-auto break-words">
+                      {hublaImportPreview.headers.join(", ")}
+                    </div>
+                  </div>
+                )}
                 {hublaImportPreview.warnings.length > 0 && (
-                  <div className="mt-2 max-h-28 overflow-y-auto rounded border border-border/40 bg-background/50 p-2 text-xs text-muted-foreground">
-                    {hublaImportPreview.warnings.slice(0, 8).map((warning) => (
+                  <div className="mt-2 max-h-40 overflow-y-auto rounded border border-border/40 bg-background/50 p-2 text-xs text-muted-foreground">
+                    {hublaImportPreview.warnings.slice(0, 50).map((warning) => (
                       <div key={warning}>{warning}</div>
                     ))}
                   </div>

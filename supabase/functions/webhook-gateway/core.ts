@@ -119,39 +119,54 @@ export function normalizeHubla(raw: any): NormalizedEvent[] {
     root.webhook_event_type,
     data.type,
     eventRecord.type,
-    object.type,
     object.event,
-    object.status,
   ]).toLowerCase();
+  const status = firstString([
+    object.status,
+    object.payment_status,
+    object.invoice_status,
+    eventRecord.status,
+    root.status,
+  ]).toLowerCase();
+  const classifier = `${eventType} ${status}`.trim();
+  const isInvoiceCreated =
+    eventType.includes("checkout.created")
+    || eventType.includes("checkout_created")
+    || eventType.includes("invoice.created");
 
   let type: NormalizedEvent["event_type"] | null = null;
   if (
-    eventType.includes("payment_succeeded")
-    || eventType.includes("payment.succeeded")
-    || eventType.includes("invoice.paid")
-    || eventType.includes("approved")
-    || eventType === "paid"
-    || eventType === "succeeded"
+    classifier.includes("refunded")
+    || classifier.includes("refund")
+    || classifier.includes("chargeback")
   ) {
-    type = "purchase.approved";
-  } else if (eventType.includes("refunded") || eventType.includes("refund") || eventType.includes("chargeback")) {
     type = "purchase.refunded";
   } else if (
-    eventType.includes("payment_failed")
-    || eventType.includes("failed")
-    || eventType.includes("declined")
-    || eventType.includes("refused")
-    || eventType.includes("canceled")
-    || eventType.includes("cancelled")
-    || eventType.includes("expired")
+    classifier.includes("payment_failed")
+    || classifier.includes("failed")
+    || classifier.includes("declined")
+    || classifier.includes("refused")
+    || classifier.includes("canceled")
+    || classifier.includes("cancelled")
+    || classifier.includes("expired")
+    || classifier.includes("overdue")
   ) {
     type = "purchase.refused";
   } else if (
-    eventType.includes("checkout.created")
-    || eventType.includes("checkout_created")
-    || eventType.includes("invoice.created")
-    || eventType.includes("waiting_payment")
-    || eventType.includes("payment_pending")
+    classifier.includes("payment_succeeded")
+    || classifier.includes("payment.succeeded")
+    || classifier.includes("invoice.paid")
+    || classifier.includes("approved")
+    || status === "paid"
+    || status === "succeeded"
+  ) {
+    type = "purchase.approved";
+  } else if (
+    isInvoiceCreated
+    || classifier.includes("waiting_payment")
+    || classifier.includes("payment_pending")
+    || classifier.includes("unpaid")
+    || classifier.includes("pending")
   ) {
     type = "checkout_created";
   }
@@ -163,6 +178,14 @@ export function normalizeHubla(raw: any): NormalizedEvent[] {
     { path: "amount_total", cents: true },
     { path: "amount_due", cents: true },
     { path: "amount_received", cents: true },
+    { path: "amount.totalCents", cents: true },
+    { path: "amount.subtotalCents", cents: true },
+    { path: "amount.total", autoCents: true },
+    { path: "amount.subtotal", autoCents: true },
+    { path: "totalCents", cents: true },
+    { path: "subtotalCents", cents: true },
+    { path: "paidAmountCents", cents: true },
+    { path: "priceCents", cents: true },
     { path: "paid_amount", autoCents: true },
     { path: "charge_amount", autoCents: true },
     { path: "total_amount", autoCents: true },
@@ -177,11 +200,14 @@ export function normalizeHubla(raw: any): NormalizedEvent[] {
   const net = firstMoney(object, [
     { path: "net_amount", autoCents: true },
     { path: "net", autoCents: true },
+    { path: "netCents", cents: true },
+    { path: "amount.netCents", cents: true },
     { path: "amount_received", cents: true },
     { path: "amount_paid", cents: true },
+    { path: "amount.totalCents", cents: true },
   ]) || total;
 
-  if (type === "purchase.approved" && total <= 0) {
+  if (type === "purchase.approved" && total <= 0 && !isInvoiceCreated) {
     return [];
   }
 
@@ -190,8 +216,12 @@ export function normalizeHubla(raw: any): NormalizedEvent[] {
     object.paid_at,
     object.approved_at,
     object.approved_date,
+    object.saleDate,
+    object.sale_date,
     object.created_at,
+    object.createdAt,
     object.created,
+    object.modifiedAt,
     eventRecord.created_at,
     eventRecord.created,
     root.created_at,
@@ -216,55 +246,101 @@ export function normalizeHubla(raw: any): NormalizedEvent[] {
   const transactionId = stripOfferSuffix(originalExternalId);
   const isOfferEvent = isOfferExternalId(originalExternalId) || Boolean(object.is_offer || object.offer_id || object.parent_transaction_id);
 
-  let normalizedItems = items;
-  if (isOfferEvent && normalizedItems.length === 0) {
-    normalizedItems = [{
-      external_id: originalExternalId,
-      name: firstString([object.description, object.name, object.title, originalExternalId]),
-      price: total,
-      type: "orderbump",
-      is_bump: true,
-    }];
-  }
-
   const checkout = asRecord(object.checkout ?? eventRecord.checkout);
   const metadata = asRecord(object.metadata ?? eventRecord.metadata);
   const tracking = asRecord(object.tracking ?? eventRecord.tracking);
+  const paymentSession = asRecord(object.paymentSession ?? object.payment_session);
+  const paymentSessionUtm = asRecord(paymentSession.utm);
+  const paymentSessionParams = asRecord(paymentSession.params);
   const customer = asRecord(object.customer);
-  const product = asRecord(object.product);
+  const payer = asRecord(object.payer);
+  const user = asRecord(eventRecord.user);
+  const product = firstRecord([
+    object.product,
+    eventRecord.product,
+    firstArray([eventRecord.products])[0],
+  ]);
   const utm = extractUtmParams({
+    ...paymentSessionParams,
+    ...paymentSessionUtm,
     ...metadata,
     ...checkout,
     ...tracking,
+    ...paymentSession,
     ...object,
     ...eventRecord,
   });
 
-  return [{
-    event_type: type,
-    event_date: eventDate,
-    external_id: originalExternalId,
-    payload: {
-      raw_event: eventType,
-      total,
-      net,
-      payment_method: firstString([
-        object.payment_method,
-        getPath(object, "payment_method_details.type"),
-        Array.isArray(object.payment_method_types) ? object.payment_method_types[0] : null,
-        object.method,
-        object.billing_reason,
-      ]).toLowerCase(),
-      buyer_email: firstString([object.customer_email, customer.email, object.email]) || null,
-      product_id: firstString([object.product_id, product.id, getPath(object, "plan.product")]),
-      items: normalizedItems,
-      is_front: !isOfferEvent && !object.is_upsell && !object.upsell_id,
-      transaction_id: transactionId,
-      is_offer_event: isOfferEvent,
-      raw_payload: raw,
-      ...utm,
-    },
-  }];
+  let normalizedItems = items.length > 0
+    ? items
+    : normalizeHublaProductItems(eventRecord, total);
+  if (isOfferEvent) {
+    normalizedItems = normalizedItems.length > 0
+      ? normalizedItems.map((item) => ({
+        ...item,
+        price: item.price > 0 ? item.price : total,
+        type: String(item.type ?? "").toLowerCase().includes("upsell") ? "upsell" : "orderbump",
+        is_bump: true,
+      }))
+      : [{
+        external_id: originalExternalId,
+        name: firstString([object.description, object.name, object.title, product.name, originalExternalId]),
+        price: total,
+        type: "orderbump",
+        is_bump: true,
+      }];
+  }
+
+  const payload = {
+    raw_event: eventType,
+    status: status || null,
+    total,
+    net,
+    payment_method: firstString([
+      object.payment_method,
+      object.paymentMethod,
+      getPath(object, "payment_method_details.type"),
+      Array.isArray(object.payment_method_types) ? object.payment_method_types[0] : null,
+      object.method,
+      object.billing_reason,
+    ]).toLowerCase(),
+    buyer_email: firstString([object.customer_email, customer.email, payer.email, object.email, user.email]) || null,
+    product_id: firstString([object.product_id, product.id, getPath(object, "plan.product")]),
+    items: normalizedItems,
+    is_front: !isOfferEvent && !object.is_upsell && !object.upsell_id,
+    transaction_id: transactionId,
+    is_offer_event: isOfferEvent,
+    raw_payload: raw,
+    ...utm,
+  };
+
+  const events: NormalizedEvent[] = [];
+  if (isInvoiceCreated) {
+    events.push({
+      event_type: "checkout_created",
+      event_date: eventDate,
+      external_id: originalExternalId,
+      payload,
+    });
+  }
+
+  if (type !== "checkout_created" && (type !== "purchase.approved" || total > 0)) {
+    events.push({
+      event_type: type,
+      event_date: eventDate,
+      external_id: originalExternalId,
+      payload,
+    });
+  } else if (type === "checkout_created" && !isInvoiceCreated) {
+    events.push({
+      event_type: type,
+      event_date: eventDate,
+      external_id: originalExternalId,
+      payload,
+    });
+  }
+
+  return events;
 }
 
 function normalizeKiwify(raw: any): NormalizedEvent[] {
@@ -377,8 +453,33 @@ function normalizeHublaItems(invoice: Record<string, any>) {
         { path: "unit_amount", cents: true },
         { path: "price.unit_amount", cents: true },
       ]),
-      type: isBump ? "orderbump" : "main",
+      type: isBump ? (itemType.includes("upsell") ? "upsell" : "orderbump") : "main",
       is_bump: isBump,
+    };
+  });
+}
+
+function normalizeHublaProductItems(eventRecord: Record<string, any>, fallbackPrice: number) {
+  const products = firstArray([
+    eventRecord.products,
+    eventRecord.product ? [eventRecord.product] : null,
+  ]);
+
+  return products.map((product: any, index: number) => {
+    const productRecord = asRecord(product);
+    const productId = firstString([productRecord.id, productRecord.product_id, `product-${index + 1}`]);
+    return {
+      external_id: productId,
+      name: firstString([productRecord.name, productRecord.title, productId]),
+      price: firstMoney(productRecord, [
+        { path: "amount", autoCents: true },
+        { path: "amountCents", cents: true },
+        { path: "price", autoCents: true },
+        { path: "priceCents", cents: true },
+        { path: "value", autoCents: true },
+      ]) || (index === 0 ? fallbackPrice : 0),
+      type: "main",
+      is_bump: false,
     };
   });
 }

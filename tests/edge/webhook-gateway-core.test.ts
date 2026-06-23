@@ -49,6 +49,82 @@ describe("webhook gateway core", () => {
     expect(refunded[0]?.payload.total).toBeCloseTo(197);
   });
 
+  it("normalizes Hubla v2 invoice.created already paid as checkout and approved purchase", () => {
+    const raw = {
+      type: "invoice.created",
+      version: "2.0.0",
+      event: {
+        user: { email: "buyer@example.com" },
+        invoice: {
+          id: "c26d37e2-aa2e-46bb-8735-91819b9c5b6b",
+          type: "sell",
+          amount: {
+            totalCents: 36216,
+            subtotalCents: 29700,
+            installmentFeeCents: 6516,
+          },
+          status: "paid",
+          saleDate: "2026-06-22T21:26:10.300Z",
+          createdAt: "2026-06-22T21:26:10.300Z",
+          paymentMethod: "credit_card",
+          payer: { email: "payer@example.com" },
+          paymentSession: {
+            utm: {
+              source: "FB",
+              campaign: "[DENISE] [VENDAS]",
+              medium: "Instagram",
+              content: "AD06",
+              term: "Feed",
+            },
+          },
+        },
+        product: { id: "3KYffvGtV3QwRXXnwtyx", name: "Produto Denise" },
+        products: [{ id: "3KYffvGtV3QwRXXnwtyx", name: "Produto Denise" }],
+      },
+    };
+
+    const events = normalizeHubla(raw);
+
+    expect(events.map((event) => event.event_type)).toEqual(["checkout_created", "purchase.approved"]);
+    const approved = events.find((event) => event.event_type === "purchase.approved");
+    expect(approved?.event_date).toBe("2026-06-22");
+    expect(approved?.external_id).toBe("c26d37e2-aa2e-46bb-8735-91819b9c5b6b");
+    expect(approved?.payload.total).toBeCloseTo(362.16);
+    expect(approved?.payload.net).toBeCloseTo(362.16);
+    expect(approved?.payload.payment_method).toBe("credit_card");
+    expect(approved?.payload.buyer_email).toBe("payer@example.com");
+    expect(approved?.payload.product_id).toBe("3KYffvGtV3QwRXXnwtyx");
+    expect(approved?.payload.items).toEqual([
+      expect.objectContaining({
+        external_id: "3KYffvGtV3QwRXXnwtyx",
+        name: "Produto Denise",
+        price: 362.16,
+        is_bump: false,
+      }),
+    ]);
+    expect(approved?.payload.utm_source).toBe("fb");
+    expect(approved?.payload.utm_content).toBe("ad06");
+    expect(approved?.payload.raw_payload).toBe(raw);
+  });
+
+  it("keeps Hubla v2 unpaid invoice.created as checkout only", () => {
+    const events = normalizeHubla({
+      type: "invoice.created",
+      event: {
+        invoice: {
+          id: "unpaid-invoice",
+          status: "unpaid",
+          amount: { totalCents: 19700 },
+          createdAt: "2026-06-22T21:26:10.300Z",
+        },
+      },
+    });
+
+    expect(events).toHaveLength(1);
+    expect(events[0].event_type).toBe("checkout_created");
+    expect(events[0].payload.total).toBeCloseTo(197);
+   });
+
   it("marks offer suffix events as order bump items without changing the upsert id", () => {
     const [event] = normalizeHubla({
       type: "invoice.payment_succeeded",

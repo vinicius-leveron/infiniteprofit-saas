@@ -40,6 +40,9 @@ export function hublaSheetsToCsv(sheets: HublaSheet[]) {
   if (rows.length === 0) {
     throw new Error("XLSX vazio ou sem linhas reconhecíveis");
   }
+  if (rows.length < 2) {
+    throw new Error("XLSX Hubla sem linhas de venda. Exporte faturas/vendas com pelo menos uma linha além do cabeçalho.");
+  }
 
   return {
     sheetName: sheet.sheet,

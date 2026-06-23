@@ -24,18 +24,21 @@ test.describe("authenticated launch smoke", () => {
     await page.goto(`/diagnostics?project=${qaProjectId}`);
     await expect(page.getByText("Diagnóstico", { exact: false })).toBeVisible();
     await expect(page.getByRole("button", { name: /Atualizar alertas/i })).toBeVisible();
-    await expect(page.getByText(/Meta|VTurb|Hubla/)).toBeVisible();
+    await expect(page.getByText("Meta", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("VTurb", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("Hubla", { exact: true }).first()).toBeVisible();
 
     await page.goto(`/dashboard?project=${qaProjectId}`);
     await expect(page.getByText(/Visão Geral|Visao Geral/)).toBeVisible();
     await expect(page.getByText(/Anúncios|Anuncios/)).toBeVisible();
-    await expect(page.getByText(/Atribuição|Atribuicao/)).toBeVisible();
-    await expect(page.getByText("Relatório")).toBeVisible();
+    await expect(page.getByText("Funil VSL")).toBeVisible();
+    await expect(page.getByText("Bumps & Upsell")).toBeVisible();
+    await expect(page.getByText("Simulador")).toBeVisible();
 
     await page.goto(`/connections?project=${qaProjectId}`);
     await expect(page.getByText("Conexões", { exact: false })).toBeVisible();
     await expect(page.getByText("Meta Ads")).toBeVisible();
     await expect(page.getByText("VTurb")).toBeVisible();
-    await expect(page.getByText(/Gateway de Pagamento|Compartilhamento/)).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Gateway de Pagamento" })).toBeVisible();
   });
 });

@@ -25,6 +25,7 @@ describe("dashboard coverage contract", () => {
     const metaRows = rows.filter((row) => row.group === "Tráfego Meta");
     expect(metaRows).toHaveLength(2);
     expect(metaRows.every((row) => row.status === "Parcial")).toBe(true);
+    expect(metaRows[0].nextAction).toContain("aggregate-daily");
   });
 
   it("marks real source and filled daily metrics as OK when KPI is not inherently partial", () => {
@@ -45,6 +46,7 @@ describe("dashboard coverage contract", () => {
 
     const metaRows = rows.filter((row) => row.group === "Tráfego Meta");
     expect(metaRows.every((row) => row.status === "OK")).toBe(true);
+    expect(metaRows.every((row) => row.nextAction === "Nenhuma ação necessária.")).toBe(true);
   });
 
   it("keeps VTurb and cross-source funnel KPIs partial even when filled", () => {

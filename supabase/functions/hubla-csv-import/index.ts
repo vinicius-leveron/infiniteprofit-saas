@@ -46,10 +46,18 @@ Deno.serve(async (req) => {
     } catch (error) {
       return json({ error: error instanceof Error ? error.message : "CSV inválido" }, 400);
     }
-    const { events, warnings, dataRows } = parsedCsv;
+    const { events, warnings, dataRows, headers } = parsedCsv;
 
     if (events.length === 0) {
-      return json({ ok: true, dry_run: dryRun, imported: 0, skipped: dataRows, warnings: warnings.slice(0, 50), dates: [] });
+      return json({
+        ok: true,
+        dry_run: dryRun,
+        imported: 0,
+        skipped: dataRows,
+        headers,
+        warnings: warnings.slice(0, 50),
+        dates: [],
+      });
     }
 
     const datesTouched = [...new Set(events.map((event) => event.event_date))].sort();
@@ -84,6 +92,7 @@ Deno.serve(async (req) => {
       dry_run: dryRun,
       imported: events.length,
       skipped: Math.max(0, dataRows - events.length),
+      headers,
       dates: datesTouched,
       warnings: warnings.slice(0, 50),
       preview: events.slice(0, 5).map((event) => ({

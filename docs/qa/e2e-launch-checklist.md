@@ -29,6 +29,8 @@ Sem essas variaveis, os testes rodam apenas os fluxos publicos e pulam os fluxos
 npm run build
 npm run lint
 npm test
+npm run qa:data
+npm run qa:dashboard
 npm run audit:coverage -- c4f027b4-f867-4d7f-a522-dfb272c33104
 npm run e2e:install
 npm run e2e
@@ -37,8 +39,24 @@ npm run e2e
 Para testar producao:
 
 ```bash
+npm run qa:prod:data
 npm run qa:prod
 ```
+
+Para release bloqueante:
+
+```bash
+npm run qa:release
+```
+
+O `qa:dashboard` exige `E2E_EMAIL`, `E2E_PASSWORD` e `E2E_PROJECT_ID`. Use `QA_ALLOW_SKIPPED_E2E=1` apenas para smoke local, nunca para liberar produção.
+
+O `qa:prod:data` audita os projetos Denise por padrão:
+
+- `2ec7d87c-fbe5-4006-8d82-b73e24d18480` (`Perpétuo - Dra Denise`)
+- `edcf2417-99af-460f-865c-f685bb4eca96` (`Perpétuo Denise`)
+
+Para outros projetos, use `QA_PROJECT_IDS=id1,id2 npm run qa:prod:data`. Para reprocessar explicitamente as datas com raw events sem agregado, use `QA_REPROCESS=1` com `SUPABASE_URL` e `QA_AUTOMATION_KEY` configurados.
 
 ## Roteiro Manual
 
@@ -189,6 +207,13 @@ Aceite:
 
 ## Bloqueadores Antes De Mercado
 
+- `qa:data`, `qa:dashboard`, `qa:prod:data` ou `qa:release` retornando blocker.
+- Qualquer raw event Meta/VTurb/Hubla sem linha correspondente em `daily_metrics` após reprocessamento.
+- Import Hubla com `0` eventos reconhecidos exibindo sucesso ou fechando modal.
+- Dashboard mensal mostrando apenas um dia quando existem raw events em mais datas.
+- Filtro de período, data customizada ou conta Meta resetando depois de reload.
+- Diagnóstico exibindo cobertura parcial/faltando sem ação recomendada.
+- Job de criativo em `running` durante QA de dados.
 - Validar VTurb com player que tenha trafego real; os players atuais retornaram quase tudo zero.
 - Resolver alerta real `Sync meta falhou` no Projeto Yasmin antes de demo comercial.
 - Definir cron automatico para `generate-alerts`.

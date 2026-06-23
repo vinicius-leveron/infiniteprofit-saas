@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { parseHublaCsv } from "../../supabase/functions/hubla-csv-import/core";
 
 describe("hubla csv import core", () => {
@@ -115,6 +116,29 @@ describe("hubla csv import core", () => {
     expect(result.events[0].payload.items[1].price).toBeCloseTo(44.42);
   });
 
+  it("parses the versioned Hubla QA fixture without false positives", () => {
+    const csv = readFileSync("tests/fixtures/hubla-official-export.csv", "utf8");
+
+    const result = parseHublaCsv(csv);
+
+    expect(result.headers).toContain("id_da_fatura");
+    expect(result.warnings).toEqual([]);
+    expect(result.dataRows).toBe(4);
+    expect(result.events.map((event) => event.event_type)).toEqual([
+      "purchase.approved",
+      "purchase.refused",
+      "purchase.refunded",
+      "purchase.approved",
+    ]);
+    expect(result.events[0].payload.items).toEqual([
+      expect.objectContaining({ type: "main", is_bump: false }),
+      expect.objectContaining({ type: "orderbump", is_bump: true }),
+    ]);
+    expect(result.events[3].payload.items).toEqual([
+      expect.objectContaining({ type: "upsell", is_bump: true }),
+    ]);
+  });
+
   it("parses refused and refunded rows without requiring an approved status", () => {
     const csv = [
       "transaction,status,amount,created_at",
@@ -141,6 +165,20 @@ describe("hubla csv import core", () => {
 
     const result = parseHublaCsv(csv);
 
+    expect(result.events).toEqual([]);
+    expect(result.warnings[0]).toContain("status não reconhecido");
+  });
+
+  it("reports zero recognized events for dashboard spreadsheets instead of importing fake sales", () => {
+    const csv = [
+      "Data;Investimento;Cliques;Faturamento líquido",
+      "01/06/2026;R$ 100,00;20;R$ 500,00",
+    ].join("\n");
+
+    const result = parseHublaCsv(csv);
+
+    expect(result.dataRows).toBe(1);
+    expect(result.headers).toEqual(["data", "investimento", "cliques", "faturamento_liquido"]);
     expect(result.events).toEqual([]);
     expect(result.warnings[0]).toContain("status não reconhecido");
   });

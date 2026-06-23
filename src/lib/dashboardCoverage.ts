@@ -15,6 +15,7 @@ export interface CoverageRow {
   metricFilled: number;
   status: CoverageStatus;
   reason: string;
+  nextAction: string;
 }
 
 interface CoverageDef {
@@ -116,6 +117,7 @@ export function buildCoverageRows(input: CoverageInput): CoverageRow[] {
       metricFilled,
       status,
       reason: buildReason(status, rawFound, metricFilled, def),
+      nextAction: buildNextAction(status, rawFound, metricFilled, def),
     };
   });
 }
@@ -156,4 +158,21 @@ function buildReason(status: CoverageStatus, rawFound: number, metricFilled: num
   }
   if (def.partialReason) return def.partialReason;
   return `Fonte real encontrada e ${metricFilled} preenchimento(s) em daily_metrics.`;
+}
+
+function buildNextAction(status: CoverageStatus, rawFound: number, metricFilled: number, def: CoverageDef) {
+  if (status === "OK") return "Nenhuma ação necessária.";
+  if (rawFound > 0 && metricFilled === 0) {
+    return "Reprocessar aggregate-daily para as datas com raw_events desta fonte.";
+  }
+  if (def.source.includes("Meta")) {
+    return "Verificar conta Meta vinculada, token ads_read e rodar Sincronizar Meta.";
+  }
+  if (def.source.includes("VTurb")) {
+    return "Verificar players VTurb vinculados, API key e rodar Sincronizar VTurb.";
+  }
+  if (def.source.includes("Hubla")) {
+    return "Conferir webhook Hubla ou importar export de faturas/vendas da Hubla.";
+  }
+  return "Conferir se todas as fontes do dia têm raw_events e daily_metrics preenchidos.";
 }

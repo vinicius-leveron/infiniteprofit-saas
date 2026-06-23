@@ -22,6 +22,7 @@ import { SheetSyncDialog } from "@/components/SheetSyncDialog";
 import { parseCsv, type DailyRow } from "@/lib/csv";
 import { dailyMetricsToDailyRows, type DailyMetricsRow } from "@/lib/dailyMetrics";
 import { readStoredDashboardFilters, writeStoredDashboardFilters } from "@/lib/dashboardFilters";
+import { getDashboardPeriodRows } from "@/lib/dashboardRows";
 import { applyMetaAccountFilter } from "@/lib/metaAccountFilter";
 import {
   Select,
@@ -357,43 +358,7 @@ const Index = () => {
 
   const { current: filtered, previous } = useMemo(() => {
     if (!rows) return { current: [] as DailyRow[], previous: [] as DailyRow[] };
-
-    const active = rows.filter(
-      (r) =>
-        r.date &&
-        ((r.investimento ?? 0) > 0 ||
-          (r.vendasTotais ?? 0) > 0 ||
-          (r.fatLiquido ?? 0) > 0),
-    );
-
-    if (period === "all") {
-      return { current: active, previous: [] };
-    }
-    if (period === "custom") {
-      const from = customFrom ? new Date(customFrom) : null;
-      const to = customTo ? new Date(customTo) : null;
-      const cur = active.filter((r) => {
-        if (!r.date) return false;
-        if (from && r.date < from) return false;
-        if (to && r.date > to) return false;
-        return true;
-      });
-      let prev: DailyRow[] = [];
-      if (from && to) {
-        const dur = to.getTime() - from.getTime();
-        const prevTo = new Date(from.getTime() - 24 * 60 * 60 * 1000);
-        const prevFrom = new Date(prevTo.getTime() - dur);
-        prev = active.filter((r) => r.date && r.date >= prevFrom && r.date <= prevTo);
-      } else if (cur.length) {
-        const firstIdx = active.findIndex((r) => r === cur[0]);
-        prev = firstIdx > 0 ? active.slice(Math.max(0, firstIdx - cur.length), firstIdx) : [];
-      }
-      return { current: cur, previous: prev };
-    }
-    const n = period === "7d" ? 7 : period === "15d" ? 15 : 30;
-    const cur = active.slice(-n);
-    const prev = active.slice(Math.max(0, active.length - n * 2), active.length - n);
-    return { current: cur, previous: prev };
+    return getDashboardPeriodRows(rows, period, customFrom, customTo);
   }, [rows, period, customFrom, customTo]);
 
   // (Os totais para Insights da IA agora são calculados dentro do DiagnosticsPanel)
