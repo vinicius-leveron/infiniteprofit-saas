@@ -12,14 +12,16 @@ const projectIds = (process.env.QA_PROJECT_IDS ?? DEFAULT_DENISE_PROJECTS.join("
   .map((value) => value.trim())
   .filter(Boolean);
 const shouldReprocess = process.argv.includes("--reprocess") || process.env.QA_REPROCESS === "1";
+const forcedReprocessDates = parseDateList(process.env.QA_REPROCESS_DATES ?? "");
 const results = [];
 const projects = [];
 
 for (const projectId of projectIds) {
   try {
     const summary = await auditProject(projectId);
-    if (shouldReprocess && summary.missingDailyDates.length > 0) {
-      await reprocessProjectDates(projectId, summary.missingDailyDates);
+    const reprocessDates = forcedReprocessDates.length > 0 ? forcedReprocessDates : summary.missingDailyDates;
+    if (shouldReprocess && reprocessDates.length > 0) {
+      await reprocessProjectDates(projectId, reprocessDates);
       summary.afterReprocess = await auditProject(projectId);
     }
     projects.push(summary);
@@ -72,6 +74,7 @@ writeQaReport("qa-prod-data.json", {
   gate: "qa:prod:data",
   generatedAt: new Date().toISOString(),
   reprocess: shouldReprocess,
+  reprocessDates: forcedReprocessDates,
   projectIds,
   projects,
   results,
@@ -319,4 +322,29 @@ function sqlMetricLiteral(value, column) {
   const numberValue = Number(value);
   if (!Number.isFinite(numberValue)) return "null";
   return String(numberValue);
+}
+
+function parseDateList(value) {
+  if (!value.trim()) return [];
+  return [...new Set(value
+    .split(",")
+    .flatMap((part) => expandDatePart(part.trim()))
+    .filter(Boolean))]
+    .sort();
+}
+
+function expandDatePart(value) {
+  if (!value) return [];
+  const rangeMatch = value.match(/^(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})$/);
+  if (!rangeMatch) return /^\d{4}-\d{2}-\d{2}$/.test(value) ? [value] : [];
+
+  const [, start, end] = rangeMatch;
+  const dates = [];
+  const cursor = new Date(`${start}T00:00:00.000Z`);
+  const endDate = new Date(`${end}T00:00:00.000Z`);
+  while (cursor <= endDate) {
+    dates.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return dates;
 }

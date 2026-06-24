@@ -67,6 +67,28 @@ describe("webhook gateway core", () => {
     expect(event.payload.total).toBeCloseTo(197);
   });
 
+  it("uses Hubla seller receiver total as net revenue", () => {
+    const [event] = normalizeHubla({
+      type: "invoice.payment_succeeded",
+      event: {
+        invoice: {
+          id: "fat-liquid",
+          status: "paid",
+          amount: { totalCents: 29700 },
+          receivers: [
+            { role: "platform", totalCents: 1730 },
+            { role: "seller", totalCents: 27970 },
+          ],
+          saleDate: "2026-06-23T12:00:00.000Z",
+        },
+      },
+    });
+
+    expect(event.event_type).toBe("purchase.approved");
+    expect(event.payload.total).toBeCloseTo(297);
+    expect(event.payload.net).toBeCloseTo(279.7);
+  });
+
   it("normalizes Hubla v2 invoice.created already paid as checkout and approved purchase", () => {
     const raw = {
       type: "invoice.created",
@@ -81,6 +103,10 @@ describe("webhook gateway core", () => {
             subtotalCents: 29700,
             installmentFeeCents: 6516,
           },
+          receivers: [
+            { role: "platform", totalCents: 7020 },
+            { role: "seller", totalCents: 29196 },
+          ],
           status: "paid",
           saleDate: "2026-06-22T21:26:10.300Z",
           createdAt: "2026-06-22T21:26:10.300Z",
@@ -108,7 +134,7 @@ describe("webhook gateway core", () => {
     expect(approved?.event_date).toBe("2026-06-22");
     expect(approved?.external_id).toBe("c26d37e2-aa2e-46bb-8735-91819b9c5b6b");
     expect(approved?.payload.total).toBeCloseTo(362.16);
-    expect(approved?.payload.net).toBeCloseTo(362.16);
+    expect(approved?.payload.net).toBeCloseTo(291.96);
     expect(approved?.payload.payment_method).toBe("credit_card");
     expect(approved?.payload.buyer_email).toBe("payer@example.com");
     expect(approved?.payload.product_id).toBe("3KYffvGtV3QwRXXnwtyx");

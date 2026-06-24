@@ -166,6 +166,34 @@ describe("aggregate daily core", () => {
     expect(metrics.fat_front).toBe(197);
   });
 
+  it("uses Hubla seller receiver total from raw payload as net revenue", () => {
+    const metrics = aggregateOneDay([
+      {
+        source: "gateway",
+        event_type: "purchase.approved",
+        external_id: "tx-liquid",
+        payload: {
+          total: 297,
+          net: 297,
+          is_front: true,
+          raw_payload: {
+            event: {
+              invoice: {
+                receivers: [
+                  { role: "platform", totalCents: 1730 },
+                  { role: "seller", totalCents: 27970 },
+                ],
+              },
+            },
+          },
+        },
+      },
+    ]);
+
+    expect(metrics.fat_bruto).toBeCloseTo(297);
+    expect(metrics.fat_liquido).toBeCloseTo(279.7);
+  });
+
   it("does not double count Hubla child invoices already included in the main invoice", () => {
     const metrics = aggregateOneDay([
       {

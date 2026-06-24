@@ -202,15 +202,14 @@ export function normalizeHubla(raw: any): NormalizedEvent[] {
     { path: "plan.amount", cents: true },
   ]) || sumItemPrices(items);
 
-  const net = firstMoney(object, [
+  const explicitNet = firstMoney(object, [
     { path: "net_amount", autoCents: true },
     { path: "net", autoCents: true },
     { path: "netCents", cents: true },
     { path: "amount.netCents", cents: true },
-    { path: "amount_received", cents: true },
-    { path: "amount_paid", cents: true },
-    { path: "amount.totalCents", cents: true },
-  ]) || total;
+  ]);
+  const sellerNet = sellerReceiverTotal(object);
+  const net = explicitNet || sellerNet || total;
 
   if (type === "purchase.approved" && total <= 0 && !isInvoiceCreated) {
     return [];
@@ -585,6 +584,24 @@ function parseNumber(value: any) {
 
 function sumItemPrices(items: Array<{ price: number }>) {
   return items.reduce((sum, item) => sum + num(item.price), 0);
+}
+
+function sellerReceiverTotal(invoice: Record<string, any>) {
+  const receivers = firstArray([invoice.receivers, getPath(invoice, "payment.receivers")]);
+  return receivers.reduce((sum, receiver) => {
+    const record = asRecord(receiver);
+    const role = firstString([record.role, record.type, record.kind]).toLowerCase();
+    if (role && !["seller", "producer", "merchant"].includes(role)) return sum;
+    if (role === "platform" || role === "affiliate" || role === "coproducer") return sum;
+    return sum + firstMoney(record, [
+      { path: "netCents", cents: true },
+      { path: "net_amount", autoCents: true },
+      { path: "totalCents", cents: true },
+      { path: "total", autoCents: true },
+      { path: "amountCents", cents: true },
+      { path: "amount", autoCents: true },
+    ]);
+  }, 0);
 }
 
 function firstArray(values: unknown[]) {

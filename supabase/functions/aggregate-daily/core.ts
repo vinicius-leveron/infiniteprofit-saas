@@ -360,7 +360,7 @@ function purchaseGroupRevenue(group: RawEvent[]) {
     .filter((value) => value > 0);
   const mainNets = group
     .filter((event) => !isOfferEvent(event))
-    .map((event) => num(event.payload?.net ?? event.payload?.total))
+    .map(eventNet)
     .filter((value) => value > 0);
   const mainHasBumpItems = group.some((event) =>
     !isOfferEvent(event)
@@ -377,12 +377,12 @@ function purchaseGroupRevenue(group: RawEvent[]) {
     ? 0
     : group
       .filter((event) => isOfferEvent(event) && !isDuplicateMainOffer(event, group))
-      .reduce((sum, event) => sum + num(event.payload?.net ?? event.payload?.total), 0);
+      .reduce((sum, event) => sum + eventNet(event), 0);
 
   const mainTotal = mainTotals.length > 0 ? Math.max(...mainTotals) : 0;
   const mainNet = mainNets.length > 0 ? Math.max(...mainNets) : mainTotal;
   const fallbackTotal = group.reduce((sum, event) => sum + num(event.payload?.total), 0);
-  const fallbackNet = group.reduce((sum, event) => sum + num(event.payload?.net ?? event.payload?.total), 0);
+  const fallbackNet = group.reduce((sum, event) => sum + eventNet(event), 0);
 
   if (mainTotal > 0) {
     return {
@@ -397,6 +397,40 @@ function purchaseGroupRevenue(group: RawEvent[]) {
     total: fallbackTotal,
     net: fallbackNet > 0 ? fallbackNet : fallbackTotal,
   };
+}
+
+function eventNet(event: RawEvent) {
+  const payloadNet = num(event.payload?.net);
+  const payloadTotal = num(event.payload?.total);
+  const sellerNet = sellerReceiverTotal(event.payload?.raw_payload ?? {});
+  if (sellerNet > 0 && (!payloadNet || Math.abs(payloadNet - payloadTotal) < 0.0001)) return sellerNet;
+  return payloadNet > 0 ? payloadNet : payloadTotal;
+}
+
+function sellerReceiverTotal(rawPayload: Record<string, any>) {
+  const receivers = firstArray([
+    getPath(rawPayload, "event.invoice.receivers"),
+    getPath(rawPayload, "data.object.receivers"),
+    getPath(rawPayload, "invoice.receivers"),
+    rawPayload.receivers,
+  ]);
+  return receivers.reduce((sum, receiver) => {
+    if (!receiver || typeof receiver !== "object") return sum;
+    const record = receiver as Record<string, unknown>;
+    const role = String(record.role ?? record.type ?? record.kind ?? "").toLowerCase();
+    if (role && !["seller", "producer", "merchant"].includes(role)) return sum;
+    if (role === "platform" || role === "affiliate" || role === "coproducer") return sum;
+    const cents = firstNumber(record, ["netCents", "totalCents", "amountCents"]);
+    if (cents > 0) return sum + cents / 100;
+    return sum + firstNumber(record, ["net_amount", "total", "amount"]);
+  }, 0);
+}
+
+function firstArray(values: unknown[]) {
+  for (const value of values) {
+    if (Array.isArray(value)) return value;
+  }
+  return [];
 }
 
 function purchaseGroupIsFront(group: RawEvent[], frontIdentity: ProductIdentity | null = null) {
