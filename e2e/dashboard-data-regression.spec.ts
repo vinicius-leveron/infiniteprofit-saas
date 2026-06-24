@@ -41,8 +41,8 @@ test.describe("dashboard data regression", () => {
 
     await page.goto(`/connections?project=${qaProjectId}`);
     await expect(page.getByRole("heading", { name: /Conexões/i })).toBeVisible();
-    await expect(page.getByText("Meta Ads")).toBeVisible();
-    await expect(page.getByText("VTurb")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Meta Ads" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "VTurb" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Gateway de Pagamento" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Importar CSV/XLSX Hubla" })).toBeVisible();
   });
