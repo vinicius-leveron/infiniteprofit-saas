@@ -115,7 +115,7 @@ async function auditProject(projectId) {
   `).map((row) => row.event_date);
   const missingDailyDates = rawDates.filter((date) => !dailyDates.includes(date));
   const juneRows = runSql(`
-    select event_date::text as event_date, investimento, cliques, landing_pageviews, taxa_carreg,
+    select event_date::text as event_date, investimento, imposto_meta, cliques, landing_pageviews, taxa_carreg,
       pageviews, views_unicas, chegaram_pitch, checkouts, vendas_totais, fat_bruto, fat_liquido, reembolsos
     from public.daily_metrics
     where project_id = ${sqlString(projectId)}
@@ -215,6 +215,7 @@ async function reprocessProjectDatesViaSql(projectId, dates) {
 
   const metricColumns = [
     "investimento",
+    "imposto_meta",
     "impressoes",
     "cliques",
     "landing_pageviews",

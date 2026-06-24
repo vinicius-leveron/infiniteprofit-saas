@@ -15,7 +15,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { fBRL, fNum, fPct, fMult, computeTotals } from "@/lib/metrics";
+import { fBRL, fNum, fPct, fMult, computeTotals, META_TAX_RATE } from "@/lib/metrics";
 import type { DailyRow } from "@/lib/csv";
 import { supabase } from "@/integrations/supabase/client";
 import { useWorkspace } from "@/hooks/useWorkspace";
@@ -67,6 +67,7 @@ interface SimResult {
   fatBump: number;
   fatUpsell: number;
   fatLiquido: number;
+  impostoMeta: number;
   lucro: number;
   roi: number | null;
   cac: number | null;
@@ -100,12 +101,13 @@ function runSim(i: SimInputs): SimResult {
   const fatBump = vendasBump * i.ticketBump;
   const fatUpsell = vendasUpsell * i.ticketUpsell;
   const fatLiquido = fatFront + fatBump + fatUpsell;
-  const lucro = fatLiquido - i.investimento;
+  const impostoMeta = i.investimento * META_TAX_RATE;
+  const lucro = fatLiquido - i.investimento - impostoMeta;
   return {
     cliques, pageviews, plays, pitches, checkouts,
     vendasFront, vendasBump, vendasUpsell, vendasTotais,
-    fatFront, fatBump, fatUpsell, fatLiquido, lucro,
-    roi: i.investimento ? fatLiquido / i.investimento : null,
+    fatFront, fatBump, fatUpsell, fatLiquido, impostoMeta, lucro,
+    roi: i.investimento ? (fatLiquido - impostoMeta) / i.investimento : null,
     cac: vendasTotais ? i.investimento / vendasTotais : null,
     aov: vendasFront ? fatLiquido / vendasFront : null,
     cpm: i.impressoes ? (i.investimento / i.impressoes) * 1000 : null,
@@ -417,6 +419,7 @@ export const SimulatorPanel = ({ rows }: Props) => {
           <SectionCard title="Resultado simulado" subtitle="Atual → Simulado">
             <div className="space-y-2">
               <ComparisonRow label="Faturamento" base={baseResult.fatLiquido} sim={simResult.fatLiquido} fmt={fBRL} />
+              <ComparisonRow label="Imposto Meta" base={baseResult.impostoMeta} sim={simResult.impostoMeta} fmt={fBRL} invert />
               <ComparisonRow label="Lucro" base={baseResult.lucro} sim={simResult.lucro} fmt={fBRL} highlight />
               <ComparisonRow label="ROI" base={baseResult.roi} sim={simResult.roi} fmt={(v) => fMult(v ?? null)} />
               <ComparisonRow label="CAC" base={baseResult.cac} sim={simResult.cac} fmt={fBRL} invert />
@@ -630,6 +633,10 @@ export const SimulatorPanel = ({ rows }: Props) => {
                 )}>
                   {fBRL(simResult.lucro)}
                 </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Imposto Meta</span>
+                <span className="font-semibold tabular-nums">{fBRL(simResult.impostoMeta)}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">ROI</span>

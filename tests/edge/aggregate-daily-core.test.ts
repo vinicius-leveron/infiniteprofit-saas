@@ -169,6 +169,15 @@ describe("aggregate daily core", () => {
   it("uses Hubla seller receiver total from raw payload as net revenue", () => {
     const metrics = aggregateOneDay([
       {
+        source: "meta",
+        event_type: "insight",
+        payload: {
+          spend: 100,
+          impressions: 1000,
+          actions: [{ action_type: "link_click", value: 100 }],
+        },
+      },
+      {
         source: "gateway",
         event_type: "purchase.approved",
         external_id: "tx-liquid",
@@ -192,6 +201,9 @@ describe("aggregate daily core", () => {
 
     expect(metrics.fat_bruto).toBeCloseTo(297);
     expect(metrics.fat_liquido).toBeCloseTo(279.7);
+    expect(metrics.imposto_meta).toBeCloseTo(12.15);
+    expect(metrics.lucro).toBeCloseTo(167.55);
+    expect(metrics.roi).toBeCloseTo(2.6755);
   });
 
   it("does not double count Hubla child invoices already included in the main invoice", () => {

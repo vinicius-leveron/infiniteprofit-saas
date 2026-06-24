@@ -13,6 +13,7 @@ export interface DailyMetricsRow {
   pitch_chk: number | null; pitch_venda: number | null; chk_venda: number | null;
   vendas_front: number | null; vendas_totais: number | null;
   cpa_front: number | null; cac: number | null; aov: number | null; roi: number | null; lucro: number | null;
+  imposto_meta?: number | null;
   fat_bruto: number | null; fat_liquido: number | null;
   fat_front: number | null; fat_orderbump: number | null; fat_funil: number | null;
   reembolsos: number | null; taxa_reembolso: number | null; valor_reembolsado: number | null;
@@ -71,6 +72,7 @@ export function dailyMetricsToDailyRows(rows: DailyMetricsRow[]): DailyRow[] {
         cpaFront: r.cpa_front,
         fatBruto: r.fat_bruto,
         fatLiquido: r.fat_liquido,
+        impostoMeta: r.imposto_meta ?? null,
         roi: r.roi,
         lucro: r.lucro,
         cac: r.cac,

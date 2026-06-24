@@ -8,6 +8,8 @@ type RawEvent = {
   payload: any;
 };
 
+const META_TAX_RATE = 0.1215;
+
 export function aggregateOneDay(events: RawEvent[]) {
   const hasSessionStatsByDay = events.some((event) =>
     event.source === "vturb"
@@ -221,8 +223,9 @@ export function aggregateOneDay(events: RawEvent[]) {
   const cpaFront = vendasFront > 0 ? investimento / vendasFront : null;
   const cac = vendasTotais > 0 ? investimento / vendasTotais : null;
   const aov = vendasTotais > 0 ? fatBruto / vendasTotais : null;
-  const lucro = fatLiquido - investimento;
-  const roi = investimento > 0 ? lucro / investimento : null;
+  const impostoMeta = investimento * META_TAX_RATE;
+  const lucro = fatLiquido - investimento - impostoMeta;
+  const roi = investimento > 0 ? (fatLiquido - impostoMeta) / investimento : null;
   const taxaReembolso = vendasTotais > 0 ? (reembolsos / vendasTotais) * 100 : null;
   const aprovCartao = cardTotal > 0 ? (cardApproved / cardTotal) * 100 : null;
   const aprovPix = pixTotal > 0 ? (pixApproved / pixTotal) * 100 : null;
@@ -266,6 +269,7 @@ export function aggregateOneDay(events: RawEvent[]) {
     aov,
     roi,
     lucro: orNull(lucro),
+    imposto_meta: orNull(impostoMeta),
     fat_bruto: orNull(fatBruto),
     fat_liquido: orNull(fatLiquido),
     fat_front: orNull(fatFront),

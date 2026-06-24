@@ -33,6 +33,7 @@ export interface DailyRow {
   cpaFront: number | null;
   fatBruto: number | null;
   fatLiquido: number | null;
+  impostoMeta: number | null;
   roi: number | null;
   lucro: number | null;
   cac: number | null;
@@ -141,6 +142,8 @@ const HEADER_MAP: Record<string, keyof DailyRow> = {
   "faturamento bruto": "fatBruto",
   "faturamento liquido total do funil taxas e imposto meta": "fatLiquido",
   "faturamento liquido": "fatLiquido",
+  "imposto meta": "impostoMeta",
+  "taxa meta": "impostoMeta",
   "faturamento front": "fatFront",
   "faturamento total orderbump": "fatOrderbump",
   "faturamento total funil": "fatFunil",
@@ -387,6 +390,7 @@ export function parseCsv(text: string): ParsedCsv {
       cpaFront: get("cpaFront"),
       fatBruto: get("fatBruto"),
       fatLiquido: get("fatLiquido"),
+      impostoMeta: get("impostoMeta"),
       roi: get("roi"),
       lucro: get("lucro"),
       cac: get("cac"),

@@ -1,11 +1,12 @@
 import type { DailyRow } from "./csv";
 import { supabase } from "@/integrations/supabase/client";
+import { META_TAX_RATE } from "./metrics";
 
 /**
  * Reagrega métricas Meta por conta e sobrepõe nas linhas do dashboard.
  * Quando uma conta específica é selecionada, mantém vendas/VSL totais
  * e troca apenas: investimento, impressões, cliques no link, LP views, cpm, ctr, cpc,
- * custo_pageview, custo_ic, cpa_front, cac, lucro, roi.
+ * custo_pageview, custo_ic, cpa_front, cac, imposto_meta, lucro, roi.
  */
 export async function applyMetaAccountFilter(
   rows: DailyRow[],
@@ -51,8 +52,9 @@ export async function applyMetaAccountFilter(
     const custoIC = r.checkouts && r.checkouts > 0 ? (investimento ?? 0) / r.checkouts : null;
     const cpaFront = r.vendasFront && r.vendasFront > 0 ? (investimento ?? 0) / r.vendasFront : null;
     const cac = r.vendasTotais && r.vendasTotais > 0 ? (investimento ?? 0) / r.vendasTotais : null;
-    const lucro = (r.fatLiquido ?? 0) - (investimento ?? 0);
-    const roi = investimento && investimento > 0 ? lucro / investimento : null;
+    const impostoMeta = investimento == null ? null : investimento * META_TAX_RATE;
+    const lucro = (r.fatLiquido ?? 0) - (investimento ?? 0) - (impostoMeta ?? 0);
+    const roi = investimento && investimento > 0 ? ((r.fatLiquido ?? 0) - (impostoMeta ?? 0)) / investimento : null;
     return {
       ...r,
       investimento,
@@ -67,6 +69,7 @@ export async function applyMetaAccountFilter(
       custoIC,
       cpaFront,
       cac,
+      impostoMeta,
       lucro,
       roi,
     };

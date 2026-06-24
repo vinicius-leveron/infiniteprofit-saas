@@ -1,5 +1,7 @@
 import type { DailyRow } from "./csv";
 
+export const META_TAX_RATE = 0.1215;
+
 export const fBRL = (v: number | null | undefined) =>
   v == null || isNaN(v as number)
     ? "—"
@@ -26,6 +28,7 @@ export interface KpiTotals {
   vendasFront: number;
   fatBruto: number;
   fatLiquido: number;
+  impostoMeta: number;
   fatFront: number;
   fatOrderbump: number;
   fatFunil: number;
@@ -73,10 +76,25 @@ export function computeTotals(rows: DailyRow[]): KpiTotals {
   const vendasFront = sumK(rows, "vendasFront");
   const fatBruto = sumK(rows, "fatBruto");
   const fatLiquido = sumK(rows, "fatLiquido");
+  const impostoMeta = rows.reduce((sum, row) => {
+    const rowInvestimento = typeof row.investimento === "number" && !isNaN(row.investimento) ? row.investimento : 0;
+    const rowImposto = typeof row.impostoMeta === "number" && !isNaN(row.impostoMeta)
+      ? row.impostoMeta
+      : rowInvestimento * META_TAX_RATE;
+    return sum + rowImposto;
+  }, 0);
   const fatFront = sumK(rows, "fatFront");
   const fatOrderbump = sumK(rows, "fatOrderbump");
   const fatFunil = sumK(rows, "fatFunil");
-  const lucro = sumK(rows, "lucro");
+  const lucro = rows.reduce((sum, row) => {
+    if (typeof row.lucro === "number" && !isNaN(row.lucro)) return sum + row.lucro;
+    const rowFatLiquido = typeof row.fatLiquido === "number" && !isNaN(row.fatLiquido) ? row.fatLiquido : 0;
+    const rowInvestimento = typeof row.investimento === "number" && !isNaN(row.investimento) ? row.investimento : 0;
+    const rowImposto = typeof row.impostoMeta === "number" && !isNaN(row.impostoMeta)
+      ? row.impostoMeta
+      : rowInvestimento * META_TAX_RATE;
+    return sum + rowFatLiquido - rowInvestimento - rowImposto;
+  }, 0);
   const reembolsos = sumK(rows, "reembolsos");
   const valorReembolsado = sumK(rows, "valorReembolsado");
   const impressoes = sumK(rows, "impressoes");
@@ -98,6 +116,7 @@ export function computeTotals(rows: DailyRow[]): KpiTotals {
     vendasFront,
     fatBruto,
     fatLiquido,
+    impostoMeta,
     fatFront,
     fatOrderbump,
     fatFunil,
@@ -109,7 +128,7 @@ export function computeTotals(rows: DailyRow[]): KpiTotals {
     landingPageviews,
     pageviews,
     checkouts,
-    roi: safeDiv(fatLiquido, investimento),
+    roi: safeDiv(fatLiquido - impostoMeta, investimento),
     cac: safeDiv(investimento, vendasTotais),
     aov: safeDiv(fatLiquido, vendasTotais),
     cpm: impressoes ? (investimento / impressoes) * 1000 : null,

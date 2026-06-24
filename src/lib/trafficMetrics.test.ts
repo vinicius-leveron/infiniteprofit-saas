@@ -35,6 +35,7 @@ describe("traffic metric mapping", () => {
         aov: null,
         roi: null,
         lucro: null,
+        imposto_meta: null,
         fat_bruto: null,
         fat_liquido: null,
         fat_front: null,
@@ -76,6 +77,21 @@ describe("traffic metric mapping", () => {
     expect(totals.custoPageview).toBe(0.75);
     expect(totals.custoIC).toBe(30);
     expect(totals.passChk).toBe(10);
+  });
+
+  it("computes Meta tax, profit and ROI with the approved spreadsheet formula", () => {
+    const totals = computeTotals([
+      {
+        investimento: 100,
+        fatLiquido: 1000,
+        impostoMeta: 12.15,
+        lucro: 887.85,
+      } as DailyRow,
+    ]);
+
+    expect(totals.impostoMeta).toBeCloseTo(12.15);
+    expect(totals.lucro).toBeCloseTo(887.85);
+    expect(totals.roi).toBeCloseTo(9.8785);
   });
 
   it("computes funnel period rates from summed denominators instead of averaging daily percentages", () => {

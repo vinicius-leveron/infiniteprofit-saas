@@ -148,6 +148,13 @@ export const DayDrilldownDialog = ({ row, onOpenChange, projectId, editable, onO
       icon: Wallet,
       tone: "orange",
     },
+    {
+      label: "Imposto Meta",
+      value: fBRL(row.impostoMeta),
+      icon: FileText,
+      tone: "red",
+      hint: "12,15% do investimento",
+    },
   ];
 
   const sales: Stat[] = [

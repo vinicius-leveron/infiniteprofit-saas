@@ -156,6 +156,7 @@ export const ComparisonStrip = ({ current, previous }: Props) => {
       tone: "bg-kpi-blue/15 text-kpi-blue",
       metrics: [
         { label: "Investimento", cur: c.investimento, prev: p.investimento, format: "brl" },
+        { label: "Imposto Meta", cur: c.impostoMeta, prev: p.impostoMeta, format: "brl", inverse: true },
         { label: "Faturamento Líquido", cur: c.fatLiquido, prev: p.fatLiquido, format: "brl" },
         { label: "Lucro", cur: c.lucro, prev: p.lucro, format: "brl" },
         { label: "ROI", cur: c.roi, prev: p.roi, format: "mult" },

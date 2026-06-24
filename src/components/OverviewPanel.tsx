@@ -170,6 +170,15 @@ export const OverviewPanel = ({ rows, previous, onDayClick }: Props) => {
           goodWhenUp={false}
         />
         <KpiCard
+          label="Imposto Meta"
+          value={fBRL(t.impostoMeta)}
+          hint="12,15% do investimento"
+          icon={Receipt}
+          tone="red"
+          deltaPct={delta(t.impostoMeta, tPrev?.impostoMeta)}
+          goodWhenUp={false}
+        />
+        <KpiCard
           label="Invest. Médio/Dia"
           value={fBRL(t.days ? t.investimento / t.days : null)}
           hint="Aporte diário médio"

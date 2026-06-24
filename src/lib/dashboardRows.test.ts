@@ -14,6 +14,7 @@ function row(day: string, patch: Partial<DailyRow>): DailyRow {
     cpaFront: null,
     fatBruto: null,
     fatLiquido: null,
+    impostoMeta: null,
     roi: null,
     lucro: null,
     cac: null,

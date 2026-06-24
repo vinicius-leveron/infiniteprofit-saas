@@ -5,19 +5,23 @@
 
 const map: Record<string, { formula?: string; description: string }> = {
   "faturamento liquido": {
-    formula: "Faturamento Bruto − Taxas − Imposto Meta",
-    description: "Receita real entrada após descontos da plataforma e impostos.",
+    formula: "Faturamento Bruto − Taxas da Plataforma",
+    description: "Receita líquida do checkout após as taxas da plataforma.",
+  },
+  "imposto meta": {
+    formula: "Investimento × 12,15%",
+    description: "Imposto estimado sobre mídia Meta, separado das taxas da Hubla.",
   },
   "faturamento bruto": {
     description: "Soma do valor de todas as vendas antes de qualquer dedução.",
   },
   "lucro": {
-    formula: "Faturamento Líquido − Investimento",
-    description: "Quanto sobrou após pagar tráfego.",
+    formula: "Faturamento Líquido − Investimento − Imposto Meta",
+    description: "Quanto sobrou após pagar tráfego e o imposto Meta.",
   },
   "roi": {
-    formula: "Faturamento Líquido ÷ Investimento",
-    description: "Retorno sobre investimento. ≥ 1.0x = lucro. < 1.0x = prejuízo.",
+    formula: "(Faturamento Líquido − Imposto Meta) ÷ Investimento",
+    description: "Retorno sobre investimento já descontando imposto Meta. ≥ 1.0x = acima do break-even.",
   },
   "investimento": {
     description: "Soma de tudo que foi gasto em mídia paga no período.",

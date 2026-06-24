@@ -110,6 +110,7 @@ export type Database = {
           fat_liquido: number | null
           fat_orderbump: number | null
           impressoes: number | null
+          imposto_meta: number | null
           investimento: number | null
           landing_pageviews: number | null
           lucro: number | null
@@ -157,6 +158,7 @@ export type Database = {
           fat_liquido?: number | null
           fat_orderbump?: number | null
           impressoes?: number | null
+          imposto_meta?: number | null
           investimento?: number | null
           landing_pageviews?: number | null
           lucro?: number | null
@@ -204,6 +206,7 @@ export type Database = {
           fat_liquido?: number | null
           fat_orderbump?: number | null
           impressoes?: number | null
+          imposto_meta?: number | null
           investimento?: number | null
           landing_pageviews?: number | null
           lucro?: number | null
