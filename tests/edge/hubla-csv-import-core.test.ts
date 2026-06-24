@@ -59,7 +59,7 @@ describe("hubla csv import core", () => {
         "fat-1",
         "Venda",
         "Fatura regular",
-        "Aprovada",
+        "Paga",
         "Pix",
         "01/06/2026 09:00",
         "01/06/2026 10:00",
@@ -114,6 +114,20 @@ describe("hubla csv import core", () => {
       }),
     ]);
     expect(result.events[0].payload.items[1].price).toBeCloseTo(44.42);
+  });
+
+  it("keeps Hubla liquid value below 100 as reais, not cents", () => {
+    const csv = [
+      "ID da fatura;Status da fatura;Data de pagamento;Valor total;Valor Líquido;Nome do produto",
+      "fat-net-small;Paga;02/06/2026 17:05:48;97;87.24;Passos sem Dor",
+    ].join("\n");
+
+    const result = parseHublaCsv(csv);
+
+    expect(result.warnings).toEqual([]);
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0].payload.total).toBeCloseTo(97);
+    expect(result.events[0].payload.net).toBeCloseTo(87.24);
   });
 
   it("parses the versioned Hubla QA fixture without false positives", () => {

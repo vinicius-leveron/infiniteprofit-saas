@@ -41,7 +41,9 @@ export function aggregateOneDay(events: RawEvent[]) {
   let cardTotal = 0;
   let pixApproved = 0;
   let pixTotal = 0;
-  let checkouts = 0;
+  const checkoutEvents: RawEvent[] = [];
+  const checkoutKeys = new Set<string>();
+  let checkoutFallbackIndex = 0;
   const bumpAgg = new Map<string, { name: string; type: string; count: number; revenue: number }>();
   const approvedGatewayEvents: RawEvent[] = [];
 
@@ -77,12 +79,14 @@ export function aggregateOneDay(events: RawEvent[]) {
     }
 
     if (event.event_type === "checkout_created") {
-      checkouts++;
+      checkoutEvents.push(event);
       continue;
     }
 
     if (event.event_type === "purchase.approved") {
-      approvedGatewayEvents.push(event);
+      if (hasPositivePurchaseValue(event)) {
+        approvedGatewayEvents.push(event);
+      }
       continue;
     }
 
@@ -99,19 +103,34 @@ export function aggregateOneDay(events: RawEvent[]) {
     }
   }
 
-  for (const group of groupApprovedPurchases(approvedGatewayEvents)) {
-    vendasTotais++;
+  const frontIdentity = inferFrontIdentity([...approvedGatewayEvents, ...checkoutEvents]);
+  for (const event of checkoutEvents) {
+    if (isOfferEvent(event) || !isUnpaidCheckout(event)) continue;
+    if (frontIdentity && eventHasProductIdentity(event) && !eventMatchesFrontFamily(event, frontIdentity)) continue;
+    const key = transactionKey(event) || `checkout-${checkoutFallbackIndex++}`;
+    checkoutKeys.add(key);
+  }
 
+  for (const group of groupApprovedPurchases(approvedGatewayEvents)) {
     const revenue = purchaseGroupRevenue(group);
-    const isFront = purchaseGroupIsFront(group);
+    const isFront = purchaseGroupIsFront(group, frontIdentity);
+    const realBumpItems = realBumpItemsForGroup(group, frontIdentity);
+    const realOfferFallbacks = realOfferFallbacksForGroup(group, frontIdentity);
+    const realBumpRevenue = Array.from(realBumpItems).reduce((sum, item) => sum + num(item?.price), 0)
+      + realOfferFallbacks.reduce((sum, item) => sum + item.price, 0);
+    let groupFunnelSales = 0;
 
     fatBruto += revenue.total;
     fatLiquido += revenue.net;
     if (isFront) {
       vendasFront++;
-      fatFront += revenue.mainTotal || revenue.total;
+      fatFront += Math.max(0, revenue.total - realBumpRevenue);
     } else {
-      fatFunil += revenue.mainTotal || revenue.total;
+      fatFunil += revenue.total;
+      groupFunnelSales++;
+    }
+    if (realBumpRevenue > 0) {
+      fatFunil += realBumpRevenue;
     }
 
     const itemSeen = new Set<string>();
@@ -119,6 +138,7 @@ export function aggregateOneDay(events: RawEvent[]) {
       const items: any[] = Array.isArray(event.payload?.items) ? event.payload.items : [];
       for (const item of items) {
         if (!item?.is_bump) continue;
+        if (!realBumpItems.has(item)) continue;
         const key = String(item.external_id ?? item.name ?? "");
         if (!key) continue;
         const price = num(item.price);
@@ -135,9 +155,45 @@ export function aggregateOneDay(events: RawEvent[]) {
         current.count += 1;
         current.revenue += price;
         fatOrderbump += price;
+        groupFunnelSales++;
         bumpAgg.set(key, current);
       }
     }
+
+    for (const item of realOfferFallbacks) {
+      const current = bumpAgg.get(item.key) ?? {
+        name: item.name,
+        type: item.type,
+        count: 0,
+        revenue: 0,
+      };
+      current.count += 1;
+      current.revenue += item.price;
+      fatOrderbump += item.price;
+      groupFunnelSales++;
+      bumpAgg.set(item.key, current);
+    }
+
+    if (!isFront) {
+      const main = group.find((event) => !isOfferEvent(event)) ?? group[0];
+      const mainItem = firstMainItem(main);
+      const key = String(mainItem?.external_id ?? main.payload?.product_id ?? main.external_id ?? mainItem?.name ?? "");
+      if (key) {
+        const price = revenue.mainTotal || revenue.total;
+        const current = bumpAgg.get(key) ?? {
+          name: String(mainItem?.name ?? main.payload?.product_id ?? key),
+          type: eventLooksUpsell(main) ? "upsell" : "orderbump",
+          count: 0,
+          revenue: 0,
+        };
+        current.count += 1;
+        current.revenue += price;
+        fatOrderbump += price;
+        bumpAgg.set(key, current);
+      }
+    }
+
+    vendasTotais += (isFront ? 1 : 0) + groupFunnelSales;
 
     const method = String(group.find((event) => !isOfferEvent(event))?.payload?.payment_method ?? group[0]?.payload?.payment_method ?? "").toLowerCase();
     if (method.includes("card") || method.includes("cart")) {
@@ -154,14 +210,11 @@ export function aggregateOneDay(events: RawEvent[]) {
   const cpc = cliques > 0 ? investimento / cliques : null;
   const playRate = pageviews > 0 ? (plays / pageviews) * 100 : null;
   const retPitch = plays > 0 ? (chegaramPitch / plays) * 100 : null;
+  const checkouts = checkoutKeys.size;
   const passChk = pageviews > 0 ? (checkouts / pageviews) * 100 : null;
   const taxaCarreg = cliques > 0 ? (landingPageviews / cliques) * 100 : null;
-  const pitchChk = chegaramPitch > 0
-    ? ((hasVturbSessionPitchData ? vturbPitchClicks : checkouts) / chegaramPitch) * 100
-    : null;
-  const pitchVenda = chegaramPitch > 0
-    ? ((hasVturbSessionPitchData ? vturbPitchConversions : vendasFront) / chegaramPitch) * 100
-    : null;
+  const pitchChk = chegaramPitch > 0 ? (checkouts / chegaramPitch) * 100 : null;
+  const pitchVenda = chegaramPitch > 0 ? (vendasFront / chegaramPitch) * 100 : null;
   const chkVenda = checkouts > 0 ? (vendasFront / checkouts) * 100 : null;
   const custoPageview = landingPageviews > 0 ? investimento / landingPageviews : null;
   const custoIC = checkouts > 0 ? investimento / checkouts : null;
@@ -279,6 +332,13 @@ function groupApprovedPurchases(events: RawEvent[]) {
   return Array.from(groups.values());
 }
 
+function hasPositivePurchaseValue(event: RawEvent) {
+  const payload = event.payload || {};
+  if (num(payload.total) > 0 || num(payload.net) > 0) return true;
+  const items: any[] = Array.isArray(payload.items) ? payload.items : [];
+  return items.some((item) => num(item?.price) > 0);
+}
+
 function transactionKey(event: RawEvent) {
   const payload = event.payload || {};
   return String(
@@ -307,15 +367,16 @@ function purchaseGroupRevenue(group: RawEvent[]) {
     && Array.isArray(event.payload?.items)
     && event.payload.items.some((item: any) => item?.is_bump),
   );
-  const offerTotal = mainHasBumpItems
+  const mainIncludesChildren = mainInvoiceIncludesOfferChildren(group);
+  const offerTotal = mainHasBumpItems || mainIncludesChildren
     ? 0
     : group
-      .filter(isOfferEvent)
+      .filter((event) => isOfferEvent(event) && !isDuplicateMainOffer(event, group))
       .reduce((sum, event) => sum + num(event.payload?.total), 0);
-  const offerNet = mainHasBumpItems
+  const offerNet = mainHasBumpItems || mainIncludesChildren
     ? 0
     : group
-      .filter(isOfferEvent)
+      .filter((event) => isOfferEvent(event) && !isDuplicateMainOffer(event, group))
       .reduce((sum, event) => sum + num(event.payload?.net ?? event.payload?.total), 0);
 
   const mainTotal = mainTotals.length > 0 ? Math.max(...mainTotals) : 0;
@@ -338,10 +399,145 @@ function purchaseGroupRevenue(group: RawEvent[]) {
   };
 }
 
-function purchaseGroupIsFront(group: RawEvent[]) {
+function purchaseGroupIsFront(group: RawEvent[], frontIdentity: ProductIdentity | null = null) {
   const main = group.find((event) => !isOfferEvent(event));
-  if (main) return main.payload?.is_front ?? true;
-  return true;
+  if (main) {
+    if (eventLooksUpsell(main)) return false;
+    if (frontIdentity) return eventMatchesFrontFamily(main, frontIdentity);
+    return main.payload?.is_front ?? true;
+  }
+  return false;
+}
+
+function realBumpItemsForGroup(group: RawEvent[], frontIdentity: ProductIdentity | null = null) {
+  const result = new Set<any>();
+  for (const event of group) {
+    const items: any[] = Array.isArray(event.payload?.items) ? event.payload.items : [];
+    for (const item of items) {
+      if (!item?.is_bump) continue;
+      if (isOfferEvent(event) && isDuplicateMainOffer(event, group, frontIdentity)) continue;
+      result.add(item);
+    }
+  }
+  return result;
+}
+
+function realOfferFallbacksForGroup(group: RawEvent[], frontIdentity: ProductIdentity | null = null) {
+  return group
+    .filter((event) => {
+      if (!isOfferEvent(event) || isDuplicateMainOffer(event, group, frontIdentity)) return false;
+      const items: any[] = Array.isArray(event.payload?.items) ? event.payload.items : [];
+      return !items.some((item) => item?.is_bump);
+    })
+    .map((event) => {
+      const key = String(event.external_id ?? event.payload?.product_id ?? event.payload?.transaction_id ?? "");
+      return {
+        key,
+        name: String(event.payload?.product_name ?? event.payload?.product_id ?? key ?? "Oferta"),
+        type: eventLooksUpsell(event) ? "upsell" : "orderbump",
+        price: num(event.payload?.total),
+      };
+    })
+    .filter((item) => item.key && item.price > 0);
+}
+
+type ProductIdentity = { id: string; name: string };
+
+function isDuplicateMainOffer(event: RawEvent, group: RawEvent[], frontIdentity: ProductIdentity | null = null) {
+  if (!isOfferEvent(event)) return false;
+  const offerItem = firstMainOrBumpItem(event);
+  if (!offerItem) return false;
+  const offerId = normalizeIdentity(offerItem.external_id);
+  const offerName = normalizeIdentity(offerItem.name);
+  if (!offerId && !offerName) return false;
+  if (frontIdentity && ((offerId && offerId === frontIdentity.id) || (offerName && offerName === frontIdentity.name))) {
+    return true;
+  }
+
+  return group
+    .filter((candidate) => !isOfferEvent(candidate))
+    .some((candidate) => {
+      const mainItem = firstMainItem(candidate);
+      const mainId = normalizeIdentity(mainItem?.external_id ?? candidate.payload?.product_id);
+      const mainName = normalizeIdentity(mainItem?.name);
+      return Boolean((offerId && offerId === mainId) || (offerName && offerName === mainName));
+    });
+}
+
+function inferFrontIdentity(events: RawEvent[]): ProductIdentity | null {
+  const counts = new Map<string, { identity: ProductIdentity; count: number }>();
+  for (const event of events) {
+    if (isOfferEvent(event) || eventLooksUpsell(event)) continue;
+    const item = firstMainItem(event);
+    const id = normalizeIdentity(item?.external_id ?? event.payload?.product_id);
+    const name = normalizeIdentity(item?.name);
+    if (!id && !name) continue;
+    const key = id || name;
+    const current = counts.get(key) ?? { identity: { id, name }, count: 0 };
+    current.count += 1;
+    counts.set(key, current);
+  }
+  return Array.from(counts.values()).sort((a, b) => b.count - a.count)[0]?.identity ?? null;
+}
+
+function eventMatchesFrontFamily(event: RawEvent, frontIdentity: ProductIdentity) {
+  const item = firstMainItem(event);
+  const id = normalizeIdentity(item?.external_id ?? event.payload?.product_id);
+  const name = normalizeIdentity(item?.name);
+  if (frontIdentity.id && id === frontIdentity.id) return true;
+  if (!frontIdentity.name || !name) return false;
+  return name === frontIdentity.name || name.startsWith(`${frontIdentity.name} `);
+}
+
+function eventHasProductIdentity(event: RawEvent) {
+  const item = firstMainItem(event);
+  return Boolean(normalizeIdentity(item?.external_id ?? event.payload?.product_id) || normalizeIdentity(item?.name));
+}
+
+function isUnpaidCheckout(event: RawEvent) {
+  const status = normalizeIdentity(event.payload?.status ?? getPath(event.payload?.raw_payload ?? {}, "event.invoice.status"));
+  if (!status) return true;
+  return !["paid", "pago", "paga", "succeeded", "approved", "aprovado", "aprovada"].includes(status);
+}
+
+function mainInvoiceIncludesOfferChildren(group: RawEvent[]) {
+  return group
+    .filter((event) => !isOfferEvent(event))
+    .some((event) => {
+      const childInvoiceIds = getPath(event.payload?.raw_payload ?? {}, "event.invoice.childInvoiceIds");
+      return Array.isArray(childInvoiceIds) && childInvoiceIds.length > 0;
+    });
+}
+
+function firstMainItem(event: RawEvent | undefined) {
+  const items: any[] = Array.isArray(event?.payload?.items) ? event?.payload.items : [];
+  return items.find((item) => !item?.is_bump) ?? items[0] ?? null;
+}
+
+function firstMainOrBumpItem(event: RawEvent | undefined) {
+  const items: any[] = Array.isArray(event?.payload?.items) ? event?.payload.items : [];
+  return items[0] ?? null;
+}
+
+function eventLooksUpsell(event: RawEvent | undefined) {
+  const payload = event?.payload ?? {};
+  if (payload.is_upsell || payload.upsell_id) return true;
+  const raw = payload.raw_payload ?? {};
+  const url = String(
+    getPath(raw, "event.invoice.paymentSession.url")
+      ?? getPath(raw, "data.object.paymentSession.url")
+      ?? getPath(raw, "paymentSession.url")
+      ?? "",
+  ).toLowerCase();
+  return url.includes("/upsell");
+}
+
+function normalizeIdentity(value: unknown) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
 }
 
 function stripOfferSuffix(value: string) {
@@ -478,6 +674,13 @@ function firstNumber(record: Record<string, unknown>, keys: string[]) {
     if (value > 0) return value;
   }
   return 0;
+}
+
+function getPath(record: Record<string, any>, path: string): unknown {
+  return path.split(".").reduce<unknown>((current, part) => {
+    if (!current || typeof current !== "object") return undefined;
+    return (current as Record<string, unknown>)[part];
+  }, record);
 }
 
 function hasUsableSessionStatsPayload(payload: Record<string, unknown>) {

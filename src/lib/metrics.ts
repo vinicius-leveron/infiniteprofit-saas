@@ -84,6 +84,12 @@ export function computeTotals(rows: DailyRow[]): KpiTotals {
   const landingPageviews = sumK(rows, "landingPageviews");
   const pageviews = sumK(rows, "pageviews");
   const checkouts = sumK(rows, "checkouts");
+  const chegaramPitch = sumK(rows, "chegaramPitch");
+  const estimatedPlays = rows.reduce((sum, row) => {
+    const rowPageviews = typeof row.pageviews === "number" ? row.pageviews : 0;
+    const rowPlayRate = typeof row.playRate === "number" ? row.playRate : null;
+    return sum + (rowPlayRate == null ? 0 : (rowPageviews * rowPlayRate) / 100);
+  }, 0);
 
   return {
     days: rows.length,
@@ -114,11 +120,11 @@ export function computeTotals(rows: DailyRow[]): KpiTotals {
     taxaCarreg: cliques ? (landingPageviews / cliques) * 100 : null,
     passChk: pageviews ? (checkouts / pageviews) * 100 : null,
     taxaReembolso: vendasTotais ? (reembolsos / vendasTotais) * 100 : null,
-    avgPlayRate: avgK(rows, "playRate"),
-    avgRetPitch: avgK(rows, "retPitch"),
-    avgPitchChk: avgK(rows, "pitchChk"),
-    avgPitchVenda: avgK(rows, "pitchVenda"),
-    avgChkVenda: avgK(rows, "chkVenda"),
+    avgPlayRate: pageviews ? (estimatedPlays / pageviews) * 100 : avgK(rows, "playRate"),
+    avgRetPitch: estimatedPlays ? (chegaramPitch / estimatedPlays) * 100 : avgK(rows, "retPitch"),
+    avgPitchChk: chegaramPitch ? (checkouts / chegaramPitch) * 100 : avgK(rows, "pitchChk"),
+    avgPitchVenda: chegaramPitch ? (vendasFront / chegaramPitch) * 100 : avgK(rows, "pitchVenda"),
+    avgChkVenda: checkouts ? (vendasFront / checkouts) * 100 : avgK(rows, "chkVenda"),
     avgAprovCartao: avgK(rows, "aprovCartao"),
     avgAprovPix: avgK(rows, "aprovPix"),
   };

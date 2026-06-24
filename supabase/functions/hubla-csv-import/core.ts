@@ -80,6 +80,7 @@ function rowToHublaRaw(headers: string[], row: string[], line: number): RowConve
   const isBump = itemType.includes("bump") || itemType.includes("upsell") || itemType.includes("order");
   const offerType = itemType.includes("upsell") ? "upsell" : "orderbump";
   const hasOrderBump = Boolean(orderBumpProductId || orderBumpProductName);
+  const mainItemIsOffer = isBump && !hasOrderBump;
   const mainItemPrice = hasOrderBump && productTotal > 0 ? productTotal : total;
   const orderBumpPrice = hasOrderBump && productTotal > 0 ? Math.max(0, total - productTotal) : 0;
   const items = [
@@ -88,8 +89,8 @@ function rowToHublaRaw(headers: string[], row: string[], line: number): RowConve
         id: productId || transaction,
         name: productName || productId || transaction,
         price: mainItemPrice,
-        type: isBump ? offerType : "main",
-        is_bump: isBump,
+        type: mainItemIsOffer ? offerType : "main",
+        is_bump: mainItemIsOffer,
       }]
       : []),
     ...(hasOrderBump
@@ -111,14 +112,14 @@ function rowToHublaRaw(headers: string[], row: string[], line: number): RowConve
         object: {
           id: transaction,
           amount_paid: Math.round(total * 100),
-          net_amount: Math.round(net * 100),
+          net_amount: net,
           payment_method: get("metodo_de_pagamento", "metodo_pagamento", "forma_pagamento", "payment_method", "method"),
           customer_email: get("email_do_cliente", "email", "comprador_email", "buyer_email", "customer_email"),
           product_id: productId,
           product: { id: productId, name: productName },
           paid_at: date,
           created_at: date,
-          is_offer: isBump,
+          is_offer: mainItemIsOffer,
           items,
           metadata: {
             utm_source: get("utm_origem", "utm_source", "source"),
@@ -138,7 +139,7 @@ function rowToHublaRaw(headers: string[], row: string[], line: number): RowConve
 function eventTypeFromStatus(status: string) {
   const value = normalizeHeader(status);
   if (!value) return "";
-  if (/(aprov|paid|pago|complete|conclu|success|succeeded)/.test(value)) return "invoice.payment_succeeded";
+  if (/(aprov|paid|pag[ao]|complete|conclu|success|succeeded)/.test(value)) return "invoice.payment_succeeded";
   if (/(refund|reemb|chargeback|estorn)/.test(value)) return "invoice.refunded";
   if (/(recus|refus|declin|failed|falh|cancel|expir|canceled|cancelled)/.test(value)) return "invoice.payment_failed";
   if (/(checkout|aband|pend|aguard|waiting|created|pix|boleto)/.test(value)) return "checkout.created";

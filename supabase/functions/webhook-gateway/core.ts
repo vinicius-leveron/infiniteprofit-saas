@@ -128,6 +128,7 @@ export function normalizeHubla(raw: any): NormalizedEvent[] {
     eventRecord.status,
     root.status,
   ]).toLowerCase();
+  const normalizedStatus = normalizeToken(status);
   const classifier = `${eventType} ${status}`.trim();
   const isInvoiceCreated =
     eventType.includes("checkout.created")
@@ -159,6 +160,10 @@ export function normalizeHubla(raw: any): NormalizedEvent[] {
     || classifier.includes("approved")
     || status === "paid"
     || status === "succeeded"
+    || normalizedStatus === "paga"
+    || normalizedStatus === "pago"
+    || normalizedStatus === "aprovada"
+    || normalizedStatus === "aprovado"
   ) {
     type = "purchase.approved";
   } else if (
@@ -252,6 +257,7 @@ export function normalizeHubla(raw: any): NormalizedEvent[] {
   const paymentSession = asRecord(object.paymentSession ?? object.payment_session);
   const paymentSessionUtm = asRecord(paymentSession.utm);
   const paymentSessionParams = asRecord(paymentSession.params);
+  const paymentSessionUrl = firstString([paymentSession.url, object.url, checkout.url]).toLowerCase();
   const customer = asRecord(object.customer);
   const payer = asRecord(object.payer);
   const user = asRecord(eventRecord.user);
@@ -307,7 +313,7 @@ export function normalizeHubla(raw: any): NormalizedEvent[] {
     buyer_email: firstString([object.customer_email, customer.email, payer.email, object.email, user.email]) || null,
     product_id: firstString([object.product_id, product.id, getPath(object, "plan.product")]),
     items: normalizedItems,
-    is_front: !isOfferEvent && !object.is_upsell && !object.upsell_id,
+    is_front: !isOfferEvent && !object.is_upsell && !object.upsell_id && !paymentSessionUrl.includes("/upsell"),
     transaction_id: transactionId,
     is_offer_event: isOfferEvent,
     raw_payload: raw,
@@ -655,4 +661,12 @@ function ymdSaoPaulo(date: Date) {
     day: "2-digit",
   });
   return formatter.format(Number.isNaN(date.getTime()) ? new Date() : date);
+}
+
+function normalizeToken(value: string) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
 }

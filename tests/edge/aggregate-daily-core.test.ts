@@ -74,7 +74,7 @@ describe("aggregate daily core", () => {
     expect(totalClicks.taxa_carreg).toBeCloseTo(50);
   });
 
-  it("deduplicates Hubla offer rows into a single checkout purchase", () => {
+  it("deduplicates Hubla offer rows for revenue while counting funnel items as total sales", () => {
     const metrics = aggregateOneDay([
       {
         source: "gateway",
@@ -132,7 +132,7 @@ describe("aggregate daily core", () => {
       },
     ]);
 
-    expect(metrics.vendas_totais).toBe(1);
+    expect(metrics.vendas_totais).toBe(3);
     expect(metrics.vendas_front).toBe(1);
     expect(metrics.fat_bruto).toBeCloseTo(2483.62);
     expect(metrics.fat_liquido).toBeCloseTo(2483.62);
@@ -145,7 +145,7 @@ describe("aggregate daily core", () => {
     ]);
   });
 
-  it("uses the offer-suffix base id to deduplicate legacy rows", () => {
+  it("uses the offer-suffix base id to deduplicate legacy rows without losing bump sales", () => {
     const metrics = aggregateOneDay([
       {
         source: "gateway",
@@ -161,8 +161,101 @@ describe("aggregate daily core", () => {
       },
     ]);
 
-    expect(metrics.vendas_totais).toBe(1);
+    expect(metrics.vendas_totais).toBe(2);
     expect(metrics.fat_bruto).toBeCloseTo(241.42);
     expect(metrics.fat_front).toBe(197);
+  });
+
+  it("does not double count Hubla child invoices already included in the main invoice", () => {
+    const metrics = aggregateOneDay([
+      {
+        source: "gateway",
+        event_type: "checkout_created",
+        external_id: "tx-child",
+        payload: {
+          transaction_id: "tx-child",
+          items: [{ external_id: "front", name: "Produto Front", price: 0, type: "main", is_bump: false }],
+        },
+      },
+      {
+        source: "gateway",
+        event_type: "checkout_created",
+        external_id: "tx-child-offer-1",
+        payload: { transaction_id: "tx-child" },
+      },
+      {
+        source: "gateway",
+        event_type: "purchase.approved",
+        external_id: "tx-child",
+        payload: {
+          transaction_id: "tx-child",
+          total: 241.42,
+          net: 220,
+          is_front: true,
+          product_id: "front",
+          raw_payload: { event: { invoice: { childInvoiceIds: ["tx-child-offer-1", "tx-child-offer-2"] } } },
+          items: [{ external_id: "front", name: "Produto Front", price: 241.42, type: "main", is_bump: false }],
+        },
+      },
+      {
+        source: "gateway",
+        event_type: "purchase.approved",
+        external_id: "tx-child-offer-1",
+        payload: {
+          transaction_id: "tx-child",
+          total: 197,
+          net: 180,
+          is_offer_event: true,
+          product_id: "front",
+          items: [{ external_id: "front", name: "Produto Front", price: 197, type: "orderbump", is_bump: true }],
+        },
+      },
+      {
+        source: "gateway",
+        event_type: "purchase.approved",
+        external_id: "tx-child-offer-2",
+        payload: {
+          transaction_id: "tx-child",
+          total: 44.42,
+          net: 40,
+          is_offer_event: true,
+          product_id: "bump",
+          items: [{ external_id: "bump", name: "Order bump", price: 44.42, type: "orderbump", is_bump: true }],
+        },
+      },
+    ]);
+
+    expect(metrics.checkouts).toBe(1);
+    expect(metrics.vendas_front).toBe(1);
+    expect(metrics.vendas_totais).toBe(2);
+    expect(metrics.fat_bruto).toBeCloseTo(241.42);
+    expect(metrics.fat_front).toBeCloseTo(197);
+    expect(metrics.fat_orderbump).toBeCloseTo(44.42);
+    expect(metrics.fat_funil).toBeCloseTo(44.42);
+    expect(metrics.bumps).toEqual([
+      expect.objectContaining({ name: "Order bump", count: 1, revenue: 44.42, rate: 100 }),
+    ]);
+  });
+
+  it("ignores legacy approved gateway rows with zero purchase value", () => {
+    const metrics = aggregateOneDay([
+      {
+        source: "gateway",
+        event_type: "purchase.approved",
+        external_id: "legacy-zero",
+        payload: { total: 0, net: 0, is_front: true },
+      },
+      {
+        source: "gateway",
+        event_type: "purchase.approved",
+        external_id: "real-sale",
+        payload: { total: 197, net: 179.75, is_front: true },
+      },
+    ]);
+
+    expect(metrics.vendas_totais).toBe(1);
+    expect(metrics.vendas_front).toBe(1);
+    expect(metrics.fat_bruto).toBeCloseTo(197);
+    expect(metrics.fat_liquido).toBeCloseTo(179.75);
   });
 });

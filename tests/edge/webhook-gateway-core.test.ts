@@ -49,6 +49,24 @@ describe("webhook gateway core", () => {
     expect(refunded[0]?.payload.total).toBeCloseTo(197);
   });
 
+  it("normalizes Portuguese Hubla paid status as approved", () => {
+    const [event] = normalizeHubla({
+      data: {
+        object: {
+          id: "fat-paga",
+          status: "Paga",
+          amount_paid: 19700,
+          paid_at: "2026-06-01T12:00:00.000-03:00",
+        },
+      },
+    });
+
+    expect(event.event_type).toBe("purchase.approved");
+    expect(event.event_date).toBe("2026-06-01");
+    expect(event.external_id).toBe("fat-paga");
+    expect(event.payload.total).toBeCloseTo(197);
+  });
+
   it("normalizes Hubla v2 invoice.created already paid as checkout and approved purchase", () => {
     const raw = {
       type: "invoice.created",

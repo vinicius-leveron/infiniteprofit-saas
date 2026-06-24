@@ -77,4 +77,31 @@ describe("traffic metric mapping", () => {
     expect(totals.custoIC).toBe(30);
     expect(totals.passChk).toBe(10);
   });
+
+  it("computes funnel period rates from summed denominators instead of averaging daily percentages", () => {
+    const totals = computeTotals([
+      {
+        pageviews: 100,
+        playRate: 50,
+        chegaramPitch: 10,
+        checkouts: 5,
+        vendasFront: 2,
+        pitchChk: 50,
+      } as DailyRow,
+      {
+        pageviews: 100,
+        playRate: 50,
+        chegaramPitch: 1,
+        checkouts: 10,
+        vendasFront: 1,
+        pitchChk: 1000,
+      } as DailyRow,
+    ]);
+
+    expect(totals.avgPlayRate).toBeCloseTo(50);
+    expect(totals.avgRetPitch).toBeCloseTo(11);
+    expect(totals.avgPitchChk).toBeCloseTo((15 / 11) * 100);
+    expect(totals.avgPitchVenda).toBeCloseTo((3 / 11) * 100);
+    expect(totals.avgChkVenda).toBeCloseTo(20);
+  });
 });
