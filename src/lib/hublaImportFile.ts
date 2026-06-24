@@ -65,7 +65,7 @@ function pickHublaSheet(sheets: HublaSheet[]) {
 
   const best = ranked[0];
   if (!best || best.score < 8) {
-    throw new Error("XLSX não parece ser um export de faturas/vendas da Hubla");
+    throw new Error("XLSX não parece ser um export de faturas/vendas da Hubla nem uma planilha diária de acompanhamento");
   }
 
   return best.sheet;
@@ -83,6 +83,7 @@ function scoreSheet(sheet: HublaSheet) {
   if (hasAny(["metodo_de_pagamento", "metodo_pagamento", "forma_pagamento", "payment_method", "method"])) score += 1;
   if (hasAny(["nome_do_produto", "produto", "produto_nome", "product", "product_name", "nome_da_oferta", "oferta", "offer"])) score += 1;
   if (hasAny(["utm_origem", "utm_source", "source"])) score += 1;
+  if (hasAny(["data"]) && hasAny(["investimento"]) && hasAny(["vendas_front", "vendas_totais_do_funil"]) && hasAny(["faturamento_liquido_total_do_funil_taxas_plataforma", "faturamento_liquido"])) score += 12;
 
   return score;
 }

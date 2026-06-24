@@ -1,7 +1,7 @@
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { buildAutomationHeaders } from "../_shared/automation.ts";
-import { parseHublaCsv } from "./core.ts";
+import { parseDailyMetricsCsv, parseHublaCsv } from "./core.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -39,6 +39,61 @@ Deno.serve(async (req) => {
     const sb = createClient(SUPABASE_URL, SERVICE_KEY);
     const project = await getProjectOrThrow(sb, projectId);
     await assertWorkspaceAdmin(sb, project.workspace_id, user.id);
+
+    let parsedDailyMetrics: ReturnType<typeof parseDailyMetricsCsv>;
+    try {
+      parsedDailyMetrics = parseDailyMetricsCsv(csv);
+    } catch (error) {
+      return json({ error: error instanceof Error ? error.message : "CSV inválido" }, 400);
+    }
+
+    if (parsedDailyMetrics.overrides.length > 0) {
+      const { overrides, warnings, dataRows, headers } = parsedDailyMetrics;
+      const datesTouched = [...new Set(overrides.map((override) => override.event_date))].sort();
+
+      if (!dryRun) {
+        const payload = overrides.map((override) => ({
+          project_id: project.id,
+          workspace_id: project.workspace_id,
+          user_id: project.user_id,
+          source: "sheet_override",
+          event_type: "daily_metrics",
+          event_date: override.event_date,
+          external_id: `daily-metrics-sheet:${override.event_date}`,
+          account_id: "daily_metrics_sheet",
+          payload: {
+            ...override.payload,
+            import_line: override.line,
+            imported_at: new Date().toISOString(),
+          },
+        }));
+
+        const { error } = await sb
+          .from("raw_events")
+          .upsert(payload, { onConflict: "project_id,source,event_type,external_id" });
+        if (error) throw new Error(error.message);
+
+        await triggerAggregateDaily(project.id, datesTouched);
+      }
+
+      return json({
+        ok: true,
+        kind: "daily_metrics_sheet",
+        dry_run: dryRun,
+        imported: overrides.length,
+        skipped: Math.max(0, dataRows - overrides.length),
+        headers,
+        dates: datesTouched,
+        warnings: warnings.slice(0, 50),
+        preview: overrides.slice(0, 5).map((override) => ({
+          line: override.line,
+          type: "daily_metrics",
+          date: override.event_date,
+          external_id: `daily-metrics-sheet:${override.event_date}`,
+          total: override.payload.fat_bruto,
+        })),
+      });
+    }
 
     let parsedCsv: ReturnType<typeof parseHublaCsv>;
     try {

@@ -1082,7 +1082,7 @@ export type Database = {
     }
     Enums: {
       bump_kind: "orderbump" | "upsell" | "downsell"
-      event_source: "meta" | "vturb" | "gateway"
+      event_source: "meta" | "vturb" | "gateway" | "sheet_override"
       gateway_provider: "hotmart" | "hubla" | "kiwify"
       project_source: "csv" | "sheet" | "api"
     }
@@ -1213,7 +1213,7 @@ export const Constants = {
   public: {
     Enums: {
       bump_kind: ["orderbump", "upsell", "downsell"],
-      event_source: ["meta", "vturb", "gateway"],
+      event_source: ["meta", "vturb", "gateway", "sheet_override"],
       gateway_provider: ["hotmart", "hubla", "kiwify"],
       project_source: ["csv", "sheet", "api"],
     },

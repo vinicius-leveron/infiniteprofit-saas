@@ -53,7 +53,22 @@ describe("hublaImportFile", () => {
     ).toThrow("sem linhas de venda");
   });
 
-  it("rejects spreadsheets that are not Hubla invoice exports", () => {
+  it("accepts daily tracking spreadsheets", () => {
+    const result = hublaSheetsToCsv([
+      {
+        sheet: "Acompanhamento",
+        data: [
+          ["Data", "Investimento", "Vendas Front", "Faturamento Líquido Total do Funil (- taxas PLATAFORMA)"],
+          ["01/06/2026", "R$ 100,00", "3", "R$ 1.000,25"],
+        ],
+      },
+    ]);
+
+    expect(result.sheetName).toBe("Acompanhamento");
+    expect(result.csv).toContain("Data;Investimento;Vendas Front;Faturamento Líquido Total do Funil (- taxas PLATAFORMA)");
+  });
+
+  it("rejects spreadsheets that are not Hubla invoice exports or daily tracking sheets", () => {
     expect(() =>
       hublaSheetsToCsv([
         {

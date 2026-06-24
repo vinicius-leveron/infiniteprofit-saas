@@ -151,6 +151,7 @@ const HEADER_MAP: Record<string, keyof DailyRow> = {
 
   // Profit metrics
   "roi": "roi",
+  "roi fat liquido imposto meta": "roi",
   "lucro": "lucro",
   "lucro bruto": "lucro",
   "lucro liquido": "lucro",

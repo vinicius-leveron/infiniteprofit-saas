@@ -298,4 +298,45 @@ describe("aggregate daily core", () => {
     expect(metrics.fat_bruto).toBeCloseTo(197);
     expect(metrics.fat_liquido).toBeCloseTo(179.75);
   });
+
+  it("applies imported daily sheet overrides after API/raw aggregation", () => {
+    const metrics = aggregateOneDay([
+      {
+        source: "meta",
+        event_type: "insight",
+        payload: { spend: 100, impressions: 1000, actions: [{ action_type: "link_click", value: 100 }] },
+      },
+      {
+        source: "gateway",
+        event_type: "purchase.approved",
+        payload: { total: 100, net: 90, is_front: true },
+      },
+      {
+        source: "sheet_override",
+        event_type: "daily_metrics",
+        payload: {
+          vendas_front: 3,
+          vendas_totais: 4,
+          fat_bruto: 1200.5,
+          fat_liquido: 1000.25,
+          checkouts: 7,
+          lucro: 800,
+          roi: "8,50",
+          bumps: [{ name: "Bump", type: "orderbump", count: 1, revenue: 97, rate: 33.33 }],
+        },
+      },
+    ]);
+
+    expect(metrics.investimento).toBe(100);
+    expect(metrics.vendas_front).toBe(3);
+    expect(metrics.vendas_totais).toBe(4);
+    expect(metrics.fat_bruto).toBe(1200.5);
+    expect(metrics.fat_liquido).toBe(1000.25);
+    expect(metrics.checkouts).toBe(7);
+    expect(metrics.lucro).toBe(800);
+    expect(metrics.roi).toBe(8.5);
+    expect(metrics.bumps).toEqual([
+      expect.objectContaining({ name: "Bump", count: 1, revenue: 97 }),
+    ]);
+  });
 });

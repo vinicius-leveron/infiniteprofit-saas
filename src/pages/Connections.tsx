@@ -470,11 +470,11 @@ export default function Connections() {
   async function importHublaCsv(dryRun = false) {
     if (!project?.id) return;
     if (!isWorkspaceAdmin || workspaceIntegration?.gateway_provider !== "hubla") {
-      toast.error("Importação CSV disponível apenas para administradores usando Hubla");
+      toast.error("Importação CSV/XLSX disponível apenas para administradores usando Hubla");
       return;
     }
     if (!hublaCsv.trim()) {
-      toast.error("Cole ou selecione um CSV/XLSX da Hubla");
+      toast.error("Cole ou selecione um CSV/XLSX da Hubla ou da planilha de acompanhamento");
       return;
     }
 
@@ -989,9 +989,9 @@ export default function Connections() {
       <Dialog open={hublaImportOpen} onOpenChange={setHublaImportOpen}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Importar CSV/XLSX Hubla</DialogTitle>
+              <DialogTitle>Importar CSV/XLSX</DialogTitle>
             <DialogDescription>
-              Importe vendas retroativas para preencher faturamento e vendas quando os webhooks antigos não têm payload bruto.
+              Importe export Hubla ou planilha diária de acompanhamento para preencher histórico retroativo.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
@@ -1012,7 +1012,7 @@ export default function Connections() {
                     }
                   } catch (error) {
                     setHublaCsv("");
-                    toast.error(error instanceof Error ? error.message : "Erro ao ler arquivo Hubla");
+                    toast.error(error instanceof Error ? error.message : "Erro ao ler arquivo");
                   } finally {
                     event.currentTarget.value = "";
                   }
@@ -1028,7 +1028,7 @@ export default function Connections() {
                   setHublaCsv(event.target.value);
                 }}
                 rows={10}
-                placeholder="Cole aqui o export da Hubla com colunas como ID da fatura, status, data, valor, email, produto e UTMs."
+                placeholder="Cole aqui o export da Hubla ou a planilha diária com Data, Investimento, Vendas, Faturamento e métricas do funil."
                 className="font-mono text-xs"
               />
             </div>

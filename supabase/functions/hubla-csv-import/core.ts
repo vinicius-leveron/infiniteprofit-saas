@@ -9,6 +9,19 @@ export type HublaCsvParseResult = {
   headers: string[];
 };
 
+export type DailyMetricsCsvOverride = {
+  event_date: string;
+  payload: Record<string, unknown>;
+  line: number;
+};
+
+export type DailyMetricsCsvParseResult = {
+  overrides: DailyMetricsCsvOverride[];
+  warnings: string[];
+  dataRows: number;
+  headers: string[];
+};
+
 type RowConversion =
   | { raw: unknown; line: number; warning?: never; reason?: never }
   | { raw: null; line: number; warning: string; reason: string };
@@ -41,6 +54,204 @@ export function parseHublaCsv(csv: string): HublaCsvParseResult {
   }
 
   return { events, warnings, dataRows: dataRows.length, headers };
+}
+
+export function parseDailyMetricsCsv(csv: string): DailyMetricsCsvParseResult {
+  const rows = parseCsv(csv);
+  if (rows.length < 2) {
+    throw new Error("CSV sem linhas suficientes");
+  }
+
+  const rawHeaders = rows[0];
+  const headers = rawHeaders.map(normalizeHeader);
+  const dataRows = rows.slice(1).filter((row) => row.some((cell) => cell.trim()));
+  const warnings: string[] = [];
+  const overrides: DailyMetricsCsvOverride[] = [];
+
+  if (!looksLikeDailyMetricsSheet(headers)) {
+    return { overrides: [], warnings: ["Arquivo não parece ser planilha diária de acompanhamento"], dataRows: dataRows.length, headers };
+  }
+
+  const headerKeys = headers.map(dailyMetricKeysForHeader);
+  const dataColumn = headers.findIndex((header) => header === "data");
+  const bumpDefs = detectDailyBumps(rawHeaders);
+
+  for (const [index, row] of dataRows.entries()) {
+    const line = index + 2;
+    const date = parseDailyMetricDate(row[dataColumn] ?? "");
+    if (!date) {
+      warnings.push(`Linha ${line}: data inválida ou linha de resumo ignorada`);
+      continue;
+    }
+
+    const payload: Record<string, unknown> = {};
+    for (const [columnIndex, keys] of headerKeys.entries()) {
+      for (const key of keys) {
+        const value = parseMetricNumber(row[columnIndex] ?? "");
+        if (value != null) payload[key] = value;
+      }
+    }
+
+    const bumps = bumpDefs.map((bump) => ({
+      name: bump.name,
+      type: bump.type,
+      count: parseMetricNumber(row[bump.countCol] ?? ""),
+      revenue: parseMetricNumber(row[bump.revCol] ?? ""),
+      rate: parseMetricNumber(row[bump.rateCol] ?? ""),
+    }));
+    if (bumps.length > 0) payload.bumps = bumps;
+
+    if (!hasDailyMetricSignal(payload)) {
+      warnings.push(`Linha ${line}: sem métricas úteis, ignorada`);
+      continue;
+    }
+
+    payload.import_source = "daily_metrics_sheet";
+    overrides.push({ event_date: date, payload, line });
+  }
+
+  return { overrides, warnings, dataRows: dataRows.length, headers };
+}
+
+function looksLikeDailyMetricsSheet(headers: string[]) {
+  const set = new Set(headers);
+  return set.has("data")
+    && set.has("investimento")
+    && (set.has("vendas_front") || set.has("vendas_totais_do_funil"))
+    && Array.from(set).some((header) => header.startsWith("faturamento_liquido"));
+}
+
+function dailyMetricKeysForHeader(header: string): string[] {
+  const map: Record<string, string[]> = {
+    investimento: ["investimento"],
+    vendas_front: ["vendas_front"],
+    vendas_totais_do_funil: ["vendas_totais"],
+    vendas_totais_funil_todo: ["vendas_totais"],
+    vendas_totais: ["vendas_totais"],
+    cpa_front: ["cpa_front"],
+    faturamento_bruto_total_do_funil: ["fat_bruto"],
+    faturamento_bruto: ["fat_bruto"],
+    faturamento_liquido_total_do_funil_taxas_plataforma: ["fat_liquido"],
+    faturamento_liquido_total_do_funil_taxas_e_imposto_meta: ["fat_liquido"],
+    faturamento_liquido: ["fat_liquido"],
+    imposto_meta: ["imposto_meta"],
+    roi_fat_liquido_imposto_meta: ["roi"],
+    roi: ["roi"],
+    lucro: ["lucro"],
+    cac: ["cac"],
+    aov: ["aov"],
+    faturamento_front: ["fat_front"],
+    faturamento_total_orderbump: ["fat_orderbump"],
+    faturamento_total_funil: ["fat_funil"],
+    faturamento_funil: ["fat_funil"],
+    reembolsos: ["reembolsos"],
+    taxa_de_reembolso: ["taxa_reembolso"],
+    valor_reembolsado: ["valor_reembolsado"],
+    aprovacao_cartao: ["aprov_cartao"],
+    aprovacao_pix: ["aprov_pix"],
+    impressoes: ["impressoes"],
+    cliques: ["cliques"],
+    cliques_no_link: ["cliques"],
+    pageviews: ["landing_pageviews", "pageviews"],
+    landing_page_views: ["landing_pageviews"],
+    lp_views: ["landing_pageviews"],
+    checkouts: ["checkouts"],
+    cpm: ["cpm"],
+    ctr: ["ctr"],
+    cpc: ["cpc"],
+    custo_por_pageview: ["custo_pageview"],
+    custo_por_i_c: ["custo_ic"],
+    taxa_de_carregamento: ["taxa_carreg"],
+    passagem_para_o_checkout: ["pass_chk"],
+    play_rate: ["play_rate"],
+    retencao_pitch: ["ret_pitch"],
+    visualizacoes_unicas: ["views_unicas"],
+    chegaram_no_pitch: ["chegaram_pitch"],
+    pitch_checkout: ["pitch_chk"],
+    pitch_venda: ["pitch_venda"],
+    checkout_venda_front: ["chk_venda"],
+    checkout_venda: ["chk_venda"],
+    conversao_geral_orderbump: ["conv_geral_orderbump"],
+    proporcao_faturamento_front_x_funil: ["proporcao_funil_front"],
+    proporcao_front_x_funil: ["proporcao_funil_front"],
+  };
+  return map[header] ?? [];
+}
+
+function parseDailyMetricDate(value: string) {
+  const parsed = parseDate(value);
+  if (!parsed) return "";
+  return parsed.slice(0, 10);
+}
+
+function parseMetricNumber(value: string) {
+  let normalized = String(value ?? "")
+    .trim()
+    .replace(/R\$/gi, "")
+    .replace(/%$/, "")
+    .replace(/\s|\u00a0/g, "");
+  if (!normalized || normalized === "-" || normalized === "#DIV/0!" || normalized === "#N/A") return null;
+  const isNegative = normalized.startsWith("-") || /^\(.*\)$/.test(normalized);
+  normalized = normalized.replace(/^\((.*)\)$/, "$1").replace(/^-/, "");
+  if (normalized.includes(",") && normalized.includes(".")) {
+    normalized = normalized.replace(/\./g, "").replace(",", ".");
+  } else if (normalized.includes(",")) {
+    normalized = normalized.replace(",", ".");
+  } else if (normalized.includes(".")) {
+    const parts = normalized.split(".");
+    if (parts.length > 1 && parts.slice(1).every((part) => part.length === 3)) {
+      normalized = normalized.replace(/\./g, "");
+    }
+  }
+  const parsed = parseFloat(normalized);
+  if (!Number.isFinite(parsed)) return null;
+  return isNegative ? -parsed : parsed;
+}
+
+function hasDailyMetricSignal(payload: Record<string, unknown>) {
+  return [
+    "investimento",
+    "vendas_totais",
+    "fat_bruto",
+    "fat_liquido",
+    "impressoes",
+    "cliques",
+    "landing_pageviews",
+    "views_unicas",
+    "chegaram_pitch",
+  ].some((key) => {
+    const value = payload[key];
+    return typeof value === "number" && Math.abs(value) > 0.000001;
+  });
+}
+
+function detectDailyBumps(headers: string[]) {
+  const out: Array<{ name: string; type: "orderbump" | "upsell"; countCol: number; revCol: number; rateCol: number }> = [];
+  for (let index = 0; index < headers.length; index += 1) {
+    const raw = headers[index] ?? "";
+    const slug = normalizeHeader(raw);
+    const isOrderbump = slug.startsWith("orderbump_") && !slug.startsWith("orderbump_total");
+    const isUpsell = slug === "upsell" || slug.startsWith("upsell_");
+    if ((!isOrderbump && !isUpsell) || slug.includes("faturamento") || slug.includes("conversao")) continue;
+
+    let revCol = -1;
+    let rateCol = -1;
+    for (let next = index + 1; next < Math.min(index + 5, headers.length); next += 1) {
+      const nextSlug = normalizeHeader(headers[next] ?? "");
+      if (revCol < 0 && (nextSlug.startsWith("faturamento_") || nextSlug.startsWith("receita_"))) revCol = next;
+      if (rateCol < 0 && (nextSlug.startsWith("conversao_") || nextSlug === "tx" || nextSlug.startsWith("tx_"))) rateCol = next;
+    }
+    if (revCol < 0 && index + 1 < headers.length) revCol = index + 1;
+    if (rateCol < 0 && index + 2 < headers.length) rateCol = index + 2;
+
+    const type = isUpsell ? "upsell" : "orderbump";
+    const name = raw
+      .replace(/\n/g, " ")
+      .replace(/^(orderbump|upsell)\s*-?\s*/i, "")
+      .trim() || (type === "upsell" ? "Upsell" : "Orderbump");
+    out.push({ name, type, countCol: index, revCol, rateCol });
+  }
+  return out;
 }
 
 function rowToHublaRaw(headers: string[], row: string[], line: number): RowConversion {

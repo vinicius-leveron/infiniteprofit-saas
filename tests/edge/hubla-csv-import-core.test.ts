@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { parseHublaCsv } from "../../supabase/functions/hubla-csv-import/core";
+import { parseDailyMetricsCsv, parseHublaCsv } from "../../supabase/functions/hubla-csv-import/core";
 
 describe("hubla csv import core", () => {
   it("parses approved Hubla CSV rows with Brazilian money and metadata", () => {
@@ -195,6 +195,37 @@ describe("hubla csv import core", () => {
     expect(result.headers).toEqual(["data", "investimento", "cliques", "faturamento_liquido"]);
     expect(result.events).toEqual([]);
     expect(result.warnings[0]).toContain("status não reconhecido");
+  });
+
+  it("parses daily tracking spreadsheets as daily metric overrides", () => {
+    const csv = [
+      "Data;Investimento;Vendas Front;Vendas Totais do Funil;Faturamento Bruto Total do Funil;Faturamento Líquido Total do Funil (- taxas PLATAFORMA);Imposto Meta;ROI (fat liquido - imposto - meta);Lucro;Cliques;Pageviews;Checkouts",
+      "01/06/2026;R$ 100,00;3;4;R$ 1.200,50;R$ 1.000,25;R$ 12,15;8,88;R$ 888,10;20;18;7",
+      "22/06/2026;0;;;0;;;;R$0,00;0;0;0",
+    ].join("\n");
+
+    const result = parseDailyMetricsCsv(csv);
+
+    expect(result.dataRows).toBe(2);
+    expect(result.overrides).toHaveLength(1);
+    expect(result.overrides[0]).toMatchObject({
+      line: 2,
+      event_date: "2026-06-01",
+      payload: {
+        investimento: 100,
+        vendas_front: 3,
+        vendas_totais: 4,
+        fat_bruto: 1200.5,
+        fat_liquido: 1000.25,
+        imposto_meta: 12.15,
+        roi: 8.88,
+        lucro: 888.1,
+        cliques: 20,
+        landing_pageviews: 18,
+        pageviews: 18,
+        checkouts: 7,
+      },
+    });
   });
 
   it("throws a clear error for empty CSV input", () => {

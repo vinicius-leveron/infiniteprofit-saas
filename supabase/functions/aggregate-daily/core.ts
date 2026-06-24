@@ -11,6 +11,7 @@ type RawEvent = {
 const META_TAX_RATE = 0.1215;
 
 export function aggregateOneDay(events: RawEvent[]) {
+  let dailyMetricsOverride: Record<string, unknown> | null = null;
   const hasSessionStatsByDay = events.some((event) =>
     event.source === "vturb"
     && event.event_type === "sessions_stats_by_day"
@@ -51,6 +52,11 @@ export function aggregateOneDay(events: RawEvent[]) {
 
   for (const event of events) {
     const payload = event.payload || {};
+
+    if (event.source === "sheet_override" && event.event_type === "daily_metrics") {
+      dailyMetricsOverride = { ...(dailyMetricsOverride ?? {}), ...payload };
+      continue;
+    }
 
     if (event.source === "meta" && event.event_type === "insight") {
       const meta = extractMetaTrafficMetrics(payload);
@@ -241,7 +247,7 @@ export function aggregateOneDay(events: RawEvent[]) {
     rate: vendasFront > 0 ? (bump.count / vendasFront) * 100 : null,
   }));
 
-  return {
+  const metrics = {
     investimento: orNull(investimento),
     impressoes: orNull(impressoes),
     cliques: orNull(cliques),
@@ -284,6 +290,70 @@ export function aggregateOneDay(events: RawEvent[]) {
     proporcao_funil_front: proporcaoFunilFront,
     bumps,
   };
+
+  return applyDailyMetricsOverride(metrics, dailyMetricsOverride);
+}
+
+const DAILY_METRIC_OVERRIDE_KEYS = [
+  "investimento",
+  "impressoes",
+  "cliques",
+  "landing_pageviews",
+  "cpm",
+  "ctr",
+  "cpc",
+  "pageviews",
+  "views_unicas",
+  "play_rate",
+  "ret_pitch",
+  "chegaram_pitch",
+  "checkouts",
+  "custo_pageview",
+  "custo_ic",
+  "taxa_carreg",
+  "pass_chk",
+  "pitch_chk",
+  "pitch_venda",
+  "chk_venda",
+  "vendas_front",
+  "vendas_totais",
+  "cpa_front",
+  "cac",
+  "aov",
+  "roi",
+  "lucro",
+  "imposto_meta",
+  "fat_bruto",
+  "fat_liquido",
+  "fat_front",
+  "fat_orderbump",
+  "fat_funil",
+  "reembolsos",
+  "taxa_reembolso",
+  "valor_reembolsado",
+  "aprov_cartao",
+  "aprov_pix",
+  "conv_geral_orderbump",
+  "proporcao_funil_front",
+] as const;
+
+function applyDailyMetricsOverride<T extends Record<string, unknown>>(
+  metrics: T,
+  override: Record<string, unknown> | null,
+) {
+  if (!override) return metrics;
+  const out = { ...metrics };
+
+  for (const key of DAILY_METRIC_OVERRIDE_KEYS) {
+    if (!(key in override)) continue;
+    out[key] = overrideNumber(override[key]);
+  }
+
+  if (Array.isArray(override.bumps)) {
+    out.bumps = override.bumps;
+  }
+
+  return out;
 }
 
 function extractMetaTrafficMetrics(payload: any) {
@@ -738,6 +808,32 @@ function hasUsableSessionStatsPayload(payload: Record<string, unknown>) {
 function num(value: unknown): number {
   const parsed = typeof value === "number" ? value : parseFloat(String(value));
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function overrideNumber(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  let normalized = String(value)
+    .trim()
+    .replace(/R\$/gi, "")
+    .replace(/%$/, "")
+    .replace(/\s|\u00a0/g, "");
+  if (!normalized) return null;
+  const isNegative = normalized.startsWith("-") || /^\(.*\)$/.test(normalized);
+  normalized = normalized.replace(/^\((.*)\)$/, "$1").replace(/^-/, "");
+  if (normalized.includes(",") && normalized.includes(".")) {
+    normalized = normalized.replace(/\./g, "").replace(",", ".");
+  } else if (normalized.includes(",")) {
+    normalized = normalized.replace(",", ".");
+  } else if (normalized.includes(".")) {
+    const parts = normalized.split(".");
+    if (parts.length > 1 && parts.slice(1).every((part) => part.length === 3)) {
+      normalized = normalized.replace(/\./g, "");
+    }
+  }
+  const parsed = parseFloat(normalized);
+  if (!Number.isFinite(parsed)) return null;
+  return isNegative ? -parsed : parsed;
 }
 
 function orNull(value: number) {
