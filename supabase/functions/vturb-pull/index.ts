@@ -27,8 +27,9 @@ const VTURB_MIN_REQUEST_INTERVAL_MS = 1050;
 const VTURB_MAX_RATE_LIMIT_RETRIES = 3;
 const VTURB_DEFAULT_RETRY_AFTER_MS = 5000;
 const VTURB_MAX_RETRY_AFTER_MS = 60000;
-const VTURB_RUNNING_SYNC_TIMEOUT_MS = 30 * 60 * 1000;
+const VTURB_RUNNING_SYNC_TIMEOUT_MS = 5 * 60 * 1000;
 const VTURB_NO_ACCESS_BACKOFF_MS = 60 * 60 * 1000;
+const VTURB_AUTOMATIC_MIN_PROJECT_BUDGET_MS = 20 * 1000;
 
 type Caller =
   | { kind: "service" }
@@ -87,6 +88,10 @@ Deno.serve(async (req) => {
     const batchOptions = parseVturbBatchOptions(body);
     const executionOptions = parseVturbExecutionOptions(body);
     const invocationStartedAt = Date.now();
+    const isAutomaticGlobalSync = caller.kind === "service"
+      && !targetProjectId
+      && !targetPlayerId
+      && !batchOptions.hasExplicitCursor;
 
     if (caller.kind === "user" && !targetProjectId) {
       return json({ error: "project_id é obrigatório para sync manual" }, 400);
@@ -102,7 +107,26 @@ Deno.serve(async (req) => {
 
     for (const project of projects) {
       if (
+        isAutomaticGlobalSync
+        && (
+          shouldStopVturbPlayerLoop({
+            startedAtMs: invocationStartedAt,
+            nowMs: Date.now(),
+            maxRuntimeMs: executionOptions.maxRuntimeMs,
+          })
+          || remainingRuntimeMs(invocationStartedAt, executionOptions.maxRuntimeMs) < VTURB_AUTOMATIC_MIN_PROJECT_BUDGET_MS
+        )
+      ) {
+        results.push({
+          project_id: project.id,
+          skipped: "Sync VTurb adiado: orçamento de tempo da execução atingido.",
+        });
+        break;
+      }
+
+      if (
         !targetProjectId
+        && !isAutomaticGlobalSync
         && shouldStopVturbPlayerLoop({
           startedAtMs: invocationStartedAt,
           nowMs: Date.now(),
@@ -287,6 +311,17 @@ Deno.serve(async (req) => {
           },
           errorMessage: resultSummary.errorMessage,
         });
+
+        if (
+          isAutomaticGlobalSync
+          && shouldStopVturbPlayerLoop({
+            startedAtMs: invocationStartedAt,
+            nowMs: Date.now(),
+            maxRuntimeMs: executionOptions.maxRuntimeMs,
+          })
+        ) {
+          break;
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : "Erro ao sincronizar VTurb";
         results.push({ project_id: project.id, error: message });
@@ -876,6 +911,10 @@ function createVturbRuntime(): VturbRuntime {
     lastRequestAt: 0,
     nextRequestAt: 0,
   };
+}
+
+function remainingRuntimeMs(startedAtMs: number, maxRuntimeMs: number) {
+  return Math.max(0, maxRuntimeMs - (Date.now() - startedAtMs));
 }
 
 async function waitForVturbSlot(runtime: VturbRuntime) {
