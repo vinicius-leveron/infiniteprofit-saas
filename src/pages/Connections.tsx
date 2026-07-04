@@ -14,6 +14,7 @@ import {
   Megaphone,
   PlayCircle,
   RefreshCw,
+  Search,
   Settings2,
   Zap,
 } from "lucide-react";
@@ -153,6 +154,7 @@ export default function Connections() {
   const [selectedMetaIds, setSelectedMetaIds] = useState<string[]>([]);
   const [vturbPlayers, setVturbPlayers] = useState<VturbPlayerRow[]>([]);
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<string[]>([]);
+  const [vturbPlayerQuery, setVturbPlayerQuery] = useState("");
   const [checkoutBinding, setCheckoutBinding] = useState<ProjectCheckoutBindingRow | null>(null);
   const [publicLinks, setPublicLinks] = useState<ProjectPublicLinkRow[]>([]);
   const [events, setEvents] = useState<RawEventRow[]>([]);
@@ -528,6 +530,14 @@ export default function Connections() {
 
   const selectedMetaAccounts = metaAccounts.filter((account) => selectedMetaIds.includes(account.id));
   const selectedPlayers = vturbPlayers.filter((player) => selectedPlayerIds.includes(player.id));
+  const filteredVturbPlayers = useMemo(() => {
+    const query = vturbPlayerQuery.trim().toLowerCase();
+    if (!query) return vturbPlayers;
+    return vturbPlayers.filter((player) =>
+      `${player.label ?? ""} ${player.player_id}`.toLowerCase().includes(query)
+    );
+  }, [vturbPlayerQuery, vturbPlayers]);
+  const selectedFilteredPlayers = filteredVturbPlayers.filter((player) => selectedPlayerIds.includes(player.id));
   const filteredEvents = eventFilter === "all" ? events : events.filter((event) => event.source === eventFilter);
   const canImportHublaCsv = isWorkspaceAdmin && workspaceIntegration?.gateway_provider === "hubla";
 
@@ -688,46 +698,114 @@ export default function Connections() {
                 </div>
               )}
 
+              <div className="rounded-lg border border-border/40 bg-background/50 p-3 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-medium">Players vinculados ao projeto</div>
+                    <div className="text-xs text-muted-foreground">
+                      {selectedPlayers.length} de {vturbPlayers.length} selecionado(s)
+                      {vturbPlayerQuery.trim()
+                        ? ` · ${selectedFilteredPlayers.length} de ${filteredVturbPlayers.length} visível(is)`
+                        : ""}
+                    </div>
+                  </div>
+                  {isWorkspaceAdmin && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setSelectedPlayerIds((current) =>
+                            Array.from(new Set([...current, ...filteredVturbPlayers.map((player) => player.id)]))
+                          );
+                        }}
+                        disabled={filteredVturbPlayers.length === 0}
+                      >
+                        Selecionar visíveis
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          const visibleIds = new Set(filteredVturbPlayers.map((player) => player.id));
+                          setSelectedPlayerIds((current) => current.filter((id) => !visibleIds.has(id)));
+                        }}
+                        disabled={selectedFilteredPlayers.length === 0}
+                      >
+                        Limpar visíveis
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={saveBindings}
+                        disabled={saving}
+                        className="gap-2"
+                      >
+                        {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                        Salvar seleção
+                      </Button>
+                    </div>
+                  )}
+                </div>
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={vturbPlayerQuery}
+                    onChange={(event) => setVturbPlayerQuery(event.target.value)}
+                    placeholder="Filtrar por nome ou ID do player"
+                    className="pl-9"
+                  />
+                </div>
+              </div>
+
               <div className="max-h-[420px] space-y-3 overflow-y-auto pr-1">
-                {vturbPlayers.map((player) => (
-                  <div key={player.id} className="rounded-lg border border-border/40 p-3 space-y-3 bg-background/40">
-                    <div className="flex items-start justify-between gap-3">
-                      <label className="flex items-start gap-3 cursor-pointer">
-                        <Checkbox
-                          checked={selectedPlayerIds.includes(player.id)}
-                          onCheckedChange={(checked) => {
-                            setSelectedPlayerIds((current) =>
-                              checked
-                                ? [...current, player.id]
-                                : current.filter((id) => id !== player.id),
-                            );
-                          }}
-                          disabled={!isWorkspaceAdmin}
-                        />
-                        <div>
-                          <div className="text-sm font-medium">{player.label || player.player_id}</div>
-                          <div className="text-xs text-muted-foreground font-mono">{player.player_id}</div>
+                {filteredVturbPlayers.length === 0 ? (
+                  <p className="text-xs text-muted-foreground italic py-6 text-center">
+                    Nenhum player encontrado para este filtro.
+                  </p>
+                ) : (
+                  filteredVturbPlayers.map((player) => (
+                    <div key={player.id} className="rounded-lg border border-border/40 p-3 space-y-3 bg-background/40">
+                      <div className="flex items-start justify-between gap-3">
+                        <label className="flex items-start gap-3 cursor-pointer">
+                          <Checkbox
+                            checked={selectedPlayerIds.includes(player.id)}
+                            onCheckedChange={(checked) => {
+                              setSelectedPlayerIds((current) =>
+                                checked
+                                  ? [...current, player.id]
+                                  : current.filter((id) => id !== player.id),
+                              );
+                            }}
+                            disabled={!isWorkspaceAdmin}
+                          />
+                          <div>
+                            <div className="text-sm font-medium">{player.label || player.player_id}</div>
+                            <div className="text-xs text-muted-foreground font-mono">{player.player_id}</div>
+                          </div>
+                        </label>
+                        {selectedPlayerIds.includes(player.id) && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => syncVturb(player.player_id)}
+                            disabled={vturbSyncingPlayerId === player.player_id}
+                          >
+                            {vturbSyncingPlayerId === player.player_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                          </Button>
+                        )}
+                      </div>
+                      {player.last_synced_at && (
+                        <div className="text-[10px] text-muted-foreground">
+                          Última sync: {format(new Date(player.last_synced_at), "dd/MM HH:mm", { locale: ptBR })}
                         </div>
-                      </label>
-                      {selectedPlayerIds.includes(player.id) && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => syncVturb(player.player_id)}
-                          disabled={vturbSyncingPlayerId === player.player_id}
-                        >
-                          {vturbSyncingPlayerId === player.player_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-                        </Button>
                       )}
                     </div>
-                    {player.last_synced_at && (
-                      <div className="text-[10px] text-muted-foreground">
-                        Última sync: {format(new Date(player.last_synced_at), "dd/MM HH:mm", { locale: ptBR })}
-                      </div>
-                    )}
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
 
               {selectedPlayers.length > 1 && (
