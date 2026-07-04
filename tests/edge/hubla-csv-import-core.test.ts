@@ -199,8 +199,8 @@ describe("hubla csv import core", () => {
 
   it("parses daily tracking spreadsheets as daily metric overrides", () => {
     const csv = [
-      "Data;Investimento;Vendas Front;Vendas Totais do Funil;Faturamento Bruto Total do Funil;Faturamento Líquido Total do Funil (- taxas PLATAFORMA);Imposto Meta;ROI (fat liquido - imposto - meta);Lucro;Cliques;Pageviews;Checkouts",
-      "01/06/2026;R$ 100,00;3;4;R$ 1.200,50;R$ 1.000,25;R$ 12,15;8,88;R$ 888,10;20;18;7",
+      "Data;Investimento;Vendas Front;Vendas Totais do Funil;Faturamento Bruto Total do Funil;Faturamento Líquido Total do Funil (- taxas PLATAFORMA);Imposto Meta;ROI (fat liquido - imposto - meta);Lucro;Cliques;Pageviews;LP Views;Checkouts",
+      "01/06/2026;R$ 100,00;3;4;R$ 1.200,50;R$ 1.000,25;R$ 12,50;8,88;R$ 887,75;20;18;17;7",
       "22/06/2026;0;;;0;;;;R$0,00;0;0;0",
     ].join("\n");
 
@@ -217,11 +217,11 @@ describe("hubla csv import core", () => {
         vendas_totais: 4,
         fat_bruto: 1200.5,
         fat_liquido: 1000.25,
-        imposto_meta: 12.15,
+        imposto_meta: 12.5,
         roi: 8.88,
-        lucro: 888.1,
+        lucro: 887.75,
         cliques: 20,
-        landing_pageviews: 18,
+        landing_pageviews: 17,
         pageviews: 18,
         checkouts: 7,
       },

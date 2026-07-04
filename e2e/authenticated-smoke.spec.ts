@@ -38,7 +38,7 @@ test.describe("authenticated launch smoke", () => {
     await page.goto(`/connections?project=${qaProjectId}`);
     await expect(page.getByText("Conexões", { exact: false })).toBeVisible();
     await expect(page.getByText("Meta Ads")).toBeVisible();
-    await expect(page.getByText("VTurb")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "VTurb" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Gateway de Pagamento" })).toBeVisible();
   });
 });

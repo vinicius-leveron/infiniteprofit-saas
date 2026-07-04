@@ -10,6 +10,7 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-hotmart-hottok, x-hub-signature, x-hub-signature-256, x-hubla-token, x-hubla-sandbox, x-hubla-idempotency, x-kiwify-signature, x-signature",
 };
 
+const HUBLA_RULESET_VERSION = "hubla-subtotal-without-installment-fee-v1";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 Deno.serve(async (req) => {
@@ -24,7 +25,7 @@ Deno.serve(async (req) => {
     }
 
     if (req.method === "GET") {
-      return json({ ok: true, message: `gateway webhook ready (${provider})` });
+      return json({ ok: true, message: `gateway webhook ready (${provider})`, ruleset: HUBLA_RULESET_VERSION });
     }
 
     const sb = createClient(SUPABASE_URL, SERVICE_KEY);

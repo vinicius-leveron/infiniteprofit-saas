@@ -16,6 +16,8 @@ describe("aggregate daily core", () => {
             { action_type: "link_click", value: 200 },
             { action_type: "landing_page_view", value: 160 },
             { action_type: "omni_landing_page_view", value: 165 },
+            { action_type: "initiate_checkout", value: 50 },
+            { action_type: "omni_initiated_checkout", value: 55 },
           ],
         },
       },
@@ -38,6 +40,39 @@ describe("aggregate daily core", () => {
     expect(metrics.cpc).toBeCloseTo(0.6);
     expect(metrics.taxa_carreg).toBeCloseTo(80);
     expect(metrics.custo_pageview).toBeCloseTo(0.75);
+    expect(metrics.checkouts).toBe(50);
+    expect(metrics.custo_ic).toBeCloseTo(2.4);
+  });
+
+  it("falls back to Hubla checkout_created when Meta initiate checkout is absent", () => {
+    const metrics = aggregateOneDay([
+      {
+        source: "meta",
+        event_type: "insight",
+        payload: {
+          spend: 120,
+          impressions: 1000,
+          actions: [
+            { action_type: "link_click", value: 200 },
+            { action_type: "landing_page_view", value: 160 },
+          ],
+        },
+      },
+      {
+        source: "gateway",
+        event_type: "checkout_created",
+        external_id: "checkout-1",
+        payload: { transaction_id: "checkout-1", status: "waiting_payment" },
+      },
+      {
+        source: "gateway",
+        event_type: "checkout_created",
+        external_id: "checkout-2",
+        payload: { transaction_id: "checkout-2", status: "waiting_payment" },
+      },
+    ]);
+
+    expect(metrics.checkouts).toBe(2);
     expect(metrics.custo_ic).toBeCloseTo(60);
   });
 
@@ -201,9 +236,111 @@ describe("aggregate daily core", () => {
 
     expect(metrics.fat_bruto).toBeCloseTo(297);
     expect(metrics.fat_liquido).toBeCloseTo(279.7);
-    expect(metrics.imposto_meta).toBeCloseTo(12.15);
-    expect(metrics.lucro).toBeCloseTo(167.55);
-    expect(metrics.roi).toBeCloseTo(2.6755);
+    expect(metrics.imposto_meta).toBeCloseTo(12.5);
+    expect(metrics.lucro).toBeCloseTo(167.2);
+    expect(metrics.roi).toBeCloseTo(2.672);
+  });
+
+  it("deduplicates payment approval attempts by method using checkout_created and approved events", () => {
+    const metrics = aggregateOneDay([
+      {
+        source: "gateway",
+        event_type: "checkout_created",
+        external_id: "pix-open",
+        payload: {
+          transaction_id: "pix-open",
+          status: "waiting_payment",
+          payment_method: "pix",
+          product_id: "front",
+          items: [{ external_id: "front", name: "Produto Front", type: "main", is_bump: false }],
+        },
+      },
+      {
+        source: "gateway",
+        event_type: "checkout_created",
+        external_id: "pix-paid",
+        payload: {
+          transaction_id: "pix-paid",
+          status: "waiting_payment",
+          payment_method: "pix",
+          product_id: "front",
+          items: [{ external_id: "front", name: "Produto Front", type: "main", is_bump: false }],
+        },
+      },
+      {
+        source: "gateway",
+        event_type: "purchase.approved",
+        external_id: "pix-paid",
+        payload: {
+          transaction_id: "pix-paid",
+          total: 197,
+          net: 180,
+          is_front: true,
+          payment_method: "pix",
+          product_id: "front",
+          items: [{ external_id: "front", name: "Produto Front", price: 197, type: "main", is_bump: false }],
+        },
+      },
+      {
+        source: "gateway",
+        event_type: "purchase.refused",
+        external_id: "card-refused",
+        payload: {
+          transaction_id: "card-refused",
+          payment_method: "credit_card",
+          product_id: "front",
+          items: [{ external_id: "front", name: "Produto Front", type: "main", is_bump: false }],
+        },
+      },
+      {
+        source: "gateway",
+        event_type: "purchase.approved",
+        external_id: "card-paid",
+        payload: {
+          transaction_id: "card-paid",
+          total: 197,
+          net: 180,
+          is_front: true,
+          payment_method: "credit_card",
+          product_id: "front",
+          items: [{ external_id: "front", name: "Produto Front", price: 197, type: "main", is_bump: false }],
+        },
+      },
+    ]);
+
+    expect(metrics.aprov_pix).toBeCloseTo(50);
+    expect(metrics.aprov_cartao).toBeCloseTo(50);
+  });
+
+  it("subtracts refunded net value from liquid revenue and profit", () => {
+    const metrics = aggregateOneDay([
+      {
+        source: "meta",
+        event_type: "insight",
+        payload: {
+          spend: 100,
+          impressions: 1000,
+          actions: [{ action_type: "link_click", value: 100 }],
+        },
+      },
+      {
+        source: "gateway",
+        event_type: "purchase.approved",
+        external_id: "tx-refund",
+        payload: { transaction_id: "tx-refund", total: 297, net: 270, is_front: true },
+      },
+      {
+        source: "gateway",
+        event_type: "purchase.refunded",
+        external_id: "tx-refund",
+        payload: { transaction_id: "tx-refund", total: 297, net: 270 },
+      },
+    ]);
+
+    expect(metrics.fat_bruto).toBeCloseTo(297);
+    expect(metrics.fat_liquido).toBe(0);
+    expect(metrics.valor_reembolsado).toBeCloseTo(297);
+    expect(metrics.lucro).toBeCloseTo(-112.5);
   });
 
   it("does not double count Hubla child invoices already included in the main invoice", () => {
@@ -277,6 +414,119 @@ describe("aggregate daily core", () => {
     ]);
   });
 
+  it("does not count parent invoices with child offers as duplicate product rows", () => {
+    const metrics = aggregateOneDay([
+      {
+        source: "gateway",
+        event_type: "purchase.approved",
+        external_id: "tx-bundle",
+        payload: {
+          transaction_id: "tx-bundle",
+          total: 588,
+          net: 554.73,
+          is_front: false,
+          product_id: "tummy",
+          raw_payload: { event: { invoice: { childInvoiceIds: ["tx-bundle-offer-1"] } } },
+          items: [{ external_id: "tummy", name: "Protocolo Tummy Time", price: 588, type: "main", is_bump: false }],
+        },
+      },
+      {
+        source: "gateway",
+        event_type: "purchase.approved",
+        external_id: "tx-bundle-offer-1",
+        payload: {
+          transaction_id: "tx-bundle",
+          total: 97,
+          net: 91,
+          is_offer_event: true,
+          product_id: "tummy",
+          items: [{ external_id: "tummy", name: "Protocolo Tummy Time", price: 97, type: "orderbump", is_bump: true }],
+        },
+      },
+      {
+        source: "gateway",
+        event_type: "purchase.approved",
+        external_id: "tx-zero-bump",
+        payload: {
+          transaction_id: "tx-zero-bump",
+          total: 197,
+          net: 180,
+          is_front: true,
+          product_id: "front",
+          items: [
+            { external_id: "front", name: "Produto Front", price: 197, type: "main", is_bump: false },
+            { external_id: "sonecas", name: "Guia das Sonecas", price: 0, type: "orderbump", is_bump: true },
+          ],
+        },
+      },
+    ]);
+
+    expect(metrics.vendas_front).toBe(1);
+    expect(metrics.vendas_totais).toBe(2);
+    expect(metrics.fat_bruto).toBeCloseTo(785);
+    expect(metrics.fat_orderbump).toBeCloseTo(97);
+    expect(metrics.bumps).toEqual([
+      expect.objectContaining({ name: "Protocolo Tummy Time", count: 1, revenue: 97 }),
+    ]);
+  });
+
+  it("does not classify an access bump as front only because its name starts with the front name", () => {
+    const metrics = aggregateOneDay([
+      {
+        source: "gateway",
+        event_type: "purchase.approved",
+        external_id: "tx-front",
+        payload: {
+          transaction_id: "tx-front",
+          total: 197,
+          net: 180,
+          is_front: true,
+          product_id: "front",
+          items: [
+            {
+              external_id: "front",
+              name: "Protocolo Bebê Livre de Cólicas e Disquesia",
+              price: 197,
+              type: "main",
+              is_bump: false,
+            },
+          ],
+        },
+      },
+      {
+        source: "gateway",
+        event_type: "purchase.approved",
+        external_id: "tx-access",
+        payload: {
+          transaction_id: "tx-access",
+          total: 97,
+          net: 91,
+          is_front: false,
+          product_id: "access",
+          items: [
+            {
+              external_id: "access",
+              name: "Protocolo Bebê Livre de Cólicas e Disquesia - Acesso Vitalício",
+              price: 97,
+              type: "orderbump",
+              is_bump: false,
+            },
+          ],
+        },
+      },
+    ]);
+
+    expect(metrics.vendas_front).toBe(1);
+    expect(metrics.vendas_totais).toBe(2);
+    expect(metrics.bumps).toEqual([
+      expect.objectContaining({
+        name: "Protocolo Bebê Livre de Cólicas e Disquesia - Acesso Vitalício",
+        count: 1,
+        revenue: 97,
+      }),
+    ]);
+  });
+
   it("ignores legacy approved gateway rows with zero purchase value", () => {
     const metrics = aggregateOneDay([
       {
@@ -299,7 +549,7 @@ describe("aggregate daily core", () => {
     expect(metrics.fat_liquido).toBeCloseTo(179.75);
   });
 
-  it("applies imported daily sheet overrides after API/raw aggregation", () => {
+  it("uses imported daily sheet values without overwriting raw Meta traffic", () => {
     const metrics = aggregateOneDay([
       {
         source: "meta",
@@ -307,14 +557,12 @@ describe("aggregate daily core", () => {
         payload: { spend: 100, impressions: 1000, actions: [{ action_type: "link_click", value: 100 }] },
       },
       {
-        source: "gateway",
-        event_type: "purchase.approved",
-        payload: { total: 100, net: 90, is_front: true },
-      },
-      {
         source: "sheet_override",
         event_type: "daily_metrics",
         payload: {
+          investimento: 90,
+          impressoes: 900,
+          cliques: 90,
           vendas_front: 3,
           vendas_totais: 4,
           fat_bruto: 1200.5,
@@ -328,15 +576,50 @@ describe("aggregate daily core", () => {
     ]);
 
     expect(metrics.investimento).toBe(100);
+    expect(metrics.impressoes).toBe(1000);
+    expect(metrics.cliques).toBe(100);
+    expect(metrics.cpm).toBeCloseTo(100);
+    expect(metrics.ctr).toBeCloseTo(10);
+    expect(metrics.cpc).toBeCloseTo(1);
     expect(metrics.vendas_front).toBe(3);
     expect(metrics.vendas_totais).toBe(4);
     expect(metrics.fat_bruto).toBe(1200.5);
     expect(metrics.fat_liquido).toBe(1000.25);
     expect(metrics.checkouts).toBe(7);
-    expect(metrics.lucro).toBe(800);
-    expect(metrics.roi).toBe(8.5);
+    expect(metrics.imposto_meta).toBeCloseTo(12.5);
+    expect(metrics.lucro).toBeCloseTo(887.75);
+    expect(metrics.roi).toBeCloseTo(9.8775);
     expect(metrics.bumps).toEqual([
       expect.objectContaining({ name: "Bump", count: 1, revenue: 97 }),
     ]);
+  });
+
+  it("keeps raw Hubla sales when imported daily sheet has stale sales values", () => {
+    const metrics = aggregateOneDay([
+      {
+        source: "gateway",
+        event_type: "purchase.approved",
+        payload: { total: 100, net: 90, is_front: true },
+      },
+      {
+        source: "sheet_override",
+        event_type: "daily_metrics",
+        payload: {
+          vendas_front: 3,
+          vendas_totais: 4,
+          checkouts: 7,
+          fat_bruto: 1200.5,
+          fat_liquido: 1000.25,
+          bumps: [{ name: "Bump", type: "orderbump", count: 1, revenue: 97, rate: 33.33 }],
+        },
+      },
+    ]);
+
+    expect(metrics.vendas_front).toBe(1);
+    expect(metrics.vendas_totais).toBe(1);
+    expect(metrics.checkouts).toBe(7);
+    expect(metrics.fat_bruto).toBe(100);
+    expect(metrics.fat_liquido).toBe(90);
+    expect(metrics.bumps).toEqual([]);
   });
 });

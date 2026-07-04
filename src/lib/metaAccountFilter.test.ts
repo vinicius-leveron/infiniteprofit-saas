@@ -62,9 +62,9 @@ describe("applyMetaAccountFilter", () => {
     expect(row.taxaCarreg).toBe(80);
     expect(row.custoPageview).toBe(2.5);
     expect(row.custoIC).toBe(50);
-    expect(row.impostoMeta).toBeCloseTo(24.3);
-    expect(row.lucro).toBeCloseTo(275.7);
-    expect(row.roi).toBeCloseTo(2.3785);
+    expect(row.impostoMeta).toBeCloseTo(25);
+    expect(row.lucro).toBeCloseTo(275);
+    expect(row.roi).toBeCloseTo(2.375);
     expect(row.pageviews).toBe(20);
   });
 

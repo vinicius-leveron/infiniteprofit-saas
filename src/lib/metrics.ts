@@ -1,6 +1,6 @@
 import type { DailyRow } from "./csv";
 
-export const META_TAX_RATE = 0.1215;
+export const META_TAX_RATE = 0.125;
 
 export const fBRL = (v: number | null | undefined) =>
   v == null || isNaN(v as number)

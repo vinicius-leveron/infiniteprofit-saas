@@ -153,7 +153,7 @@ export const DayDrilldownDialog = ({ row, onOpenChange, projectId, editable, onO
       value: fBRL(row.impostoMeta),
       icon: FileText,
       tone: "red",
-      hint: "12,15% do investimento",
+      hint: "12,5% do investimento",
     },
   ];
 

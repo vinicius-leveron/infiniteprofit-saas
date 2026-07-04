@@ -9,7 +9,7 @@ const map: Record<string, { formula?: string; description: string }> = {
     description: "Receita líquida do checkout após as taxas da plataforma.",
   },
   "imposto meta": {
-    formula: "Investimento × 12,15%",
+    formula: "Investimento × 12,5%",
     description: "Imposto estimado sobre mídia Meta, separado das taxas da Hubla.",
   },
   "faturamento bruto": {

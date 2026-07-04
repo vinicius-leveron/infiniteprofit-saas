@@ -84,14 +84,14 @@ describe("traffic metric mapping", () => {
       {
         investimento: 100,
         fatLiquido: 1000,
-        impostoMeta: 12.15,
-        lucro: 887.85,
+        impostoMeta: 12.5,
+        lucro: 887.5,
       } as DailyRow,
     ]);
 
-    expect(totals.impostoMeta).toBeCloseTo(12.15);
-    expect(totals.lucro).toBeCloseTo(887.85);
-    expect(totals.roi).toBeCloseTo(9.8785);
+    expect(totals.impostoMeta).toBeCloseTo(12.5);
+    expect(totals.lucro).toBeCloseTo(887.5);
+    expect(totals.roi).toBeCloseTo(9.875);
   });
 
   it("computes funnel period rates from summed denominators instead of averaging daily percentages", () => {

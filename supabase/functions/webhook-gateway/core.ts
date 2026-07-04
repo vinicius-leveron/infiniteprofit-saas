@@ -179,16 +179,16 @@ export function normalizeHubla(raw: any): NormalizedEvent[] {
 
   const items = normalizeHublaItems(object);
   const total = firstMoney(object, [
+    { path: "amount.subtotalCents", cents: true },
+    { path: "subtotalCents", cents: true },
+    { path: "amount.subtotal", autoCents: true },
     { path: "amount_paid", cents: true },
     { path: "amount_total", cents: true },
     { path: "amount_due", cents: true },
     { path: "amount_received", cents: true },
     { path: "amount.totalCents", cents: true },
-    { path: "amount.subtotalCents", cents: true },
     { path: "amount.total", autoCents: true },
-    { path: "amount.subtotal", autoCents: true },
     { path: "totalCents", cents: true },
-    { path: "subtotalCents", cents: true },
     { path: "paidAmountCents", cents: true },
     { path: "priceCents", cents: true },
     { path: "paid_amount", autoCents: true },

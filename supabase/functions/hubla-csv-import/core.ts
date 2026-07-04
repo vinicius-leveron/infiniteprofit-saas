@@ -152,7 +152,7 @@ function dailyMetricKeysForHeader(header: string): string[] {
     impressoes: ["impressoes"],
     cliques: ["cliques"],
     cliques_no_link: ["cliques"],
-    pageviews: ["landing_pageviews", "pageviews"],
+    pageviews: ["pageviews"],
     landing_page_views: ["landing_pageviews"],
     lp_views: ["landing_pageviews"],
     checkouts: ["checkouts"],

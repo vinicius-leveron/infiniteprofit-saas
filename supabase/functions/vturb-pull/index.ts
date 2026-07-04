@@ -2,7 +2,16 @@
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { buildAutomationHeaders, isAutomationRequest } from "../_shared/automation.ts";
-import { parseVturbBatchOptions, selectVturbPlayerBatch } from "./core.ts";
+import {
+  filterSchedulableVturbProjects,
+  hasCompleteUsableVturbSessionStats,
+  orderVturbPlayersForSync,
+  parseVturbBatchOptions,
+  parseVturbExecutionOptions,
+  selectVturbPlayersForSync,
+  shouldStopVturbPlayerLoop,
+  summarizeVturbPlayerResults,
+} from "./core.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -19,6 +28,7 @@ const VTURB_MAX_RATE_LIMIT_RETRIES = 3;
 const VTURB_DEFAULT_RETRY_AFTER_MS = 5000;
 const VTURB_MAX_RETRY_AFTER_MS = 60000;
 const VTURB_RUNNING_SYNC_TIMEOUT_MS = 30 * 60 * 1000;
+const VTURB_NO_ACCESS_BACKOFF_MS = 60 * 60 * 1000;
 
 type Caller =
   | { kind: "service" }
@@ -29,6 +39,7 @@ type ProjectContext = {
   user_id: string;
   workspace_id: string;
   source: string | null;
+  last_synced_at?: string | null;
 };
 
 type WorkspaceIntegration = {
@@ -74,6 +85,8 @@ Deno.serve(async (req) => {
     const targetPlayerId = stringOrNull(body.player_id);
     const days = Math.min(Math.max(Number(body.days) || 30, 1), 90);
     const batchOptions = parseVturbBatchOptions(body);
+    const executionOptions = parseVturbExecutionOptions(body);
+    const invocationStartedAt = Date.now();
 
     if (caller.kind === "user" && !targetProjectId) {
       return json({ error: "project_id é obrigatório para sync manual" }, 400);
@@ -88,6 +101,21 @@ Deno.serve(async (req) => {
     const results: Array<Record<string, unknown>> = [];
 
     for (const project of projects) {
+      if (
+        !targetProjectId
+        && shouldStopVturbPlayerLoop({
+          startedAtMs: invocationStartedAt,
+          nowMs: Date.now(),
+          maxRuntimeMs: executionOptions.maxRuntimeMs,
+        })
+      ) {
+        results.push({
+          project_id: project.id,
+          skipped: "Sync VTurb adiado: orçamento de tempo da execução atingido.",
+        });
+        break;
+      }
+
       if (caller.kind === "user") {
         await assertWorkspaceAdmin(sb, project.workspace_id, caller.userId);
       }
@@ -111,6 +139,13 @@ Deno.serve(async (req) => {
           player_filter: targetPlayerId,
           batch_cursor: targetPlayerId ? null : batchOptions.batchCursor,
           batch_size: targetPlayerId ? null : batchOptions.batchSize,
+          selection_mode: targetPlayerId
+            ? "single_player"
+            : batchOptions.hasExplicitCursor
+              ? "explicit_cursor"
+              : "oldest_first",
+          max_runtime_ms: batchOptions.hasExplicitCursor || targetPlayerId ? null : executionOptions.maxRuntimeMs,
+          max_players: batchOptions.hasExplicitCursor || targetPlayerId ? null : executionOptions.maxPlayers,
         },
       });
 
@@ -126,10 +161,10 @@ Deno.serve(async (req) => {
           throw new Error("Nenhum player VTurb vinculado a este projeto");
         }
 
-        const orderedPlayers = orderPlayersForSync(players, batchOptions.hasExplicitCursor);
-        const playerBatch = selectVturbPlayerBatch(orderedPlayers, {
-          batchCursor: batchOptions.batchCursor,
-          batchSize: batchOptions.batchSize,
+        const orderedPlayers = orderVturbPlayersForSync(players, batchOptions.hasExplicitCursor);
+        const playerBatch = selectVturbPlayersForSync(orderedPlayers, {
+          batchOptions,
+          executionOptions,
           targetPlayerId,
         });
         if (playerBatch.players.length === 0) {
@@ -142,11 +177,26 @@ Deno.serve(async (req) => {
         const projectResults: Array<Record<string, unknown>> = [];
         const projectDatesTouched = new Set<string>();
         let projectSyncedAt: string | null = null;
+        let stoppedReason: string | null = null;
+        let playersAttempted = 0;
         const vturbRuntime = createVturbRuntime();
         const playerMetadata = await loadPlayerMetadataMap(apiKey, vturbRuntime);
         await refreshPlayerLabels(sb, players, playerMetadata);
 
         for (const player of playerBatch.players) {
+          if (
+            playerBatch.selectionMode === "oldest_first"
+            && shouldStopVturbPlayerLoop({
+              startedAtMs: invocationStartedAt,
+              nowMs: Date.now(),
+              maxRuntimeMs: executionOptions.maxRuntimeMs,
+            })
+          ) {
+            stoppedReason = "runtime_budget";
+            break;
+          }
+
+          playersAttempted += 1;
           try {
             const result = await pullOnePlayer(sb, {
               vturbRuntime,
@@ -208,30 +258,34 @@ Deno.serve(async (req) => {
           await triggerAggregateDaily(project.id, [...projectDatesTouched]);
         }
 
-        const failed = projectResults.filter((result) => result.error);
+        const resultSummary = summarizeVturbPlayerResults(projectResults);
         const batchDetails = {
           player_filter: targetPlayerId,
+          selection_mode: playerBatch.selectionMode,
           batch_cursor: playerBatch.batchCursor,
           batch_size: playerBatch.batchSize,
+          max_runtime_ms: playerBatch.selectionMode === "oldest_first" ? executionOptions.maxRuntimeMs : null,
+          max_players: playerBatch.maxPlayers,
           players_total: playerBatch.totalPlayers,
-          players_processed: playerBatch.playersProcessed,
+          players_selected: playerBatch.playersProcessed,
+          players_processed: playersAttempted,
+          partial_errors: resultSummary.partialErrors,
           next_cursor: playerBatch.nextCursor,
-          has_more: playerBatch.hasMore,
+          has_more: playerBatch.hasMore || stoppedReason === "runtime_budget",
+          stopped_reason: stoppedReason,
         };
         results.push({
           project_id: project.id,
           batch: batchDetails,
         });
         await finishSyncRun(sb, runId, {
-          status: failed.length > 0 ? "failed" : "succeeded",
+          status: resultSummary.status,
           details: {
             days,
             ...batchDetails,
             results: projectResults,
           },
-          errorMessage: failed.length
-            ? failed.map((result) => String(result.error)).join(" | ").slice(0, 2000)
-            : null,
+          errorMessage: resultSummary.errorMessage,
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Erro ao sincronizar VTurb";
@@ -243,6 +297,8 @@ Deno.serve(async (req) => {
             player_filter: targetPlayerId,
             batch_cursor: targetPlayerId ? null : batchOptions.batchCursor,
             batch_size: targetPlayerId ? null : batchOptions.batchSize,
+            max_runtime_ms: batchOptions.hasExplicitCursor || targetPlayerId ? null : executionOptions.maxRuntimeMs,
+            max_players: batchOptions.hasExplicitCursor || targetPlayerId ? null : executionOptions.maxPlayers,
           },
           errorMessage: message,
         });
@@ -282,14 +338,16 @@ async function pullOnePlayer(
     duration: playerMetadata?.duration ?? null,
     pitchTime: playerMetadata?.pitchTime ?? null,
   }));
-  const statsResult = !sessionStatsResult.data
+  const sessionStatsByDay = normalizeSessionStatsByDay(sessionStatsResult.data);
+  const hasCompleteUsableSessionStats = hasCompleteUsableVturbSessionStats(sessionStatsByDay, startDay, endDay);
+  const statsResult = !hasCompleteUsableSessionStats
     ? await safeVturbPost(vturbRuntime, apiKey, "/conversions/stats_by_day", {
       player_id: playerId,
       start_date: startStr,
       end_date: endStr,
       timezone: TZ,
     })
-    : { data: null, error: null, skipped: "Conversões VTurb puladas porque sessions/stats_by_day respondeu." };
+    : { data: null, error: null, skipped: "Conversões VTurb puladas porque sessions/stats_by_day cobriu o range com métricas úteis." };
 
   const warnings = [
     sessionStatsResult.error ? `sessions_stats_by_day: ${sessionStatsResult.error}` : null,
@@ -303,7 +361,6 @@ async function pullOnePlayer(
   const datesTouched = new Set<string>();
   let inserted = 0;
 
-  const sessionStatsByDay = normalizeSessionStatsByDay(sessionStatsResult.data);
   for (const dayEntry of sessionStatsByDay) {
     const day = String(dayEntry?.date_key ?? dayEntry?.day ?? "").slice(0, 10);
     if (!day) continue;
@@ -545,7 +602,7 @@ async function getProjectOrThrow(
 ): Promise<ProjectContext> {
   const { data, error } = await sb
     .from("projects")
-    .select("id, user_id, workspace_id, source")
+    .select("id, user_id, workspace_id, source, last_synced_at")
     .eq("id", projectId)
     .maybeSingle();
 
@@ -559,14 +616,56 @@ async function getProjectOrThrow(
 async function loadSchedulableProjects(
   sb: ReturnType<typeof createClient>,
 ): Promise<ProjectContext[]> {
-  const { data, error } = await sb
-    .from("projects")
-    .select("id, user_id, workspace_id, source")
-    .eq("source", "api")
-    .not("workspace_id", "is", null);
+  const [
+    projectsResult,
+    playerBindingsResult,
+    integrationsResult,
+    noAccessRunsResult,
+  ] = await Promise.all([
+    sb
+      .from("projects")
+      .select("id, user_id, workspace_id, source, last_synced_at")
+      .eq("source", "api")
+      .not("workspace_id", "is", null),
+    sb
+      .from("project_vturb_players")
+      .select("project_id"),
+    sb
+      .from("workspace_integrations")
+      .select("workspace_id, vturb_api_key"),
+    sb
+      .from("sync_runs")
+      .select("project_id")
+      .eq("source", "vturb")
+      .eq("status", "failed")
+      .gte("started_at", new Date(Date.now() - VTURB_NO_ACCESS_BACKOFF_MS).toISOString())
+      .ilike("error_message", "%public analytics API%"),
+  ]);
 
-  if (error) throw new Error(error.message);
-  return (data ?? []) as ProjectContext[];
+  if (projectsResult.error) throw new Error(projectsResult.error.message);
+  if (playerBindingsResult.error) throw new Error(playerBindingsResult.error.message);
+  if (integrationsResult.error) throw new Error(integrationsResult.error.message);
+  if (noAccessRunsResult.error) throw new Error(noAccessRunsResult.error.message);
+
+  return filterSchedulableVturbProjects((projectsResult.data ?? []) as ProjectContext[], {
+    projectIdsWithPlayers: (playerBindingsResult.data ?? [])
+      .map((binding: any) => String(binding.project_id ?? "").trim())
+      .filter(Boolean),
+    workspaceIdsWithVturbKey: (integrationsResult.data ?? [])
+      .filter((integration: any) => String(integration.vturb_api_key ?? "").trim())
+      .map((integration: any) => String(integration.workspace_id ?? "").trim())
+      .filter(Boolean),
+    backoffProjectIds: (noAccessRunsResult.data ?? [])
+      .map((run: any) => String(run.project_id ?? "").trim())
+      .filter(Boolean),
+  }).sort((left, right) => {
+    const leftSyncedAt = Date.parse(left.last_synced_at ?? "");
+    const rightSyncedAt = Date.parse(right.last_synced_at ?? "");
+    const leftOrder = Number.isFinite(leftSyncedAt) ? leftSyncedAt : 0;
+    const rightOrder = Number.isFinite(rightSyncedAt) ? rightSyncedAt : 0;
+    if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+    return left.id.localeCompare(right.id);
+  });
 }
 
 async function getWorkspaceIntegrationOrThrow(
@@ -612,22 +711,6 @@ async function loadProjectPlayers(
   const players = (playerRows ?? []) as PlayerBinding[];
   if (!targetPlayerId) return players;
   return players.filter((player) => player.player_id === targetPlayerId);
-}
-
-function orderPlayersForSync(players: PlayerBinding[], stableCursorOrder: boolean) {
-  return [...players].sort((left, right) => {
-    if (!stableCursorOrder) {
-      const leftSyncedAt = Date.parse(left.last_synced_at ?? "");
-      const rightSyncedAt = Date.parse(right.last_synced_at ?? "");
-      const leftOrder = Number.isFinite(leftSyncedAt) ? leftSyncedAt : 0;
-      const rightOrder = Number.isFinite(rightSyncedAt) ? rightSyncedAt : 0;
-      if (leftOrder !== rightOrder) return leftOrder - rightOrder;
-    }
-
-    const byPlayerId = left.player_id.localeCompare(right.player_id);
-    if (byPlayerId !== 0) return byPlayerId;
-    return left.id.localeCompare(right.id);
-  });
 }
 
 async function assertWorkspaceAdmin(

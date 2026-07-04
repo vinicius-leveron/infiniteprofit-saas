@@ -5,6 +5,7 @@ import { ArrowLeft, Check, Copy, Loader2, Plug, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -82,10 +83,40 @@ export default function SetupOperation() {
     () => playersText.split(/\n|,|;/).map((value) => value.trim()).filter(Boolean),
     [playersText],
   );
+  const selectedPlayerIdSet = useMemo(() => new Set(playerIds), [playerIds]);
+  const detectedPlayers = vturbTestResult?.ok ? vturbTestResult.players ?? [] : [];
+  const selectedDetectedPlayers = detectedPlayers.filter((player) => selectedPlayerIdSet.has(player.id));
   const webhookUrl = useMemo(
     () => `${SUPABASE_URL}/functions/v1/webhook-gateway/hubla/${webhookToken}`,
     [webhookToken],
   );
+
+  function setPlayerIds(nextIds: string[]) {
+    setPlayersText([...new Set(nextIds.map((id) => id.trim()).filter(Boolean))].join("\n"));
+  }
+
+  function toggleDetectedPlayer(playerId: string, checked: boolean) {
+    const next = new Set(playerIds);
+    if (checked) {
+      next.add(playerId);
+    } else {
+      next.delete(playerId);
+    }
+    setPlayerIds([...next]);
+  }
+
+  function selectAllDetectedPlayers() {
+    const next = new Set(playerIds);
+    for (const player of detectedPlayers) {
+      if (player.id.trim()) next.add(player.id.trim());
+    }
+    setPlayerIds([...next]);
+  }
+
+  function clearDetectedPlayers() {
+    const detectedIds = new Set(detectedPlayers.map((player) => player.id.trim()).filter(Boolean));
+    setPlayerIds(playerIds.filter((playerId) => !detectedIds.has(playerId)));
+  }
 
   useEffect(() => {
     const draft = readSetupDraft(draftStorageKey) ?? emptySetupDraft();
@@ -390,10 +421,6 @@ export default function SetupOperation() {
                       setVturbTestResult({ ok: false, error: data?.error ?? error?.message });
                     } else {
                       setVturbTestResult({ ok: true, players: data?.players });
-                      // Auto-fill players if empty
-                      if (data?.players?.length > 0 && !playersText.trim()) {
-                        setPlayersText(data.players.map((p: { id: string }) => p.id).join("\n"));
-                      }
                     }
                   } catch (err) {
                     setVturbTestResult({ ok: false, error: err instanceof Error ? err.message : "Erro ao testar" });
@@ -412,8 +439,50 @@ export default function SetupOperation() {
                 </span>
               )}
             </div>
-            <Field label="Players">
-              <Textarea value={playersText} onChange={(e) => setPlayersText(e.target.value)} placeholder="Um player ID por linha" rows={7} />
+            {detectedPlayers.length > 0 && (
+              <div className="rounded-lg border border-border/50 bg-muted/10 p-3 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-medium">Selecione os vídeos deste projeto</div>
+                    <div className="text-xs text-muted-foreground">
+                      {selectedDetectedPlayers.length} de {detectedPlayers.length} player(s) selecionados
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button type="button" variant="outline" size="sm" onClick={selectAllDetectedPlayers}>
+                      Selecionar todos
+                    </Button>
+                    <Button type="button" variant="ghost" size="sm" onClick={clearDetectedPlayers}>
+                      Limpar
+                    </Button>
+                  </div>
+                </div>
+                <div className="max-h-[280px] space-y-2 overflow-y-auto pr-1">
+                  {detectedPlayers.map((player) => (
+                    <label
+                      key={player.id}
+                      className="flex items-start gap-3 rounded-md border border-border/40 bg-background/50 p-3 cursor-pointer"
+                    >
+                      <Checkbox
+                        checked={selectedPlayerIdSet.has(player.id)}
+                        onCheckedChange={(checked) => toggleDetectedPlayer(player.id, checked === true)}
+                      />
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium truncate">{player.name || player.id}</div>
+                        <div className="text-xs text-muted-foreground font-mono break-all">{player.id}</div>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+            <Field label="Players selecionados ou IDs manuais">
+              <Textarea
+                value={playersText}
+                onChange={(e) => setPlayersText(e.target.value)}
+                placeholder="Selecione acima ou cole um player ID por linha"
+                rows={5}
+              />
             </Field>
           </StepSection>
         )}

@@ -13,6 +13,7 @@ const projectIds = (process.env.QA_PROJECT_IDS ?? DEFAULT_DENISE_PROJECTS.join("
   .filter(Boolean);
 const shouldReprocess = process.argv.includes("--reprocess") || process.env.QA_REPROCESS === "1";
 const forcedReprocessDates = parseDateList(process.env.QA_REPROCESS_DATES ?? "");
+const rawDataSourcesSql = "'meta', 'vturb', 'gateway', 'sheet_override'";
 const results = [];
 const projects = [];
 
@@ -96,7 +97,7 @@ async function auditProject(projectId) {
       min(event_date)::text as min_date, max(event_date)::text as max_date
     from public.raw_events
     where project_id = ${sqlString(projectId)}
-      and source in ('meta', 'vturb', 'gateway')
+      and source in (${rawDataSourcesSql})
     group by source
     order by source;
   `);
@@ -104,7 +105,7 @@ async function auditProject(projectId) {
     select distinct event_date::text as event_date
     from public.raw_events
     where project_id = ${sqlString(projectId)}
-      and source in ('meta', 'vturb', 'gateway')
+      and source in (${rawDataSourcesSql})
     order by event_date;
   `).map((row) => row.event_date);
   const dailyDates = runSql(`
@@ -265,7 +266,7 @@ async function reprocessProjectDatesViaSql(projectId, dates) {
       from public.raw_events
       where project_id = ${sqlString(projectId)}
         and event_date = date ${sqlString(date)}
-        and source in ('meta', 'vturb', 'gateway')
+        and source in (${rawDataSourcesSql})
       order by source, event_type, external_id;
     `);
     const metrics = aggregateOneDay(events);
