@@ -524,9 +524,9 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
       )}
 
       {viewMode === "funnel" ? (
-        <AdsFunnelView projectId={projectId} />
+        <AdsFunnelView projectId={projectId} dateRange={dateRange} />
       ) : viewMode === "paths" ? (
-        <AdsPathsView projectId={projectId} />
+        <AdsPathsView projectId={projectId} dateRange={dateRange} />
       ) : loading ? (
         <div className="flex flex-col items-center justify-center py-24 gap-4">
           <div className="relative">

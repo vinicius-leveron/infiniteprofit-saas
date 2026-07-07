@@ -122,6 +122,12 @@ export const CommandPalette = ({ open, onOpenChange, onSelectTab, onSelectPeriod
         {onSelectPeriod && (
           <>
             <CommandGroup heading="Período">
+              <CommandItem onSelect={run(() => onSelectPeriod("today"))}>
+                <Calendar className="w-4 h-4 mr-2" /> Hoje
+              </CommandItem>
+              <CommandItem onSelect={run(() => onSelectPeriod("yesterday"))}>
+                <Calendar className="w-4 h-4 mr-2" /> Ontem
+              </CommandItem>
               <CommandItem onSelect={run(() => onSelectPeriod("7d"))}>
                 <Calendar className="w-4 h-4 mr-2" /> Últimos 7 dias
               </CommandItem>

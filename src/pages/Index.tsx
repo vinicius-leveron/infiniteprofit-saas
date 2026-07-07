@@ -22,7 +22,7 @@ import { SheetSyncDialog } from "@/components/SheetSyncDialog";
 import { parseCsv, type DailyRow } from "@/lib/csv";
 import { dailyMetricsToDailyRows, type DailyMetricsRow } from "@/lib/dailyMetrics";
 import { readStoredDashboardFilters, writeStoredDashboardFilters } from "@/lib/dashboardFilters";
-import { getDashboardPeriodRows } from "@/lib/dashboardRows";
+import { getDashboardPeriodRows, getDashboardSelectedDateRange } from "@/lib/dashboardRows";
 import { applyMetaAccountFilter } from "@/lib/metaAccountFilter";
 import {
   Select,
@@ -361,6 +361,11 @@ const Index = () => {
     return getDashboardPeriodRows(rows, period, customFrom, customTo);
   }, [rows, period, customFrom, customTo]);
 
+  const selectedDateRange = useMemo(() => {
+    if (!rows) return { from: null, to: null };
+    return getDashboardSelectedDateRange(rows, period, customFrom, customTo);
+  }, [rows, period, customFrom, customTo]);
+
   // (Os totais para Insights da IA agora são calculados dentro do DiagnosticsPanel)
 
   // Atalhos de teclado
@@ -413,8 +418,8 @@ const Index = () => {
   }
 
   const periodLabel =
-    filtered.length > 0 && filtered[0].date && filtered[filtered.length - 1].date
-      ? `${format(filtered[0].date!, "dd/MM/yyyy")} → ${format(filtered[filtered.length - 1].date!, "dd/MM/yyyy")} · ${filtered.length} dias`
+    selectedDateRange.from && selectedDateRange.to
+      ? `${formatDateKey(selectedDateRange.from)} → ${formatDateKey(selectedDateRange.to)} · ${filtered.length} dias com dados`
       : "Sem dados no período";
 
   const handlePeriodChange = (p: Period) => {
@@ -617,10 +622,7 @@ const Index = () => {
             ) : tab === "anuncios" ? (
               <AdsPanel
                 projectId={currentProjectId}
-                dateRange={{
-                  from: filtered[0]?.date ? format(filtered[0].date, "yyyy-MM-dd") : null,
-                  to: filtered[filtered.length - 1]?.date ? format(filtered[filtered.length - 1].date, "yyyy-MM-dd") : null,
-                }}
+                dateRange={selectedDateRange}
               />
             ) : tab === "atribuicao" ? (
               <AttributionPanel rows={filtered} projectId={currentProjectId} />
@@ -687,5 +689,10 @@ const Index = () => {
     </main>
   );
 };
+
+function formatDateKey(value: string) {
+  const [year, month, day] = value.split("-");
+  return `${day}/${month}/${year}`;
+}
 
 export default Index;

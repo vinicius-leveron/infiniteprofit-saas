@@ -9,6 +9,7 @@ import { PeriodFilter, type Period } from "@/components/PeriodFilter";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { dailyMetricsToDailyRows, type DailyMetricsRow } from "@/lib/dailyMetrics";
+import { getDashboardPeriodRows } from "@/lib/dashboardRows";
 import { exportElementToPdf } from "@/lib/exportPdf";
 import type { DailyRow } from "@/lib/csv";
 
@@ -77,24 +78,7 @@ export default function PublicShare() {
   }, [token]);
 
   const { current, previous } = useMemo(() => {
-    const active = rows.filter((row) => row.date && ((row.investimento ?? 0) > 0 || (row.vendasTotais ?? 0) > 0 || (row.fatLiquido ?? 0) > 0));
-    if (period === "all") return { current: active, previous: [] as DailyRow[] };
-    if (period === "custom") {
-      const from = customFrom ? new Date(customFrom) : null;
-      const to = customTo ? new Date(customTo) : null;
-      const cur = active.filter((row) => {
-        if (!row.date) return false;
-        if (from && row.date < from) return false;
-        if (to && row.date > to) return false;
-        return true;
-      });
-      return { current: cur, previous: [] as DailyRow[] };
-    }
-    const n = period === "7d" ? 7 : period === "15d" ? 15 : 30;
-    return {
-      current: active.slice(-n),
-      previous: active.slice(Math.max(0, active.length - n * 2), active.length - n),
-    };
+    return getDashboardPeriodRows(rows, period, customFrom, customTo);
   }, [rows, period, customFrom, customTo]);
 
   async function exportPdf() {

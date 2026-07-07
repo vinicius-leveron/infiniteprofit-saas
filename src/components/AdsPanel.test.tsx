@@ -127,7 +127,19 @@ vi.mock("@/hooks/useAuth", () => ({
 }));
 
 vi.mock("@/components/ads/AdsFunnelView", () => ({
-  AdsFunnelView: () => <div>Funil mockado</div>,
+  AdsFunnelView: ({ dateRange }: { dateRange?: { from: string | null; to: string | null } }) => (
+    <div data-testid="funnel-range">
+      Funil mockado {dateRange?.from} {dateRange?.to}
+    </div>
+  ),
+}));
+
+vi.mock("@/components/ads/AdsPathsView", () => ({
+  AdsPathsView: ({ dateRange }: { dateRange?: { from: string | null; to: string | null } }) => (
+    <div data-testid="paths-range">
+      Caminhos mockado {dateRange?.from} {dateRange?.to}
+    </div>
+  ),
 }));
 
 vi.mock("@/integrations/supabase/client", () => ({
@@ -161,7 +173,8 @@ describe("AdsPanel", () => {
     expect(screen.getByText(/Abertura/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Funil" }));
-    expect(screen.getByText("Funil mockado")).toBeInTheDocument();
+    expect(screen.getByText(/Funil mockado/)).toBeInTheDocument();
+    expect(screen.getByTestId("funnel-range")).toHaveTextContent("2026-06-01 2026-06-03");
   });
 
   it("syncs creative inventory without enqueueing analysis", async () => {

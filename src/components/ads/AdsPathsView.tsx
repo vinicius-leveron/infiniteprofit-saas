@@ -17,6 +17,10 @@ import { cn } from "@/lib/utils";
 
 interface AdsPathsViewProps {
   projectId: string;
+  dateRange?: {
+    from: string | null;
+    to: string | null;
+  };
 }
 
 type SortKey = "roas" | "revenue" | "spend" | "conversions";
@@ -61,7 +65,7 @@ interface RawEventPayload {
   [key: string]: unknown;
 }
 
-export function AdsPathsView({ projectId }: AdsPathsViewProps) {
+export function AdsPathsView({ projectId, dateRange }: AdsPathsViewProps) {
   const [loading, setLoading] = useState(false);
   const [trafficData, setTrafficData] = useState<Array<{ payload: RawEventPayload }>>([]);
   const [gatewayData, setGatewayData] = useState<Array<{ event_type: string; payload: RawEventPayload }>>([]);
@@ -72,35 +76,49 @@ export function AdsPathsView({ projectId }: AdsPathsViewProps) {
     if (!projectId) return;
     setLoading(true);
 
+    let trafficQuery = supabase
+      .from("raw_events")
+      .select("payload")
+      .eq("project_id", projectId)
+      .eq("source", "vturb")
+      .eq("event_type", "traffic_by_source");
+
+    let gatewayQuery = supabase
+      .from("raw_events")
+      .select("event_type, payload")
+      .eq("project_id", projectId)
+      .eq("source", "gateway")
+      .in("event_type", ["purchase.approved", "checkout_created"]);
+
+    let metaQuery = supabase
+      .from("raw_events")
+      .select("payload")
+      .eq("project_id", projectId)
+      .eq("source", "meta")
+      .eq("event_type", "insight_ad");
+
+    if (dateRange?.from) {
+      trafficQuery = trafficQuery.gte("event_date", dateRange.from);
+      gatewayQuery = gatewayQuery.gte("event_date", dateRange.from);
+      metaQuery = metaQuery.gte("event_date", dateRange.from);
+    }
+    if (dateRange?.to) {
+      trafficQuery = trafficQuery.lte("event_date", dateRange.to);
+      gatewayQuery = gatewayQuery.lte("event_date", dateRange.to);
+      metaQuery = metaQuery.lte("event_date", dateRange.to);
+    }
+
     Promise.all([
-      supabase
-        .from("raw_events")
-        .select("payload")
-        .eq("project_id", projectId)
-        .eq("source", "vturb")
-        .eq("event_type", "traffic_by_source")
-        .limit(1000),
-      supabase
-        .from("raw_events")
-        .select("event_type, payload")
-        .eq("project_id", projectId)
-        .eq("source", "gateway")
-        .in("event_type", ["purchase.approved", "checkout_created"])
-        .limit(5000),
-      supabase
-        .from("raw_events")
-        .select("payload")
-        .eq("project_id", projectId)
-        .eq("source", "meta")
-        .eq("event_type", "insight_ad")
-        .limit(5000),
+      trafficQuery.limit(1000),
+      gatewayQuery.limit(5000),
+      metaQuery.limit(5000),
     ]).then(([traffic, gateway, meta]) => {
       setTrafficData((traffic.data ?? []) as Array<{ payload: RawEventPayload }>);
       setGatewayData((gateway.data ?? []) as Array<{ event_type: string; payload: RawEventPayload }>);
       setMetaData((meta.data ?? []) as Array<{ payload: RawEventPayload }>);
       setLoading(false);
     });
-  }, [projectId]);
+  }, [dateRange?.from, dateRange?.to, projectId]);
 
   const paths = useMemo(() => {
     const pathMap = new Map<string, PathMetric>();

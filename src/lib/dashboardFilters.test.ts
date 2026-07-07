@@ -29,7 +29,7 @@ describe("dashboard filter storage", () => {
     window.localStorage.clear();
     window.localStorage.setItem(
       dashboardFilterStorageKey("project-1"),
-      JSON.stringify({ period: "yesterday", accountFilter: "act_123" }),
+      JSON.stringify({ period: "last-quarter", accountFilter: "act_123" }),
     );
 
     expect(readStoredDashboardFilters("project-1")).toEqual({

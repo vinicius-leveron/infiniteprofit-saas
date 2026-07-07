@@ -1,6 +1,11 @@
 import type { DailyRow } from "./csv";
 
-export type DashboardPeriod = "7d" | "15d" | "30d" | "all" | "custom";
+export type DashboardPeriod = "today" | "yesterday" | "7d" | "15d" | "30d" | "all" | "custom";
+
+export interface DashboardDateRange {
+  from: string | null;
+  to: string | null;
+}
 
 const SIGNAL_KEYS: Array<keyof DailyRow> = [
   "investimento",
@@ -67,11 +72,51 @@ export function getDashboardPeriodRows(
     return { current: cur, previous };
   }
 
+  if (period === "today" || period === "yesterday") {
+    const today = localDateKey(new Date());
+    const target = period === "today" ? today : addDays(today, -1);
+    const previousTarget = addDays(target, -1);
+    return {
+      current: active.filter((row) => row.date && localDateKey(row.date) === target),
+      previous: active.filter((row) => row.date && localDateKey(row.date) === previousTarget),
+    };
+  }
+
   const days = period === "7d" ? 7 : period === "15d" ? 15 : 30;
   return {
     current: active.slice(-days),
     previous: active.slice(Math.max(0, active.length - days * 2), active.length - days),
   };
+}
+
+export function getDashboardSelectedDateRange(
+  rows: DailyRow[],
+  period: DashboardPeriod,
+  customFrom = "",
+  customTo = "",
+): DashboardDateRange {
+  const active = rows.filter(hasDashboardSignal);
+
+  if (period === "custom") {
+    const fallback = dateRangeForRows(active);
+    const from = customFrom || customTo || fallback.from;
+    const to = customTo || customFrom || fallback.to;
+    if (from && to && from > to) return { from: to, to: from };
+    return { from, to };
+  }
+
+  if (period === "today" || period === "yesterday") {
+    const today = localDateKey(new Date());
+    const target = period === "today" ? today : addDays(today, -1);
+    return { from: target, to: target };
+  }
+
+  if (period === "all") {
+    return dateRangeForRows(active);
+  }
+
+  const { current } = getDashboardPeriodRows(rows, period, customFrom, customTo);
+  return dateRangeForRows(current);
 }
 
 export function localDateKey(date: Date) {
@@ -81,6 +126,14 @@ export function localDateKey(date: Date) {
 
 function numericSignal(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function dateRangeForRows(rows: DailyRow[]): DashboardDateRange {
+  const keys = rows
+    .map((row) => (row.date ? localDateKey(row.date) : ""))
+    .filter(Boolean);
+  if (keys.length === 0) return { from: null, to: null };
+  return { from: keys[0], to: keys[keys.length - 1] };
 }
 
 function daysBetween(from: string, to: string) {

@@ -8,7 +8,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { cn } from "@/lib/utils";
 import type { DateRange } from "react-day-picker";
 
-export type Period = "7d" | "15d" | "30d" | "all" | "custom";
+export type Period = "today" | "yesterday" | "7d" | "15d" | "30d" | "all" | "custom";
 
 interface Props {
   period: Period;
@@ -19,6 +19,8 @@ interface Props {
 }
 
 const PRESETS: { id: Period; label: string }[] = [
+  { id: "today", label: "Hoje" },
+  { id: "yesterday", label: "Ontem" },
   { id: "7d", label: "7 dias" },
   { id: "15d", label: "15 dias" },
   { id: "30d", label: "30 dias" },

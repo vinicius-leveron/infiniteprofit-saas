@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DailyRow } from "./csv";
-import { getDashboardPeriodRows, hasDashboardSignal } from "./dashboardRows";
+import { getDashboardPeriodRows, getDashboardSelectedDateRange, hasDashboardSignal } from "./dashboardRows";
 
 function row(day: string, patch: Partial<DailyRow>): DailyRow {
   const [year, month, date] = day.split("-").map(Number);
@@ -87,5 +87,19 @@ describe("dashboardRows", () => {
 
     expect(current.map((item) => item.data)).toEqual(["01/06/2026", "22/06/2026"]);
     expect(previous.map((item) => item.data)).toEqual(["31/05/2026"]);
+  });
+
+  it("keeps the requested custom range even when the last selected day has no dashboard signal", () => {
+    const rows = [
+      row("2026-07-01", { investimento: 100 }),
+      row("2026-07-04", { vendasTotais: 2 }),
+      row("2026-07-05", {}),
+    ];
+
+    const { current } = getDashboardPeriodRows(rows, "custom", "2026-07-01", "2026-07-05");
+    const selectedRange = getDashboardSelectedDateRange(rows, "custom", "2026-07-01", "2026-07-05");
+
+    expect(current.map((item) => item.data)).toEqual(["01/07/2026", "04/07/2026"]);
+    expect(selectedRange).toEqual({ from: "2026-07-01", to: "2026-07-05" });
   });
 });

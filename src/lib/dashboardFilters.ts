@@ -1,7 +1,7 @@
 import type { Period } from "@/components/PeriodFilter";
 
 const DASHBOARD_FILTER_STORAGE_PREFIX = "infiniteprofit.dashboardFilters";
-const PERIODS = new Set<Period>(["7d", "15d", "30d", "all", "custom"]);
+const PERIODS = new Set<Period>(["today", "yesterday", "7d", "15d", "30d", "all", "custom"]);
 
 export type StoredDashboardFilters = {
   period?: Period;

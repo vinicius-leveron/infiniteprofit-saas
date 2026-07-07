@@ -30,12 +30,16 @@ import {
 
 interface AdsPanelProps {
   projectId: string | null;
+  dateRange?: {
+    from: string | null;
+    to: string | null;
+  };
 }
 
 type SortKey = FunnelSortKey;
 type ViewMode = "hierarchy" | "flat";
 
-export function AdsFunnelView({ projectId }: AdsPanelProps) {
+export function AdsFunnelView({ projectId, dateRange }: AdsPanelProps) {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [metaEvents, setMetaEvents] = useState<Array<{ payload: RawMetaPayload | null }>>([]);
@@ -50,38 +54,52 @@ export function AdsFunnelView({ projectId }: AdsPanelProps) {
     if (!projectId) return;
     setLoading(true);
 
+    let metaQuery = supabase
+      .from("raw_events")
+      .select("payload")
+      .eq("project_id", projectId)
+      .eq("source", "meta")
+      .eq("event_type", "insight_ad");
+
+    let vturbQuery = supabase
+      .from("raw_events")
+      .select("payload")
+      .eq("project_id", projectId)
+      .eq("source", "vturb")
+      .eq("event_type", "traffic_by_source");
+
+    let gatewayQuery = supabase
+      .from("raw_events")
+      .select("event_type, payload")
+      .eq("project_id", projectId)
+      .eq("source", "gateway")
+      .in("event_type", ["purchase.approved", "checkout_created"]);
+
+    if (dateRange?.from) {
+      metaQuery = metaQuery.gte("event_date", dateRange.from);
+      vturbQuery = vturbQuery.gte("event_date", dateRange.from);
+      gatewayQuery = gatewayQuery.gte("event_date", dateRange.from);
+    }
+    if (dateRange?.to) {
+      metaQuery = metaQuery.lte("event_date", dateRange.to);
+      vturbQuery = vturbQuery.lte("event_date", dateRange.to);
+      gatewayQuery = gatewayQuery.lte("event_date", dateRange.to);
+    }
+
     Promise.all([
       // Meta ad insights
-      supabase
-        .from("raw_events")
-        .select("payload")
-        .eq("project_id", projectId)
-        .eq("source", "meta")
-        .eq("event_type", "insight_ad")
-        .limit(5000),
+      metaQuery.limit(5000),
       // VTurb traffic by source (para correlacao)
-      supabase
-        .from("raw_events")
-        .select("payload")
-        .eq("project_id", projectId)
-        .eq("source", "vturb")
-        .eq("event_type", "traffic_by_source")
-        .limit(5000),
+      vturbQuery.limit(5000),
       // Gateway events (para correlacao)
-      supabase
-        .from("raw_events")
-        .select("event_type, payload")
-        .eq("project_id", projectId)
-        .eq("source", "gateway")
-        .in("event_type", ["purchase.approved", "checkout_created"])
-        .limit(5000),
+      gatewayQuery.limit(5000),
     ]).then(([meta, vturb, gateway]) => {
       setMetaEvents((meta.data ?? []) as Array<{ payload: RawMetaPayload | null }>);
       setVturbEvents((vturb.data ?? []) as Array<{ payload: RawVturbPayload | null }>);
       setGatewayEvents((gateway.data ?? []) as Array<{ event_type: string; payload: RawGatewayPayload | null }>);
       setLoading(false);
     });
-  }, [projectId]);
+  }, [dateRange?.from, dateRange?.to, projectId]);
 
   // Correlacionar dados de todas as fontes
   const { ads, campaigns: hierarchy } = useMemo(() => {
