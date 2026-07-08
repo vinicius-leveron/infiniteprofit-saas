@@ -65,6 +65,7 @@ import {
   type CreativeAssetAdRow,
   type CreativeAssetAnalysisRow,
   type CreativeAssetCard,
+  type CreativeAssetJobRow,
   type CreativeAssetMetricRow,
   type CreativeAssetRow,
   type CreativeGroupBy,
@@ -170,6 +171,7 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
   const [assetAds, setAssetAds] = useState<CreativeAssetAdRow[]>([]);
   const [metrics, setMetrics] = useState<CreativeAssetMetricRow[]>([]);
   const [analyses, setAnalyses] = useState<CreativeAssetAnalysisRow[]>([]);
+  const [jobs, setJobs] = useState<CreativeAssetJobRow[]>([]);
   const [groups, setGroups] = useState<CreativeGroupRow[]>([]);
   const [latestSyncRun, setLatestSyncRun] = useState<SyncRunRow | null>(null);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
@@ -203,6 +205,7 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
         { data: adRows },
         { data: metricRows },
         { data: analysisRows },
+        { data: jobRows },
         { data: groupRows },
         { data: syncRows },
       ] = await Promise.all([
@@ -226,6 +229,11 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
           .select("asset_id, status, transcript_status, transcript, transcript_segments, transcript_language, transcript_provider, transcript_model, transcript_error_message, summary, hook, hook_timestamps, angle, copy, cta, visual, visual_evidence, tags, scores, analysis_coverage, analysis_error_message, error_message, processed_at")
           .eq("project_id", projectId),
         supabase
+          .from("creative_asset_jobs" as never)
+          .select("asset_id, status")
+          .eq("project_id", projectId)
+          .in("status", ["queued", "running"]),
+        supabase
           .from("creative_groups" as never)
           .select("id, name, rules, sort_key")
           .eq("project_id", projectId)
@@ -247,6 +255,7 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
       setAssetAds((adRows ?? []) as unknown as CreativeAssetAdRow[]);
       setMetrics((metricRows ?? []) as unknown as CreativeAssetMetricRow[]);
       setAnalyses((analysisRows ?? []) as unknown as CreativeAssetAnalysisRow[]);
+      setJobs((jobRows ?? []) as unknown as CreativeAssetJobRow[]);
       setGroups((groupRows ?? []) as unknown as CreativeGroupRow[]);
       setLatestSyncRun(((syncRows ?? [])[0] as SyncRunRow | undefined) ?? null);
     } catch (error) {
@@ -359,8 +368,8 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
   }
 
   const cards = useMemo(
-    () => buildCreativeAssetCards({ assets, ads: assetAds, metrics, analyses }),
-    [assets, assetAds, metrics, analyses],
+    () => buildCreativeAssetCards({ assets, ads: assetAds, metrics, analyses, jobs }),
+    [assets, assetAds, metrics, analyses, jobs],
   );
 
   const activeCustomGroup = useMemo(

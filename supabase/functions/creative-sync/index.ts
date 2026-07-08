@@ -366,6 +366,7 @@ async function syncProjectAssets(
     metaRows,
     resolution,
     latestSync,
+    enqueueAnalysis: args.enqueueAnalysis,
   });
   const narrowedAssetPayloads = args.targetAssetId
     ? assetPayloads.filter((asset) => asset.asset_key && asset.asset_key.length > 0)
@@ -538,6 +539,7 @@ async function buildAssetPayloads(
     metaRows: RawMetaEventRow[];
     resolution: AdResolution;
     latestSync: string;
+    enqueueAnalysis: boolean;
   },
 ) {
   const byAssetKey = new Map<string, AssetCandidate>();
@@ -615,7 +617,9 @@ async function buildAssetPayloads(
       candidate.derived.mediaType === "unknown" || !hasUsableMedia
         ? "missing_media"
         : needsProcessing
-          ? "processing"
+          ? args.enqueueAnalysis
+            ? "processing"
+            : "pending"
           : current?.analysis_status ?? "pending";
 
     const isImage = candidate.derived.mediaType === "image";

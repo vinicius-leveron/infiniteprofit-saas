@@ -161,6 +161,7 @@ export interface CreativeAssetCard {
   analysisStatus: CreativeAnalysisStatus;
   transcriptStatus: CreativeTranscriptStatus;
   analysisCoverage: CreativeAnalysisCoverage;
+  activeJobStatus: CreativeAssetJobRow["status"] | null;
   pipelineStatus: CreativePipelineStatus;
   transcript: string | null;
   transcriptSegments: CreativeTranscriptSegment[];
@@ -214,8 +215,14 @@ export function buildCreativeAssetCards(input: {
   ads: CreativeAssetAdRow[];
   metrics: CreativeAssetMetricRow[];
   analyses: CreativeAssetAnalysisRow[];
+  jobs?: CreativeAssetJobRow[];
 }): CreativeAssetCard[] {
   const analysisByAsset = new Map(input.analyses.map((analysis) => [analysis.asset_id, analysis]));
+  const activeJobByAsset = new Map(
+    (input.jobs ?? [])
+      .filter((job) => job.status === "queued" || job.status === "running")
+      .map((job) => [job.asset_id, job.status]),
+  );
   const adsByAsset = groupBy(input.ads, (row) => row.asset_id);
   const metricsByAsset = groupBy(input.metrics, (row) => row.asset_id);
 
@@ -235,6 +242,7 @@ export function buildCreativeAssetCards(input: {
     const transcriptStatus = normalizeTranscriptStatus(analysis?.transcript_status, asset.media_type);
     const analysisCoverage = normalizeAnalysisCoverage(analysis?.analysis_coverage, asset.media_type);
     const analysisStatus = normalizeAnalysisStatus(analysis?.status ?? asset.analysis_status);
+    const activeJobStatus = activeJobByAsset.get(asset.id) ?? null;
 
     const searchParts = [
       asset.headline,
@@ -267,6 +275,7 @@ export function buildCreativeAssetCards(input: {
       analysisStatus,
       transcriptStatus,
       analysisCoverage,
+      activeJobStatus,
       pipelineStatus: "pending",
       transcript: analysis?.transcript ?? null,
       transcriptSegments,
@@ -403,16 +412,16 @@ export function parseCreativeGroupRules(value: unknown): CreativeGroupRules {
   };
 }
 
-export function derivePipelineStatus(card: Pick<CreativeAssetCard, "mediaType" | "analysisStatus" | "transcriptStatus" | "analysisCoverage" | "transcript" | "analysisErrorMessage" | "transcriptErrorMessage">): CreativePipelineStatus {
+export function derivePipelineStatus(card: Pick<CreativeAssetCard, "mediaType" | "analysisStatus" | "transcriptStatus" | "analysisCoverage" | "activeJobStatus" | "transcript" | "analysisErrorMessage" | "transcriptErrorMessage">): CreativePipelineStatus {
   if (card.analysisStatus === "missing_media" || card.transcriptStatus === "missing_media" || card.mediaType === "unknown") {
     return "missing_media";
   }
   if (card.transcriptStatus === "oversized_queued") return "oversized_queued";
+  if ((card.activeJobStatus === "queued" || card.activeJobStatus === "running") && card.mediaType === "video" && card.transcriptStatus !== "ready") return "transcribing";
+  if ((card.activeJobStatus === "queued" || card.activeJobStatus === "running") && (card.transcriptStatus === "ready" || card.transcriptStatus === "not_applicable" || card.mediaType === "image")) return "analyzing";
   if (card.mediaType === "video" && card.transcriptStatus === "failed" && !card.transcript) return "missing_transcript";
   if (card.analysisStatus === "failed" || card.analysisCoverage === "failed") return "failed";
   if (card.analysisStatus === "ready" && (card.analysisCoverage === "full" || card.analysisCoverage === "not_applicable")) return "ready";
-  if (card.mediaType === "video" && (card.transcriptStatus === "processing" || card.transcriptStatus === "pending")) return "transcribing";
-  if (card.analysisStatus === "processing" && (card.transcriptStatus === "ready" || card.transcriptStatus === "not_applicable" || card.analysisCoverage === "partial")) return "analyzing";
   if (card.analysisStatus === "ready") return "ready";
   return "pending";
 }

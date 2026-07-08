@@ -87,6 +87,7 @@ const tableData: Record<string, unknown> = {
       processed_at: "2026-06-03T12:00:00Z",
     },
   ],
+  creative_asset_jobs: [],
   creative_groups: [],
   sync_runs: [
     {
@@ -104,6 +105,7 @@ function createQuery(tableName: string) {
     select: vi.fn().mockReturnThis(),
     eq: vi.fn().mockReturnThis(),
     gte: vi.fn().mockReturnThis(),
+    in: vi.fn().mockReturnThis(),
     lte: vi.fn().mockReturnThis(),
     order: vi.fn().mockReturnThis(),
     limit: vi.fn().mockReturnThis(),

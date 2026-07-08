@@ -223,6 +223,40 @@ describe("creative assets view helpers", () => {
       analysisStatus: "processing",
       transcriptStatus: "processing",
       analysisCoverage: "pending",
+      activeJobStatus: "running",
+      transcript: null,
+      transcriptErrorMessage: null,
+      analysisErrorMessage: null,
+    })).toBe("transcribing");
+
+    expect(derivePipelineStatus({
+      mediaType: "video",
+      analysisStatus: "processing",
+      transcriptStatus: "pending",
+      analysisCoverage: "pending",
+      activeJobStatus: null,
+      transcript: null,
+      transcriptErrorMessage: null,
+      analysisErrorMessage: null,
+    })).toBe("pending");
+
+    expect(derivePipelineStatus({
+      mediaType: "video",
+      analysisStatus: "processing",
+      transcriptStatus: "processing",
+      analysisCoverage: "pending",
+      activeJobStatus: null,
+      transcript: null,
+      transcriptErrorMessage: null,
+      analysisErrorMessage: null,
+    })).toBe("pending");
+
+    expect(derivePipelineStatus({
+      mediaType: "video",
+      analysisStatus: "pending",
+      transcriptStatus: "pending",
+      analysisCoverage: "pending",
+      activeJobStatus: "queued",
       transcript: null,
       transcriptErrorMessage: null,
       analysisErrorMessage: null,
@@ -233,6 +267,7 @@ describe("creative assets view helpers", () => {
       analysisStatus: "processing",
       transcriptStatus: "ready",
       analysisCoverage: "partial",
+      activeJobStatus: "running",
       transcript: "texto",
       transcriptErrorMessage: null,
       analysisErrorMessage: null,
@@ -243,6 +278,7 @@ describe("creative assets view helpers", () => {
       analysisStatus: "failed",
       transcriptStatus: "failed",
       analysisCoverage: "failed",
+      activeJobStatus: null,
       transcript: null,
       transcriptErrorMessage: "erro",
       analysisErrorMessage: null,
