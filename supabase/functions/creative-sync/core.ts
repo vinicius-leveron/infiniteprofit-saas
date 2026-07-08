@@ -52,6 +52,7 @@ export interface MetaAdCreativeRecord {
 export interface MetaAdDetailsRecord {
   id?: string;
   name?: string;
+  created_time?: string;
   creative?: MetaAdCreativeRecord | null;
 }
 
@@ -264,7 +265,7 @@ export function buildCreativeDailyMetrics(args: {
   for (const row of args.gatewayRows) {
     if (row.event_type !== "purchase.approved") continue;
     const payload = row.payload ?? {};
-    const adId = stringOrNull(payload.utm_content);
+    const adId = resolveGatewayAdId(payload, args.assetIdByAdId);
     if (!adId) continue;
     const assetId = args.assetIdByAdId.get(adId);
     if (!assetId) continue;
@@ -278,6 +279,23 @@ export function buildCreativeDailyMetrics(args: {
   }
 
   return [...aggregate.values()].map((row) => finalizeAccumulator(row));
+}
+
+function resolveGatewayAdId(payload: RawGatewayPayload, assetIdByAdId: Map<string, string>) {
+  const candidates = [
+    payload.utm_content,
+    (payload as Record<string, unknown>).ad_id,
+    (payload as Record<string, unknown>).fb_ad_id,
+    (payload as Record<string, unknown>).facebook_ad_id,
+  ].map((value) => stringOrNull(value));
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    if (assetIdByAdId.has(candidate)) return candidate;
+    for (const adId of assetIdByAdId.keys()) {
+      if (candidate.includes(adId)) return adId;
+    }
+  }
+  return null;
 }
 
 export function normalizeCreativeAnalysisResult(payload: unknown): CreativeAnalysisResult {

@@ -170,7 +170,7 @@ export const SimulatorPanel = ({ rows }: Props) => {
   // Sensibilidade: varia uma variável de -30% a +30% e mostra impacto incremental.
   const [sensVar, setSensVar] = useState<keyof SimInputs>("chkVenda");
 
-  // Ranking de sensibilidade: mede quanto o lucro muda quando cada variável sobe +10%
+  // Ranking de alavancas: mede o impacto isolado de levar cada métrica do atual ao projetado.
   const sensitivityRanking = useMemo(() => {
     const vars: { key: keyof SimInputs; label: string }[] = [
       { key: "ctr", label: "CTR" },
@@ -187,20 +187,24 @@ export const SimulatorPanel = ({ rows }: Props) => {
       { key: "investimento", label: "Investimento" },
       { key: "impressoes", label: "Impressões" },
     ];
-    const baseLucro = simResult.lucro;
+    const baseLucro = baseResult.lucro;
+    const baseFat = baseResult.fatLiquido;
     const ranked = vars
       .map((v) => {
-        const base = inputs[v.key];
-        if (!base) return { ...v, deltaLucro: 0, deltaPct: 0 };
-        const next = { ...inputs, [v.key]: base * 1.1 };
+        const currentValue = actualInputs[v.key];
+        const projectedValue = inputs[v.key];
+        const next = { ...actualInputs, [v.key]: projectedValue };
         const newLucro = runSim(next).lucro;
+        const newFat = runSim(next).fatLiquido;
         const deltaLucro = newLucro - baseLucro;
+        const deltaFat = newFat - baseFat;
         const deltaPct = baseLucro ? (deltaLucro / Math.abs(baseLucro)) * 100 : 0;
-        return { ...v, deltaLucro, deltaPct };
+        const valueDeltaPct = currentValue ? ((projectedValue - currentValue) / Math.abs(currentValue)) * 100 : 0;
+        return { ...v, currentValue, projectedValue, valueDeltaPct, deltaLucro, deltaFat, deltaPct };
       })
       .sort((a, b) => Math.abs(b.deltaLucro) - Math.abs(a.deltaLucro));
     return ranked;
-  }, [inputs, simResult.lucro]);
+  }, [actualInputs, baseResult.fatLiquido, baseResult.lucro, inputs]);
 
   const topSensitive = sensitivityRanking[0];
 
@@ -475,7 +479,7 @@ export const SimulatorPanel = ({ rows }: Props) => {
               <div className="text-sm font-semibold text-foreground mt-0.5">
                 {topSensitive.label}
                 <span className="text-xs text-muted-foreground font-normal ml-2">
-                  +10% ={" "}
+                  projetado ={" "}
                   <span className={cn(
                     "font-semibold",
                     topSensitive.deltaLucro > 0 ? "text-kpi-emerald" : "text-kpi-red",
@@ -555,7 +559,7 @@ export const SimulatorPanel = ({ rows }: Props) => {
       {/* Top alavancas */}
       <SectionCard
         title="Ranking de alavancas"
-        subtitle="Impacto no lucro com +10% em cada variável (todas comparáveis)"
+        subtitle="Impacto isolado de cada métrica alterada no cenário projetado"
       >
         <div className="space-y-1.5">
           {sensitivityRanking.slice(0, 5).map((v, idx) => {
@@ -592,7 +596,7 @@ export const SimulatorPanel = ({ rows }: Props) => {
                   </div>
                 </div>
                 <div className="w-14 text-right text-[11px] font-semibold tabular-nums shrink-0 text-muted-foreground">
-                  {v.deltaPct > 0 ? "+" : ""}{v.deltaPct.toFixed(1)}%
+                  {v.valueDeltaPct > 0 ? "+" : ""}{v.valueDeltaPct.toFixed(1)}%
                 </div>
               </button>
             );

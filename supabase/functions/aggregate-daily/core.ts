@@ -117,7 +117,7 @@ export function aggregateOneDay(events: RawEvent[]) {
     }
 
     if (event.event_type === "purchase.refunded") {
-      const refundGross = Math.abs(num(payload.total));
+      const refundGross = Math.abs(eventGross(event));
       const refundNet = Math.abs(eventNet(event) || refundGross);
       reembolsos++;
       valorReembolsado += refundGross;
@@ -291,6 +291,7 @@ export function aggregateOneDay(events: RawEvent[]) {
     cpc,
     pageviews: orNull(pageviews),
     views_unicas: orNull(viewsUnicas),
+    plays_unicos: orNull(plays),
     play_rate: playRate,
     ret_pitch: retPitch,
     chegaram_pitch: orNull(chegaramPitch),
@@ -342,6 +343,7 @@ const DAILY_METRIC_OVERRIDE_KEYS = [
   "cpc",
   "pageviews",
   "views_unicas",
+  "plays_unicos",
   "play_rate",
   "ret_pitch",
   "chegaram_pitch",
@@ -398,6 +400,7 @@ const META_OWNED_KEYS = new Set<string>([
 const VTURB_OWNED_KEYS = new Set<string>([
   "pageviews",
   "views_unicas",
+  "plays_unicos",
   "play_rate",
   "ret_pitch",
   "chegaram_pitch",
@@ -469,7 +472,10 @@ function recomputeDerivedMetrics<T extends Record<string, unknown>>(metrics: T) 
   const fatFunil = metricNumber(out.fat_funil);
   const reembolsos = metricNumber(out.reembolsos);
   const valorReembolsado = metricNumber(out.valor_reembolsado);
-  const plays = pageviews && metricNumber(out.play_rate) != null
+  const storedPlays = metricNumber(out.plays_unicos);
+  const plays = storedPlays != null
+    ? storedPlays
+    : pageviews && metricNumber(out.play_rate) != null
     ? (pageviews * metricNumber(out.play_rate)!) / 100
     : null;
 
@@ -486,6 +492,8 @@ function recomputeDerivedMetrics<T extends Record<string, unknown>>(metrics: T) 
   out.pitch_chk = chegaramPitch && chegaramPitch > 0 && checkouts != null ? (checkouts / chegaramPitch) * 100 : null;
   out.pitch_venda = chegaramPitch && chegaramPitch > 0 && vendasFront != null ? (vendasFront / chegaramPitch) * 100 : null;
   out.chk_venda = checkouts && checkouts > 0 && vendasFront != null ? (vendasFront / checkouts) * 100 : null;
+  out.plays_unicos = plays != null && plays !== 0 ? plays : null;
+  out.play_rate = pageviews && pageviews > 0 && plays != null ? (plays / pageviews) * 100 : out.play_rate;
   out.ret_pitch = plays && plays > 0 && chegaramPitch != null ? (chegaramPitch / plays) * 100 : out.ret_pitch;
   out.taxa_reembolso = vendasTotais && vendasTotais > 0 && reembolsos != null ? (reembolsos / vendasTotais) * 100 : null;
   out.valor_reembolsado = valorReembolsado ?? null;
@@ -570,7 +578,7 @@ function groupApprovedPurchases(events: RawEvent[]) {
 
 function hasPositivePurchaseValue(event: RawEvent) {
   const payload = event.payload || {};
-  if (num(payload.total) > 0 || num(payload.net) > 0) return true;
+  if (eventGross(event) > 0 || num(payload.net) > 0) return true;
   const items: any[] = Array.isArray(payload.items) ? payload.items : [];
   return items.some((item) => num(item?.price) > 0);
 }
@@ -613,7 +621,7 @@ function isOfferEvent(event: RawEvent) {
 function purchaseGroupRevenue(group: RawEvent[]) {
   const mainTotals = group
     .filter((event) => !isOfferEvent(event))
-    .map((event) => num(event.payload?.total))
+    .map(eventGross)
     .filter((value) => value > 0);
   const mainNets = group
     .filter((event) => !isOfferEvent(event))
@@ -629,7 +637,7 @@ function purchaseGroupRevenue(group: RawEvent[]) {
     ? 0
     : group
       .filter((event) => isOfferEvent(event) && !isDuplicateMainOffer(event, group))
-      .reduce((sum, event) => sum + num(event.payload?.total), 0);
+      .reduce((sum, event) => sum + eventGross(event), 0);
   const offerNet = mainHasBumpItems || mainIncludesChildren
     ? 0
     : group
@@ -638,7 +646,7 @@ function purchaseGroupRevenue(group: RawEvent[]) {
 
   const mainTotal = mainTotals.length > 0 ? Math.max(...mainTotals) : 0;
   const mainNet = mainNets.length > 0 ? Math.max(...mainNets) : mainTotal;
-  const fallbackTotal = group.reduce((sum, event) => sum + num(event.payload?.total), 0);
+  const fallbackTotal = group.reduce((sum, event) => sum + eventGross(event), 0);
   const fallbackNet = group.reduce((sum, event) => sum + eventNet(event), 0);
 
   if (mainTotal > 0) {
@@ -656,9 +664,58 @@ function purchaseGroupRevenue(group: RawEvent[]) {
   };
 }
 
+function eventGross(event: RawEvent) {
+  const payload = event.payload || {};
+  const explicitGross = firstPositiveMoney([
+    payload.gross,
+    payload.gross_amount,
+    payload.total_gross,
+    payload.amount_paid,
+    payload.amount_total,
+  ]);
+  if (explicitGross > 0) return explicitGross;
+
+  const rawPayload = payload.raw_payload ?? {};
+  const rawGross = firstMoneyPath(rawPayload, [
+    { path: "data.object.gross_amount", autoCents: true },
+    { path: "data.object.amount_paid", cents: true },
+    { path: "data.object.amount_total", cents: true },
+    { path: "data.object.amount_due", cents: true },
+    { path: "data.object.total", autoCents: true },
+    { path: "data.object.total_amount", autoCents: true },
+    { path: "data.object.amount.totalCents", cents: true },
+    { path: "data.object.amount.total", autoCents: true },
+    { path: "event.invoice.gross_amount", autoCents: true },
+    { path: "event.invoice.amount_paid", cents: true },
+    { path: "event.invoice.amount_total", cents: true },
+    { path: "event.invoice.amount_due", cents: true },
+    { path: "event.invoice.total", autoCents: true },
+    { path: "event.invoice.total_amount", autoCents: true },
+    { path: "event.invoice.amount.totalCents", cents: true },
+    { path: "event.invoice.amount.total", autoCents: true },
+    { path: "invoice.gross_amount", autoCents: true },
+    { path: "invoice.amount_paid", cents: true },
+    { path: "invoice.amount_total", cents: true },
+    { path: "invoice.amount_due", cents: true },
+    { path: "invoice.total", autoCents: true },
+    { path: "amount_paid", cents: true },
+    { path: "amount_total", cents: true },
+    { path: "amount_due", cents: true },
+    { path: "total", autoCents: true },
+    { path: "total_amount", autoCents: true },
+  ]);
+  if (rawGross > 0) return rawGross;
+
+  const payloadTotal = num(payload.total);
+  if (payloadTotal > 0) return payloadTotal;
+
+  const items: any[] = Array.isArray(payload.items) ? payload.items : [];
+  return items.reduce((sum, item) => sum + num(item?.price), 0);
+}
+
 function eventNet(event: RawEvent) {
   const payloadNet = num(event.payload?.net);
-  const payloadTotal = num(event.payload?.total);
+  const payloadTotal = eventGross(event);
   const sellerNet = sellerReceiverTotal(event.payload?.raw_payload ?? {});
   if (sellerNet > 0 && (!payloadNet || Math.abs(payloadNet - payloadTotal) < 0.0001)) return sellerNet;
   return payloadNet > 0 ? payloadNet : payloadTotal;
@@ -733,7 +790,7 @@ function realOfferFallbacksForGroup(group: RawEvent[], frontIdentity: ProductIde
         key,
         name: String(event.payload?.product_name ?? event.payload?.product_id ?? key ?? "Oferta"),
         type: eventLooksUpsell(event) ? "upsell" : "orderbump",
-        price: num(event.payload?.total),
+        price: eventGross(event),
       };
     })
     .filter((item) => item.key && item.price > 0);
@@ -982,6 +1039,43 @@ function firstNumber(record: Record<string, unknown>, keys: string[]) {
     if (value > 0) return value;
   }
   return 0;
+}
+
+function firstPositiveMoney(values: unknown[]) {
+  for (const value of values) {
+    const parsed = parseMoneyLike(value);
+    if (parsed > 0) return parsed;
+  }
+  return 0;
+}
+
+function firstMoneyPath(record: Record<string, any>, paths: Array<{ path: string; cents?: boolean; autoCents?: boolean }>) {
+  for (const path of paths) {
+    const value = getPath(record, path.path);
+    const parsed = parseMoneyLike(value);
+    if (parsed <= 0) continue;
+    if (path.cents) return parsed / 100;
+    if (path.autoCents && Number.isInteger(parsed) && Math.abs(parsed) >= 10000) return parsed / 100;
+    return parsed;
+  }
+  return 0;
+}
+
+function parseMoneyLike(value: unknown) {
+  if (value == null || value === "") return 0;
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  let normalized = String(value)
+    .trim()
+    .replace(/R\$/gi, "")
+    .replace(/\s|\u00a0/g, "");
+  if (!normalized) return 0;
+  if (normalized.includes(",") && normalized.includes(".")) {
+    normalized = normalized.replace(/\./g, "").replace(",", ".");
+  } else if (normalized.includes(",")) {
+    normalized = normalized.replace(",", ".");
+  }
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function getPath(record: Record<string, any>, path: string): unknown {

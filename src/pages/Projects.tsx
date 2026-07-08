@@ -45,7 +45,7 @@ export default function Projects() {
   const navigate = useNavigate();
   const { user, loading: authLoading } = useAuth();
   const userId = user?.id ?? null;
-  const { currentWorkspace, loading: workspaceLoading } = useWorkspace();
+  const { currentWorkspace, loading: workspaceLoading, isWorkspaceAdmin } = useWorkspace();
   const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [toDelete, setToDelete] = useState<ProjectRow | null>(null);
@@ -90,6 +90,10 @@ export default function Projects() {
   };
 
   const handleDelete = async () => {
+    if (!isWorkspaceAdmin) {
+      toast.error("Apenas admins do workspace podem apagar projetos");
+      return;
+    }
     if (!toDelete) return;
     setDeleting(true);
     const { error } = await supabase.from("projects").delete().eq("id", toDelete.id);
@@ -129,10 +133,12 @@ export default function Projects() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button onClick={() => navigate("/setup-operation")} className="gap-2">
-              <Plus className="w-4 h-4" />
-              Nova operação
-            </Button>
+            {isWorkspaceAdmin && (
+              <Button onClick={() => navigate("/setup-operation")} className="gap-2">
+                <Plus className="w-4 h-4" />
+                Nova operação
+              </Button>
+            )}
           </div>
         </header>
 
@@ -145,10 +151,12 @@ export default function Projects() {
             <p className="text-sm text-muted-foreground mb-5">
               Conecte suas fontes de dados para começar a analisar sua operação
             </p>
-            <Button onClick={() => navigate("/setup-operation")} className="gap-2">
-              <Plus className="w-4 h-4" />
-              Criar primeira operação
-            </Button>
+            {isWorkspaceAdmin && (
+              <Button onClick={() => navigate("/setup-operation")} className="gap-2">
+                <Plus className="w-4 h-4" />
+                Criar primeira operação
+              </Button>
+            )}
           </div>
         ) : (
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -240,18 +248,20 @@ export default function Projects() {
                       </Button>
                     </div>
                   ) : <span />}
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-kpi-red hover:text-kpi-red hover:bg-kpi-red/10 h-8 gap-1.5"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setToDelete(p);
-                    }}
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    Apagar
-                  </Button>
+                  {isWorkspaceAdmin && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-kpi-red hover:text-kpi-red hover:bg-kpi-red/10 h-8 gap-1.5"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setToDelete(p);
+                      }}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Apagar
+                    </Button>
+                  )}
                 </div>
               </div>
             ))}

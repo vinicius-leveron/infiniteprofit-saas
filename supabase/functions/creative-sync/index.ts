@@ -203,6 +203,7 @@ type CreativeJobPayload = {
   meta_account_id: string | null;
   video_id: string | null;
   job_trigger: "manual" | "auto";
+  manual_requested_at: string | null;
 };
 
 type JobHint = {
@@ -378,6 +379,7 @@ async function syncProjectAssets(
   const assetIdByAdId = await upsertCreativeAssetAds(sb, {
     project: args.project,
     metaRows,
+    detailsByAdId: resolution.detailsByAdId,
     assetKeyByAdId,
     assetIdByKey,
   });
@@ -708,7 +710,7 @@ async function fetchAdDetailsBatch(accessToken: string, adIds: string[]) {
   url.searchParams.set("ids", adIds.join(","));
   url.searchParams.set(
     "fields",
-    "id,name,creative{id,name,body,title,image_url,thumbnail_url,link_url,object_type,call_to_action_type,object_story_id,effective_object_story_id,object_story_spec}",
+    "id,name,created_time,creative{id,name,body,title,image_url,thumbnail_url,link_url,object_type,call_to_action_type,object_story_id,effective_object_story_id,object_story_spec}",
   );
   url.searchParams.set("access_token", accessToken);
 
@@ -736,7 +738,7 @@ async function fetchAdDetailsOne(accessToken: string, adId: string) {
   const url = new URL(`https://graph.facebook.com/v21.0/${adId}`);
   url.searchParams.set(
     "fields",
-    "id,name,creative{id,name,body,title,image_url,thumbnail_url,link_url,object_type,call_to_action_type,object_story_id,effective_object_story_id,object_story_spec}",
+    "id,name,created_time,creative{id,name,body,title,image_url,thumbnail_url,link_url,object_type,call_to_action_type,object_story_id,effective_object_story_id,object_story_spec}",
   );
   url.searchParams.set("access_token", accessToken);
 
@@ -879,6 +881,7 @@ async function upsertCreativeAssetAds(
   args: {
     project: ProjectContext;
     metaRows: RawMetaEventRow[];
+    detailsByAdId: Map<string, MetaAdDetailsRecord>;
     assetKeyByAdId: Map<string, string>;
     assetIdByKey: Map<string, string>;
   },
@@ -907,6 +910,7 @@ async function upsertCreativeAssetAds(
       user_id: args.project.user_id,
       creative_id: stringOrNull(payload.creative_id) ?? adId,
       ad_id: adId,
+      ad_created_time: normalizeMetaTimestamp(args.detailsByAdId.get(adId)?.created_time),
       ad_name: stringOrNull(payload.ad_name),
       adset_id: stringOrNull((payload as any).adset_id),
       adset_name: stringOrNull((payload as any).adset_name),
@@ -1067,6 +1071,7 @@ async function enqueueCreativeJobs(
       meta_account_id: jobHint.metaAccountId,
       video_id: jobHint.videoId,
       job_trigger: "manual",
+      manual_requested_at: new Date().toISOString(),
     };
 
     upserts.push({
@@ -1581,6 +1586,13 @@ function extensionForContentType(contentType: string, url: string, mediaType: "i
 function stringOrNull(value: unknown) {
   const trimmed = String(value ?? "").trim();
   return trimmed ? trimmed : null;
+}
+
+function normalizeMetaTimestamp(value: unknown) {
+  const raw = stringOrNull(value);
+  if (!raw) return null;
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
 function ymd(date: Date) {

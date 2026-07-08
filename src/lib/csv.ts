@@ -61,6 +61,7 @@ export interface DailyRow {
   playRate: number | null;
   retPitch: number | null;
   viewsUnicas: number | null;
+  playsUnicos?: number | null;
   chegaramPitch: number | null;
   pitchChk: number | null;
   pitchVenda: number | null;
@@ -194,6 +195,10 @@ const HEADER_MAP: Record<string, keyof DailyRow> = {
   "play rate": "playRate",
   "retencao pitch": "retPitch",
   "visualizacoes unicas": "viewsUnicas",
+  "plays unicos": "playsUnicos",
+  "plays únicos": "playsUnicos",
+  "plays únicos vturb": "playsUnicos",
+  "plays unicos vturb": "playsUnicos",
   "chegaram no pitch": "chegaramPitch",
   "pitch checkout": "pitchChk",
   "pitch venda": "pitchVenda",
@@ -419,6 +424,7 @@ export function parseCsv(text: string): ParsedCsv {
       playRate: get("playRate"),
       retPitch: get("retPitch"),
       viewsUnicas: get("viewsUnicas"),
+      playsUnicos: get("playsUnicos"),
       chegaramPitch: get("chegaramPitch"),
       pitchChk: get("pitchChk"),
       pitchVenda: get("pitchVenda"),

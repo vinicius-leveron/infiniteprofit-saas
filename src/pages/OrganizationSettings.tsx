@@ -43,7 +43,6 @@ export default function OrganizationSettings() {
     currentOrganization,
     currentWorkspace,
     currentOrganizationRole,
-    isOrganizationAdmin,
     refreshAccess,
   } = useWorkspace();
   const [selectedOrganizationId, setSelectedOrganizationId] = useState("");
@@ -56,6 +55,7 @@ export default function OrganizationSettings() {
   const [savingWorkspace, setSavingWorkspace] = useState(false);
   const [savingInvite, setSavingInvite] = useState(false);
   const [loading, setLoading] = useState(true);
+  const isOrganizationOwner = currentOrganizationRole === "owner";
 
   useEffect(() => {
     if (!selectedOrganizationId) {
@@ -204,7 +204,7 @@ export default function OrganizationSettings() {
             <h2 className="text-base font-semibold">Workspaces</h2>
           </div>
 
-          {isOrganizationAdmin && (
+          {isOrganizationOwner && (
             <div className="grid sm:grid-cols-[1fr,auto] gap-2">
               <Input
                 value={newWorkspaceName}
@@ -247,7 +247,7 @@ export default function OrganizationSettings() {
             </div>
           </div>
 
-          {isOrganizationAdmin && (
+          {isOrganizationOwner ? (
             <div className="space-y-3">
               <h2 className="text-base font-semibold">Convidar admin</h2>
               <div className="space-y-2">
@@ -276,6 +276,10 @@ export default function OrganizationSettings() {
                 {savingInvite ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
                 <span className="ml-2">Criar convite</span>
               </Button>
+            </div>
+          ) : (
+            <div className="rounded-lg border border-border/50 bg-muted/20 px-3 py-3 text-sm text-muted-foreground">
+              Somente owner controla organização, workspaces globais e papéis de owner. Admins convidam e operam pessoas pelo workspace.
             </div>
           )}
 

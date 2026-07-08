@@ -1,5 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
-import { formatDistanceToNow } from "date-fns";
+import { format, formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
   AlertTriangle,
@@ -221,7 +221,7 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
           .order("updated_at", { ascending: false }),
         supabase
           .from("creative_asset_ads" as never)
-          .select("asset_id, ad_id, ad_name, adset_id, adset_name, campaign_id, campaign_name")
+          .select("asset_id, ad_id, ad_created_time, ad_name, adset_id, adset_name, campaign_id, campaign_name")
           .eq("project_id", projectId),
         metricsQuery,
         supabase
@@ -1009,6 +1009,9 @@ function CreativeCard({
         {/* Source Metadata */}
         <div className="flex flex-wrap gap-1.5">
           {card.cta && <InfoPill label="CTA" value={card.cta} />}
+          {card.firstAdCreatedAt && (
+            <InfoPill label="Criado" value={format(new Date(card.firstAdCreatedAt), "dd/MM/yyyy", { locale: ptBR })} />
+          )}
           <InfoPill label="Ads" value={String(card.adsCount)} />
           <InfoPill label="Campanhas" value={String(card.campaignNames.length)} />
           <InfoPill label="Adsets" value={String(card.adsetNames.length)} />

@@ -43,7 +43,7 @@ interface SidebarProject {
   workspace_id: string;
 }
 
-type Tab = "geral" | "trafego" | "funil" | "bumps" | "anuncios" | "simulador";
+type Tab = "geral" | "trafego" | "funil" | "bumps" | "anuncios" | "diagnostico" | "simulador";
 
 const DASHBOARD_TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: "geral", label: "Visão Geral", icon: BarChart3 },
@@ -51,6 +51,7 @@ const DASHBOARD_TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: "funil", label: "Funil VSL", icon: Target },
   { id: "bumps", label: "Bumps & Upsell", icon: Gift },
   { id: "anuncios", label: "Anúncios", icon: Megaphone },
+  { id: "diagnostico", label: "Diagnóstico", icon: Activity },
   { id: "simulador", label: "Simulador", icon: Sliders },
 ];
 
@@ -70,6 +71,7 @@ export function AppShell() {
     currentOrganization,
     hasWorkspaces,
     needsOnboarding,
+    isWorkspaceAdmin,
     isOrganizationAdmin,
     setCurrentWorkspaceId,
   } = useWorkspace();
@@ -256,6 +258,7 @@ export function AppShell() {
   };
 
   const openProjectCreation = () => {
+    if (!isWorkspaceAdmin) return;
     setSwitcherOpen(false);
     navigate("/setup-operation");
   };
@@ -379,6 +382,7 @@ export function AppShell() {
                       <div className="min-w-0 flex-1 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground/70">
                         Projetos
                       </div>
+                    {isWorkspaceAdmin && (
                       <button
                         type="button"
                         onClick={openProjectCreation}
@@ -387,6 +391,7 @@ export function AppShell() {
                       >
                         <Plus className="h-4 w-4" />
                       </button>
+                    )}
                     </div>
                     {switcherProjects.length === 0 ? (
                       <div className="px-3 py-2 text-sm text-muted-foreground">
@@ -447,7 +452,7 @@ export function AppShell() {
               </div>
               <NavItem
                 icon={Activity}
-                label="Diagnóstico"
+                label="Saúde das fontes"
                 onClick={() => navigate(projectPath("/diagnostics"))}
                 active={isActive("/diagnostics")}
               />

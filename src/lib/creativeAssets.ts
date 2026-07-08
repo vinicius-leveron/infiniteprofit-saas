@@ -64,6 +64,7 @@ export interface CreativeAssetRow {
 export interface CreativeAssetAdRow {
   asset_id: string;
   ad_id: string;
+  ad_created_time?: string | null;
   ad_name: string | null;
   adset_id: string | null;
   adset_name: string | null;
@@ -180,6 +181,7 @@ export interface CreativeAssetCard {
   analysisErrorMessage: string | null;
   processedAt: string | null;
   lastMetaSyncedAt: string | null;
+  firstAdCreatedAt: string | null;
   adIds: string[];
   adNames: string[];
   campaignNames: string[];
@@ -233,6 +235,7 @@ export function buildCreativeAssetCards(input: {
 
     const metricTotals = aggregateMetrics(assetMetrics);
     const adIds = unique(assetAds.map((row) => row.ad_id));
+    const firstAdCreatedAt = earliestIso(assetAds.map((row) => row.ad_created_time).filter(Boolean) as string[]);
     const adNames = unique(assetAds.map((row) => row.ad_name).filter(Boolean) as string[]);
     const campaignNames = unique(assetAds.map((row) => row.campaign_name).filter(Boolean) as string[]);
     const adsetNames = unique(assetAds.map((row) => row.adset_name).filter(Boolean) as string[]);
@@ -294,6 +297,7 @@ export function buildCreativeAssetCards(input: {
       analysisErrorMessage: analysis?.analysis_error_message ?? null,
       processedAt: analysis?.processed_at ?? null,
       lastMetaSyncedAt: asset.last_meta_synced_at,
+      firstAdCreatedAt,
       adIds,
       adNames,
       campaignNames,
@@ -308,6 +312,18 @@ export function buildCreativeAssetCards(input: {
     card.pipelineStatus = derivePipelineStatus(card);
     return card;
   });
+}
+
+function earliestIso(values: string[]) {
+  let winner: string | null = null;
+  let winnerTs = Infinity;
+  for (const value of values) {
+    const ts = new Date(value).getTime();
+    if (!Number.isFinite(ts) || ts >= winnerTs) continue;
+    winner = value;
+    winnerTs = ts;
+  }
+  return winner;
 }
 
 export function applyCreativeFilters(

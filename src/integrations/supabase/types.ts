@@ -119,6 +119,7 @@ export type Database = {
           pass_chk: number | null
           pitch_chk: number | null
           pitch_venda: number | null
+          plays_unicos: number | null
           play_rate: number | null
           project_id: string
           proporcao_funil_front: number | null
@@ -167,6 +168,7 @@ export type Database = {
           pass_chk?: number | null
           pitch_chk?: number | null
           pitch_venda?: number | null
+          plays_unicos?: number | null
           play_rate?: number | null
           project_id: string
           proporcao_funil_front?: number | null
@@ -215,6 +217,7 @@ export type Database = {
           pass_chk?: number | null
           pitch_chk?: number | null
           pitch_venda?: number | null
+          plays_unicos?: number | null
           play_rate?: number | null
           project_id?: string
           proporcao_funil_front?: number | null
@@ -530,6 +533,7 @@ export type Database = {
       creative_asset_ads: {
         Row: {
           ad_id: string
+          ad_created_time: string | null
           ad_name: string | null
           adset_id: string | null
           adset_name: string | null
@@ -548,6 +552,7 @@ export type Database = {
         }
         Insert: {
           ad_id: string
+          ad_created_time?: string | null
           ad_name?: string | null
           adset_id?: string | null
           adset_name?: string | null
@@ -566,6 +571,7 @@ export type Database = {
         }
         Update: {
           ad_id?: string
+          ad_created_time?: string | null
           ad_name?: string | null
           adset_id?: string | null
           adset_name?: string | null

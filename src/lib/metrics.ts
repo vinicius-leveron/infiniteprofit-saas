@@ -39,6 +39,7 @@ export interface KpiTotals {
   cliques: number;
   landingPageviews: number;
   pageviews: number;
+  playsUnicos: number;
   checkouts: number;
   // computed
   roi: number | null;
@@ -101,6 +102,7 @@ export function computeTotals(rows: DailyRow[]): KpiTotals {
   const cliques = sumK(rows, "cliques");
   const landingPageviews = sumK(rows, "landingPageviews");
   const pageviews = sumK(rows, "pageviews");
+  const playsUnicos = sumK(rows, "playsUnicos");
   const checkouts = sumK(rows, "checkouts");
   const chegaramPitch = sumK(rows, "chegaramPitch");
   const estimatedPlays = rows.reduce((sum, row) => {
@@ -127,6 +129,7 @@ export function computeTotals(rows: DailyRow[]): KpiTotals {
     cliques,
     landingPageviews,
     pageviews,
+    playsUnicos,
     checkouts,
     roi: safeDiv(fatLiquido - impostoMeta, investimento),
     cac: safeDiv(investimento, vendasTotais),
@@ -139,8 +142,8 @@ export function computeTotals(rows: DailyRow[]): KpiTotals {
     taxaCarreg: cliques ? (landingPageviews / cliques) * 100 : null,
     passChk: pageviews ? (checkouts / pageviews) * 100 : null,
     taxaReembolso: vendasTotais ? (reembolsos / vendasTotais) * 100 : null,
-    avgPlayRate: pageviews ? (estimatedPlays / pageviews) * 100 : avgK(rows, "playRate"),
-    avgRetPitch: estimatedPlays ? (chegaramPitch / estimatedPlays) * 100 : avgK(rows, "retPitch"),
+    avgPlayRate: pageviews ? ((playsUnicos || estimatedPlays) / pageviews) * 100 : avgK(rows, "playRate"),
+    avgRetPitch: (playsUnicos || estimatedPlays) ? (chegaramPitch / (playsUnicos || estimatedPlays)) * 100 : avgK(rows, "retPitch"),
     avgPitchChk: chegaramPitch ? (checkouts / chegaramPitch) * 100 : avgK(rows, "pitchChk"),
     avgPitchVenda: chegaramPitch ? (vendasFront / chegaramPitch) * 100 : avgK(rows, "pitchVenda"),
     avgChkVenda: checkouts ? (vendasFront / checkouts) * 100 : avgK(rows, "chkVenda"),

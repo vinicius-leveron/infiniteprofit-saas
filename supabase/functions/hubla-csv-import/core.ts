@@ -166,6 +166,8 @@ function dailyMetricKeysForHeader(header: string): string[] {
     play_rate: ["play_rate"],
     retencao_pitch: ["ret_pitch"],
     visualizacoes_unicas: ["views_unicas"],
+    plays_unicos: ["plays_unicos"],
+    plays_unicos_vturb: ["plays_unicos"],
     chegaram_no_pitch: ["chegaram_pitch"],
     pitch_checkout: ["pitch_chk"],
     pitch_venda: ["pitch_venda"],
@@ -218,6 +220,7 @@ function hasDailyMetricSignal(payload: Record<string, unknown>) {
     "cliques",
     "landing_pageviews",
     "views_unicas",
+    "plays_unicos",
     "chegaram_pitch",
   ].some((key) => {
     const value = payload[key];

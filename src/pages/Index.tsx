@@ -508,10 +508,12 @@ const Index = () => {
             </div>
 
             {/* Acao primaria */}
-            <Button size="sm" onClick={() => setSaveDialogOpen(true)}>
-              <Save className="w-4 h-4 mr-1.5" />
-              Salvar
-            </Button>
+            {projectSource !== "api" && (
+              <Button size="sm" onClick={() => setSaveDialogOpen(true)}>
+                <Save className="w-4 h-4 mr-1.5" />
+                Salvar
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -616,7 +618,7 @@ const Index = () => {
             ) : tab === "trafego" ? (
               <TrafficPanel rows={filtered} />
             ) : tab === "funil" ? (
-              <FunnelPanel rows={filtered} />
+              <FunnelPanel rows={filtered} projectId={currentProjectId} dateRange={selectedDateRange} />
             ) : tab === "bumps" ? (
               <BumpsPanel rows={filtered} />
             ) : tab === "anuncios" ? (

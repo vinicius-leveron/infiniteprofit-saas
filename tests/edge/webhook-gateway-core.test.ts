@@ -133,7 +133,9 @@ describe("webhook gateway core", () => {
     const approved = events.find((event) => event.event_type === "purchase.approved");
     expect(approved?.event_date).toBe("2026-06-22");
     expect(approved?.external_id).toBe("c26d37e2-aa2e-46bb-8735-91819b9c5b6b");
-    expect(approved?.payload.total).toBeCloseTo(297);
+    expect(approved?.payload.total).toBeCloseTo(362.16);
+    expect(approved?.payload.gross).toBeCloseTo(362.16);
+    expect(approved?.payload.subtotal).toBeCloseTo(297);
     expect(approved?.payload.net).toBeCloseTo(291.96);
     expect(approved?.payload.payment_method).toBe("credit_card");
     expect(approved?.payload.buyer_email).toBe("payer@example.com");

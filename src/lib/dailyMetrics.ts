@@ -6,7 +6,7 @@ export interface DailyMetricsRow {
   investimento: number | null; impressoes: number | null; cliques: number | null;
   landing_pageviews?: number | null;
   cpm: number | null; ctr: number | null; cpc: number | null;
-  pageviews: number | null; views_unicas: number | null; play_rate: number | null;
+  pageviews: number | null; views_unicas: number | null; plays_unicos?: number | null; play_rate: number | null;
   ret_pitch: number | null; chegaram_pitch: number | null;
   checkouts: number | null; custo_pageview: number | null; custo_ic: number | null;
   taxa_carreg: number | null; pass_chk: number | null;
@@ -100,6 +100,7 @@ export function dailyMetricsToDailyRows(rows: DailyMetricsRow[]): DailyRow[] {
         playRate: r.play_rate,
         retPitch: r.ret_pitch,
         viewsUnicas: r.views_unicas,
+        playsUnicos: r.plays_unicos ?? null,
         chegaramPitch: r.chegaram_pitch,
         pitchChk: r.pitch_chk,
         pitchVenda: r.pitch_venda,

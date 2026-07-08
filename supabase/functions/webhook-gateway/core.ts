@@ -178,10 +178,14 @@ export function normalizeHubla(raw: any): NormalizedEvent[] {
   if (!type) return [];
 
   const items = normalizeHublaItems(object);
-  const total = firstMoney(object, [
+  const subtotal = firstMoney(object, [
     { path: "amount.subtotalCents", cents: true },
     { path: "subtotalCents", cents: true },
     { path: "amount.subtotal", autoCents: true },
+    { path: "subtotal", autoCents: true },
+  ]);
+  const total = firstMoney(object, [
+    { path: "gross_amount", autoCents: true },
     { path: "amount_paid", cents: true },
     { path: "amount_total", cents: true },
     { path: "amount_due", cents: true },
@@ -200,7 +204,7 @@ export function normalizeHubla(raw: any): NormalizedEvent[] {
     { path: "price", autoCents: true },
     { path: "subscription.plan.amount", cents: true },
     { path: "plan.amount", cents: true },
-  ]) || sumItemPrices(items);
+  ]) || subtotal || sumItemPrices(items);
 
   const explicitNet = firstMoney(object, [
     { path: "net_amount", autoCents: true },
@@ -278,7 +282,7 @@ export function normalizeHubla(raw: any): NormalizedEvent[] {
 
   let normalizedItems = items.length > 0
     ? items
-    : normalizeHublaProductItems(eventRecord, total);
+    : normalizeHublaProductItems(eventRecord, subtotal || total);
   if (isOfferEvent) {
     normalizedItems = normalizedItems.length > 0
       ? normalizedItems.map((item) => ({
@@ -300,6 +304,8 @@ export function normalizeHubla(raw: any): NormalizedEvent[] {
     raw_event: eventType,
     status: status || null,
     total,
+    gross: total,
+    subtotal: subtotal || null,
     net,
     payment_method: firstString([
       object.payment_method,

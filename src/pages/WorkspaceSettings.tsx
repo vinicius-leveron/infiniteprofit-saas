@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Copy, Loader2, Plus, Save, Search, Trash2, UserPlus, Users } from "lucide-react";
+import { Copy, HelpCircle, Loader2, Plus, RefreshCw, Save, Trash2, UserPlus, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,6 +13,7 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorkspace, type WorkspaceRole } from "@/hooks/useWorkspace";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "sonner";
 
 type GatewayProvider = "hotmart" | "hubla" | "kiwify";
@@ -88,7 +89,7 @@ function formatBoundProjects(count: number) {
 
 export default function WorkspaceSettings() {
   const { user } = useAuth();
-  const { currentWorkspace, isWorkspaceAdmin } = useWorkspace();
+  const { currentWorkspace, currentWorkspaceRole, isWorkspaceAdmin } = useWorkspace();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [workspaceIntegration, setWorkspaceIntegration] = useState<WorkspaceIntegrationRow | null>(null);
@@ -100,6 +101,7 @@ export default function WorkspaceSettings() {
   const [inviteRole, setInviteRole] = useState<WorkspaceRole>("member");
   const [savingInvite, setSavingInvite] = useState(false);
   const [resolvingVturbNames, setResolvingVturbNames] = useState(false);
+  const canInviteOwner = currentWorkspaceRole === "owner";
 
   const gatewayWebhookBase = useMemo(() => {
     if (!workspaceIntegration?.gateway_provider || !workspaceIntegration.gateway_webhook_token) return "";
@@ -323,16 +325,16 @@ export default function WorkspaceSettings() {
     }
   }
 
-  async function resolveVturbPlayerNames() {
+  useEffect(() => {
+    if (!canInviteOwner && inviteRole === "owner") {
+      setInviteRole("admin");
+    }
+  }, [canInviteOwner, inviteRole]);
+
+  async function refreshVturbPlayersFromApi() {
     const apiKey = workspaceIntegration?.vturb_api_key?.trim();
     if (!apiKey && !currentWorkspace?.id) {
-      toast.error("Informe ou salve uma API key da VTurb antes de buscar os nomes");
-      return;
-    }
-
-    const playerIds = vturbPlayers.map((player) => player.player_id.trim()).filter(Boolean);
-    if (playerIds.length === 0) {
-      toast.error("Adicione pelo menos um player ID");
+      toast.error("Informe ou salve uma API key da VTurb antes de atualizar os players");
       return;
     }
 
@@ -345,25 +347,29 @@ export default function WorkspaceSettings() {
 
       const players = ((data?.players ?? []) as VturbPlayerMetadata[])
         .filter((player) => player.id && player.name);
-      const namesById = new Map(players.map((player) => [player.id, player.name as string]));
-      let found = 0;
-
-      setVturbPlayers((current) =>
-        current.map((player) => {
-          const name = namesById.get(player.player_id.trim());
-          if (!name) return player;
-          found += 1;
-          return { ...player, label: name };
-        }),
-      );
-
-      if (found === 0) {
-        toast.error("Nenhum desses IDs apareceu na lista de players da VTurb");
-      } else {
-        toast.success(`${found} nome${found === 1 ? "" : "s"} preenchido${found === 1 ? "" : "s"}`);
+      if (players.length === 0) {
+        toast.error("A VTurb não retornou players para essa chave");
+        return;
       }
+      if (!user || !currentWorkspace?.id) return;
+
+      const existingByPlayerId = new Map(vturbPlayers.map((player) => [player.player_id.trim(), player]));
+      const upserts = players.map((player) => ({
+        workspace_id: currentWorkspace.id,
+        created_by: user.id,
+        player_id: player.id,
+        label: player.name,
+      }));
+      const { error: upsertError } = await supabase
+        .from("workspace_vturb_players")
+        .upsert(upserts, { onConflict: "workspace_id,player_id" });
+      if (upsertError) throw upsertError;
+
+      const created = players.filter((player) => !existingByPlayerId.has(player.id)).length;
+      await load();
+      toast.success(`${created} player${created === 1 ? "" : "s"} novo${created === 1 ? "" : "s"}; ${players.length} nome${players.length === 1 ? "" : "s"} sincronizado${players.length === 1 ? "" : "s"}`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Falha ao buscar nomes dos players");
+      toast.error(error instanceof Error ? error.message : "Falha ao atualizar players da VTurb");
     } finally {
       setResolvingVturbNames(false);
     }
@@ -398,9 +404,19 @@ export default function WorkspaceSettings() {
         <Users className="w-5 h-5 text-primary" />
         <div>
           <h1 className="text-2xl font-bold text-foreground">Configuracoes do Workspace</h1>
-          <p className="text-sm text-muted-foreground">
-            Membros e credenciais compartilhadas de {currentWorkspace.name}.
-          </p>
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <span>Membros e credenciais compartilhadas de {currentWorkspace.name}.</span>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <HelpCircle className="h-3.5 w-3.5 cursor-help" />
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs text-xs">
+                  Member visualiza dashboards. Admin gerencia integrações, projetos e convites. Owner controla organização, pagamento e pode promover owners.
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </div>
         </div>
       </div>
 
@@ -565,11 +581,11 @@ export default function WorkspaceSettings() {
                       type="button"
                       variant="outline"
                       size="sm"
-                      onClick={resolveVturbPlayerNames}
+                      onClick={refreshVturbPlayersFromApi}
                       disabled={resolvingVturbNames}
                     >
-                      {resolvingVturbNames ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-                      <span className="ml-2">Buscar nomes</span>
+                      {resolvingVturbNames ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                      <span className="ml-2">Atualizar players</span>
                     </Button>
                     <Button
                       type="button"
@@ -649,7 +665,7 @@ export default function WorkspaceSettings() {
               <div className="space-y-2">
                 {members.map((member) => (
                   <div key={member.user_id} className="rounded-lg border border-border/50 px-3 py-2">
-                    <div className="text-sm font-medium">{member.role}</div>
+                    <RoleLabel role={member.role} />
                     <div className="text-xs text-muted-foreground font-mono">{member.user_id}</div>
                   </div>
                 ))}
@@ -672,7 +688,7 @@ export default function WorkspaceSettings() {
                   <SelectContent>
                     <SelectItem value="member">Membro</SelectItem>
                     <SelectItem value="admin">Admin</SelectItem>
-                    <SelectItem value="owner">Proprietario</SelectItem>
+                    {canInviteOwner && <SelectItem value="owner">Owner</SelectItem>}
                   </SelectContent>
                 </Select>
                 <Button onClick={handleInvite} disabled={savingInvite} className="w-full">
@@ -716,5 +732,28 @@ export default function WorkspaceSettings() {
         </div>
       )}
     </main>
+  );
+}
+
+function RoleLabel({ role }: { role: WorkspaceRole }) {
+  const description =
+    role === "owner"
+      ? "Owner controla organização, cobrança e pode conceder papel de owner."
+      : role === "admin"
+        ? "Admin gerencia projetos, integrações, sync e convites do workspace."
+        : "Member visualiza dashboards e relatórios, sem alterar configurações críticas.";
+
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div className="inline-flex items-center gap-1.5 text-sm font-medium">
+            {role}
+            <HelpCircle className="h-3.5 w-3.5 text-muted-foreground" />
+          </div>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-xs text-xs">{description}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
