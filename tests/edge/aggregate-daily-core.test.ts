@@ -236,9 +236,9 @@ describe("aggregate daily core", () => {
 
     expect(metrics.fat_bruto).toBeCloseTo(297);
     expect(metrics.fat_liquido).toBeCloseTo(279.7);
-    expect(metrics.imposto_meta).toBeCloseTo(12.5);
-    expect(metrics.lucro).toBeCloseTo(167.2);
-    expect(metrics.roi).toBeCloseTo(2.672);
+    expect(metrics.imposto_meta).toBeCloseTo(12.15);
+    expect(metrics.lucro).toBeCloseTo(167.55);
+    expect(metrics.roi).toBeCloseTo(2.6755);
   });
 
   it("deduplicates payment approval attempts by method using checkout_created and approved events", () => {
@@ -340,7 +340,7 @@ describe("aggregate daily core", () => {
     expect(metrics.fat_bruto).toBeCloseTo(297);
     expect(metrics.fat_liquido).toBe(0);
     expect(metrics.valor_reembolsado).toBeCloseTo(297);
-    expect(metrics.lucro).toBeCloseTo(-112.5);
+    expect(metrics.lucro).toBeCloseTo(-112.15);
   });
 
   it("does not double count Hubla child invoices already included in the main invoice", () => {
@@ -586,9 +586,9 @@ describe("aggregate daily core", () => {
     expect(metrics.fat_bruto).toBe(1200.5);
     expect(metrics.fat_liquido).toBe(1000.25);
     expect(metrics.checkouts).toBe(7);
-    expect(metrics.imposto_meta).toBeCloseTo(12.5);
-    expect(metrics.lucro).toBeCloseTo(887.75);
-    expect(metrics.roi).toBeCloseTo(9.8775);
+    expect(metrics.imposto_meta).toBeCloseTo(12.15);
+    expect(metrics.lucro).toBeCloseTo(888.1);
+    expect(metrics.roi).toBeCloseTo(9.881);
     expect(metrics.bumps).toEqual([
       expect.objectContaining({ name: "Bump", count: 1, revenue: 97 }),
     ]);

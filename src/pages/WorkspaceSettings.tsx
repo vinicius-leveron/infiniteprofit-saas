@@ -87,6 +87,25 @@ function formatBoundProjects(count: number) {
   return `${count} projeto${count === 1 ? "" : "s"} conectado${count === 1 ? "" : "s"}`;
 }
 
+const WORKSPACE_ROLE_COPY: Record<WorkspaceRole, { label: string; description: string }> = {
+  owner: {
+    label: "Owner",
+    description: "Controla organização, pagamento, papéis de owner e todas as configurações.",
+  },
+  admin: {
+    label: "Admin",
+    description: "Gerencia projetos, integrações, sincronizações, importações e convites do workspace.",
+  },
+  moderator: {
+    label: "Moderador",
+    description: "Acompanha dashboards e operação do workspace, sem alterar integrações ou configurações críticas.",
+  },
+  member: {
+    label: "Membro",
+    description: "Visualiza dashboards, relatórios e criativos, sem criar/apagar projetos ou mudar configurações.",
+  },
+};
+
 export default function WorkspaceSettings() {
   const { user } = useAuth();
   const { currentWorkspace, currentWorkspaceRole, isWorkspaceAdmin } = useWorkspace();
@@ -686,11 +705,32 @@ export default function WorkspaceSettings() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="member">Membro</SelectItem>
-                    <SelectItem value="admin">Admin</SelectItem>
-                    {canInviteOwner && <SelectItem value="owner">Owner</SelectItem>}
+                    <SelectItem value="member">{WORKSPACE_ROLE_COPY.member.label}</SelectItem>
+                    <SelectItem value="moderator">{WORKSPACE_ROLE_COPY.moderator.label}</SelectItem>
+                    <SelectItem value="admin">{WORKSPACE_ROLE_COPY.admin.label}</SelectItem>
+                    {canInviteOwner && <SelectItem value="owner">{WORKSPACE_ROLE_COPY.owner.label}</SelectItem>}
                   </SelectContent>
                 </Select>
+                <div className="rounded-lg border border-border/50 bg-muted/25 px-3 py-2 text-xs text-muted-foreground">
+                  <div className="mb-1 flex items-center gap-1.5 font-medium text-foreground">
+                    <HelpCircle className="h-3.5 w-3.5" />
+                    Diferenças de acesso
+                  </div>
+                  <div className="space-y-1">
+                    {(["member", "moderator", "admin"] as WorkspaceRole[]).map((role) => (
+                      <p key={role}>
+                        <span className="font-medium text-foreground">{WORKSPACE_ROLE_COPY[role].label}:</span>{" "}
+                        {WORKSPACE_ROLE_COPY[role].description}
+                      </p>
+                    ))}
+                    {canInviteOwner && (
+                      <p>
+                        <span className="font-medium text-foreground">{WORKSPACE_ROLE_COPY.owner.label}:</span>{" "}
+                        {WORKSPACE_ROLE_COPY.owner.description}
+                      </p>
+                    )}
+                  </div>
+                </div>
                 <Button onClick={handleInvite} disabled={savingInvite} className="w-full">
                   {savingInvite ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
                   <span className="ml-2">Criar convite</span>
@@ -736,23 +776,18 @@ export default function WorkspaceSettings() {
 }
 
 function RoleLabel({ role }: { role: WorkspaceRole }) {
-  const description =
-    role === "owner"
-      ? "Owner controla organização, cobrança e pode conceder papel de owner."
-      : role === "admin"
-        ? "Admin gerencia projetos, integrações, sync e convites do workspace."
-        : "Member visualiza dashboards e relatórios, sem alterar configurações críticas.";
+  const roleCopy = WORKSPACE_ROLE_COPY[role] ?? WORKSPACE_ROLE_COPY.member;
 
   return (
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
           <div className="inline-flex items-center gap-1.5 text-sm font-medium">
-            {role}
+            {roleCopy.label}
             <HelpCircle className="h-3.5 w-3.5 text-muted-foreground" />
           </div>
         </TooltipTrigger>
-        <TooltipContent className="max-w-xs text-xs">{description}</TooltipContent>
+        <TooltipContent className="max-w-xs text-xs">{roleCopy.description}</TooltipContent>
       </Tooltip>
     </TooltipProvider>
   );

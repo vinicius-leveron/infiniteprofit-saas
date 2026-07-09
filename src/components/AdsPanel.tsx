@@ -193,7 +193,7 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
     try {
       let metricsQuery = supabase
         .from("creative_asset_daily_metrics" as never)
-        .select("asset_id, event_date, spend, impressions, clicks, outbound_clicks, ctr, link_ctr, cpm, purchases, revenue, roas, cpa, hook_rate, has_meta_data, has_gateway_data")
+        .select("asset_id, event_date, spend, impressions, clicks, outbound_clicks, ctr, link_ctr, cpm, purchases, revenue, refunds, refund_rate, roas, cpa, hook_rate, has_meta_data, has_gateway_data")
         .eq("project_id", projectId);
 
       if (dateRange?.from) metricsQuery = metricsQuery.gte("event_date", dateRange.from);
@@ -1051,7 +1051,7 @@ function CreativeCard({
         </div>
 
         {/* Primary Metrics */}
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
           <MetricTile
             label="Gasto"
             value={fBRL(card.spend)}
@@ -1067,6 +1067,18 @@ function CreativeCard({
             value={card.roas != null ? `${card.roas.toFixed(2)}x` : "—"}
             accent="emerald"
             highlight={card.roas != null && card.roas >= 2}
+          />
+          <MetricTile
+            label="Reemb."
+            value={fNum(card.refunds)}
+            accent="amber"
+            highlight={card.refunds > 0}
+          />
+          <MetricTile
+            label="Tx Reemb."
+            value={card.refundRate != null ? fPct(card.refundRate, 1) : "—"}
+            accent="amber"
+            highlight={(card.refundRate ?? 0) > 0}
           />
         </div>
 
@@ -1335,7 +1347,7 @@ function MetricTile({
 }: {
   label: string;
   value: string;
-  accent?: "default" | "emerald" | "violet";
+  accent?: "default" | "emerald" | "violet" | "amber";
   highlight?: boolean;
 }) {
   return (
@@ -1345,8 +1357,10 @@ function MetricTile({
         accent === "default" && "border-border/40 bg-muted/30",
         accent === "emerald" && "border-emerald-500/20 bg-emerald-500/5",
         accent === "violet" && "border-violet-500/20 bg-violet-500/5",
+        accent === "amber" && "border-amber-500/20 bg-amber-500/5",
         highlight && accent === "emerald" && "border-emerald-500/40 bg-emerald-500/10",
         highlight && accent === "violet" && "border-violet-500/40 bg-violet-500/10",
+        highlight && accent === "amber" && "border-amber-500/40 bg-amber-500/10",
       )}
     >
       {highlight && (
@@ -1355,6 +1369,7 @@ function MetricTile({
             "absolute inset-0 opacity-30",
             accent === "emerald" && "bg-gradient-to-br from-emerald-500/20 to-transparent",
             accent === "violet" && "bg-gradient-to-br from-violet-500/20 to-transparent",
+            accent === "amber" && "bg-gradient-to-br from-amber-500/20 to-transparent",
           )}
         />
       )}
@@ -1365,6 +1380,7 @@ function MetricTile({
             "mt-0.5 text-base font-semibold tabular-nums",
             highlight && accent === "emerald" && "text-emerald-300",
             highlight && accent === "violet" && "text-violet-300",
+            highlight && accent === "amber" && "text-amber-300",
           )}
         >
           {value}

@@ -13,7 +13,7 @@ import { useAuth } from "./useAuth";
 const STORAGE_KEY = "infiniteprofit.currentWorkspaceId";
 
 export type OrganizationRole = "owner" | "admin";
-export type WorkspaceRole = "owner" | "admin" | "member";
+export type WorkspaceRole = "owner" | "admin" | "moderator" | "member";
 
 export interface OrganizationAccess {
   id: string;

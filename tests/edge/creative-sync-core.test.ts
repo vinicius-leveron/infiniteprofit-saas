@@ -88,7 +88,15 @@ describe("creative sync core", () => {
           event_type: "purchase.approved",
           payload: {
             utm_content: "ad-video",
+            transaction_id: "tx-video-1",
             total: 300,
+          },
+        },
+        {
+          event_date: "2026-06-01",
+          event_type: "purchase.refunded",
+          payload: {
+            transaction_id: "tx-video-1",
           },
         },
       ],
@@ -108,6 +116,8 @@ describe("creative sync core", () => {
     expect(videoRow?.hook_rate).toBeCloseTo(25, 1);
     expect(videoRow?.purchases).toBe(1);
     expect(videoRow?.revenue).toBe(300);
+    expect(videoRow?.refunds).toBe(1);
+    expect(videoRow?.refund_rate).toBe(100);
     expect(imageRow?.hook_rate).toBeCloseTo(1, 1);
     expect(imageRow?.link_ctr).toBeCloseTo(1, 1);
   });

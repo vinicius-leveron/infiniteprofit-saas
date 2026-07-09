@@ -8,7 +8,7 @@ type RawEvent = {
   payload: any;
 };
 
-const META_TAX_RATE = 0.125;
+const META_TAX_RATE = 0.1215;
 
 export function aggregateOneDay(events: RawEvent[]) {
   let dailyMetricsOverride: Record<string, unknown> | null = null;

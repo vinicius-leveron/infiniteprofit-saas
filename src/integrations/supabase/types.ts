@@ -738,6 +738,8 @@ export type Database = {
           outbound_clicks: number
           project_id: string
           purchases: number
+          refund_rate: number | null
+          refunds: number
           revenue: number
           roas: number | null
           spend: number
@@ -761,6 +763,8 @@ export type Database = {
           outbound_clicks?: number
           project_id: string
           purchases?: number
+          refund_rate?: number | null
+          refunds?: number
           revenue?: number
           roas?: number | null
           spend?: number
@@ -784,6 +788,8 @@ export type Database = {
           outbound_clicks?: number
           project_id?: string
           purchases?: number
+          refund_rate?: number | null
+          refunds?: number
           revenue?: number
           roas?: number | null
           spend?: number

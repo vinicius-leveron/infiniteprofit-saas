@@ -28,6 +28,7 @@ export interface RawMetaPayload {
 
 export interface RawGatewayPayload {
   utm_content?: string;
+  transaction_id?: string;
   total?: number | string | null;
   net?: number | string | null;
 }
@@ -93,6 +94,8 @@ export interface CreativeMetricUpsertRow {
   cpm: number | null;
   purchases: number;
   revenue: number;
+  refunds: number;
+  refund_rate: number | null;
   roas: number | null;
   cpa: number | null;
   hook_rate: number | null;
@@ -262,11 +265,15 @@ export function buildCreativeDailyMetrics(args: {
     aggregate.set(key, target);
   }
 
+  const adIdByTransactionId = new Map<string, string>();
+
   for (const row of args.gatewayRows) {
     if (row.event_type !== "purchase.approved") continue;
     const payload = row.payload ?? {};
     const adId = resolveGatewayAdId(payload, args.assetIdByAdId);
     if (!adId) continue;
+    const transactionId = stringOrNull(payload.transaction_id ?? (payload as Record<string, unknown>).id);
+    if (transactionId) adIdByTransactionId.set(transactionId, adId);
     const assetId = args.assetIdByAdId.get(adId);
     if (!assetId) continue;
 
@@ -274,6 +281,22 @@ export function buildCreativeDailyMetrics(args: {
     const target = aggregate.get(key) ?? createAccumulator(assetId, row.event_date);
     target.purchases += 1;
     target.revenue += numberOrZero(payload.total) || numberOrZero(payload.net);
+    target.has_gateway_data = true;
+    aggregate.set(key, target);
+  }
+
+  for (const row of args.gatewayRows) {
+    if (row.event_type !== "purchase.refunded") continue;
+    const payload = row.payload ?? {};
+    const transactionId = stringOrNull(payload.transaction_id ?? (payload as Record<string, unknown>).id);
+    const adId = resolveGatewayAdId(payload, args.assetIdByAdId) ?? (transactionId ? adIdByTransactionId.get(transactionId) ?? null : null);
+    if (!adId) continue;
+    const assetId = args.assetIdByAdId.get(adId);
+    if (!assetId) continue;
+
+    const key = `${assetId}:${row.event_date}`;
+    const target = aggregate.get(key) ?? createAccumulator(assetId, row.event_date);
+    target.refunds += 1;
     target.has_gateway_data = true;
     aggregate.set(key, target);
   }
@@ -456,6 +479,7 @@ function finalizeAccumulator(row: CreativeMetricAccumulator): CreativeMetricUpse
   const cpm = row.impressions > 0 && row.spend > 0 ? (row.spend / row.impressions) * 1000 : null;
   const roas = row.spend > 0 && row.revenue > 0 ? row.revenue / row.spend : null;
   const cpa = row.spend > 0 && row.purchases > 0 ? row.spend / row.purchases : null;
+  const refundRate = row.purchases > 0 ? (row.refunds / row.purchases) * 100 : null;
   const hookRate =
     row.hook_denominator > 0
       ? (row.hook_numerator / row.hook_denominator) * 100
@@ -473,6 +497,8 @@ function finalizeAccumulator(row: CreativeMetricAccumulator): CreativeMetricUpse
     cpm,
     purchases: row.purchases,
     revenue: row.revenue,
+    refunds: row.refunds,
+    refund_rate: refundRate,
     roas,
     cpa,
     hook_rate: hookRate,
@@ -491,6 +517,7 @@ function createAccumulator(assetId: string, eventDate: string): CreativeMetricAc
     outbound_clicks: 0,
     purchases: 0,
     revenue: 0,
+    refunds: 0,
     hook_numerator: 0,
     hook_denominator: 0,
     has_meta_data: false,
@@ -538,10 +565,58 @@ function normalizeTagList(value: unknown) {
 
 function normalizeScoreMap(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const entries = Object.entries(value as Record<string, unknown>)
-    .map(([key, rawValue]) => [key, parseNumber(rawValue)] as const)
-    .filter((entry): entry is readonly [string, number] => entry[1] != null);
-  return Object.fromEntries(entries);
+  const scores: Record<string, number> = {};
+  for (const [key, rawValue] of Object.entries(value as Record<string, unknown>)) {
+    const parsed = parseNumber(rawValue);
+    if (parsed == null) continue;
+    scores[key] = parsed;
+    const normalizedKey = normalizeScoreKey(key);
+    if (normalizedKey && scores[normalizedKey] == null) {
+      scores[normalizedKey] = parsed;
+    }
+  }
+  return scores;
+}
+
+function normalizeScoreKey(key: string) {
+  const normalized = key
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  if (normalized === "hook" || normalized === "hook_score" || normalized === "hookscore" || normalized === "score_hook" || normalized === "scorehook") return "hook";
+  if (
+    normalized === "clareza" ||
+    normalized === "clareza_score" ||
+    normalized === "clarezascore" ||
+    normalized === "clarity" ||
+    normalized === "clarity_score" ||
+    normalized === "clarityscore" ||
+    normalized === "clareza_da_copy" ||
+    normalized === "clarezadacopy" ||
+    normalized === "copy_clarity" ||
+    normalized === "copyclarity"
+  ) {
+    return "clareza";
+  }
+  if (
+    normalized === "escala" ||
+    normalized === "escala_score" ||
+    normalized === "escalascore" ||
+    normalized === "scale" ||
+    normalized === "scale_score" ||
+    normalized === "scalescore" ||
+    normalized === "potencial_escala" ||
+    normalized === "potencialescala" ||
+    normalized === "potencial_de_escala" ||
+    normalized === "potencialdeescala" ||
+    normalized === "scalability"
+  ) {
+    return "potencial_de_escala";
+  }
+  return null;
 }
 
 function normalizeTranscriptSegments(value: unknown): CreativeTranscriptSegment[] {
@@ -652,6 +727,7 @@ type CreativeMetricAccumulator = {
   outbound_clicks: number;
   purchases: number;
   revenue: number;
+  refunds: number;
   hook_numerator: number;
   hook_denominator: number;
   has_meta_data: boolean;

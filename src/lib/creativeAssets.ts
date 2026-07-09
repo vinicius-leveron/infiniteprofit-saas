@@ -84,6 +84,8 @@ export interface CreativeAssetMetricRow {
   cpm: number | null;
   purchases: number | null;
   revenue: number | null;
+  refunds: number | null;
+  refund_rate: number | null;
   roas: number | null;
   cpa: number | null;
   hook_rate: number | null;
@@ -193,6 +195,8 @@ export interface CreativeAssetCard {
   outboundClicks: number;
   purchases: number;
   revenue: number;
+  refunds: number;
+  refundRate: number | null;
   ctr: number | null;
   linkCtr: number | null;
   cpm: number | null;
@@ -491,6 +495,7 @@ function aggregateMetrics(metrics: CreativeAssetMetricRow[]) {
   let outboundClicks = 0;
   let purchases = 0;
   let revenue = 0;
+  let refunds = 0;
   let hookWeight = 0;
   let hookWeightedSum = 0;
   let hasMetaData = false;
@@ -504,6 +509,7 @@ function aggregateMetrics(metrics: CreativeAssetMetricRow[]) {
     const rowLinkClicks = rowOutboundClicks || rowClicks;
     const rowPurchases = numberOrZero(row.purchases);
     const rowRevenue = numberOrZero(row.revenue);
+    const rowRefunds = numberOrZero(row.refunds);
     const rowHookRate = parseNumber(row.hook_rate);
 
     spend += rowSpend;
@@ -512,6 +518,7 @@ function aggregateMetrics(metrics: CreativeAssetMetricRow[]) {
     outboundClicks += rowOutboundClicks;
     purchases += rowPurchases;
     revenue += rowRevenue;
+    refunds += rowRefunds;
     hasMetaData ||= Boolean(row.has_meta_data);
     hasGatewayData ||= Boolean(row.has_gateway_data);
 
@@ -527,6 +534,7 @@ function aggregateMetrics(metrics: CreativeAssetMetricRow[]) {
   const cpm = impressions > 0 && spend > 0 ? (spend / impressions) * 1000 : null;
   const roas = spend > 0 && revenue > 0 ? revenue / spend : null;
   const cpa = spend > 0 && purchases > 0 ? spend / purchases : null;
+  const refundRate = purchases > 0 ? (refunds / purchases) * 100 : null;
   const hookRate = hookWeight > 0 ? hookWeightedSum / hookWeight : null;
 
   return {
@@ -536,6 +544,8 @@ function aggregateMetrics(metrics: CreativeAssetMetricRow[]) {
     outboundClicks,
     purchases,
     revenue,
+    refunds,
+    refundRate,
     ctr,
     linkCtr,
     cpm,
@@ -591,10 +601,58 @@ function normalizeTagList(value: unknown) {
 
 function normalizeScoreMap(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const entries = Object.entries(value as Record<string, unknown>)
-    .map(([key, rawValue]) => [key, parseNumber(rawValue)] as const)
-    .filter((entry): entry is readonly [string, number] => entry[1] != null);
-  return Object.fromEntries(entries);
+  const scores: Record<string, number> = {};
+  for (const [key, rawValue] of Object.entries(value as Record<string, unknown>)) {
+    const parsed = parseNumber(rawValue);
+    if (parsed == null) continue;
+    scores[key] = parsed;
+    const normalizedKey = normalizeScoreKey(key);
+    if (normalizedKey && scores[normalizedKey] == null) {
+      scores[normalizedKey] = parsed;
+    }
+  }
+  return scores;
+}
+
+function normalizeScoreKey(key: string) {
+  const normalized = key
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  if (normalized === "hook" || normalized === "hook_score" || normalized === "hookscore" || normalized === "score_hook" || normalized === "scorehook") return "hook";
+  if (
+    normalized === "clareza" ||
+    normalized === "clareza_score" ||
+    normalized === "clarezascore" ||
+    normalized === "clarity" ||
+    normalized === "clarity_score" ||
+    normalized === "clarityscore" ||
+    normalized === "clareza_da_copy" ||
+    normalized === "clarezadacopy" ||
+    normalized === "copy_clarity" ||
+    normalized === "copyclarity"
+  ) {
+    return "clareza";
+  }
+  if (
+    normalized === "escala" ||
+    normalized === "escala_score" ||
+    normalized === "escalascore" ||
+    normalized === "scale" ||
+    normalized === "scale_score" ||
+    normalized === "scalescore" ||
+    normalized === "potencial_escala" ||
+    normalized === "potencialescala" ||
+    normalized === "potencial_de_escala" ||
+    normalized === "potencialdeescala" ||
+    normalized === "scalability"
+  ) {
+    return "potencial_de_escala";
+  }
+  return null;
 }
 
 function normalizeTranscriptSegments(value: unknown): CreativeTranscriptSegment[] {

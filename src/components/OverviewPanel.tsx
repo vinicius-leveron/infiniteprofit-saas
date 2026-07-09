@@ -172,7 +172,7 @@ export const OverviewPanel = ({ rows, previous, onDayClick }: Props) => {
         <KpiCard
           label="Imposto Meta"
           value={fBRL(t.impostoMeta)}
-          hint="12,5% do investimento"
+          hint="12,15% do investimento"
           icon={Receipt}
           tone="red"
           deltaPct={delta(t.impostoMeta, tPrev?.impostoMeta)}

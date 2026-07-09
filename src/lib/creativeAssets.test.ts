@@ -103,6 +103,8 @@ const metrics: CreativeAssetMetricRow[] = [
     cpm: 100,
     purchases: 4,
     revenue: 400,
+    refunds: 1,
+    refund_rate: 25,
     roas: 4,
     cpa: 25,
     hook_rate: 35,
@@ -121,6 +123,8 @@ const metrics: CreativeAssetMetricRow[] = [
     cpm: 100,
     purchases: 2,
     revenue: 180,
+    refunds: 0,
+    refund_rate: 0,
     roas: 3.6,
     cpa: 25,
     hook_rate: 45,
@@ -139,6 +143,8 @@ const metrics: CreativeAssetMetricRow[] = [
     cpm: 100,
     purchases: 1,
     revenue: 120,
+    refunds: 0,
+    refund_rate: 0,
     roas: 0.6,
     cpa: 200,
     hook_rate: 0.3,
@@ -167,7 +173,7 @@ const analyses: CreativeAssetAnalysisRow[] = [
     visual: "Visual",
     visual_evidence: [{ timestamp_ms: 0, observation: "Pessoa em close" }],
     tags: ["hook", "escala"],
-    scores: { hook: 82 },
+    scores: { hook_score: 82, clareza_da_copy: 74, escala: 88 },
     analysis_coverage: "full",
     analysis_error_message: null,
     error_message: null,
@@ -184,8 +190,13 @@ describe("creative assets view helpers", () => {
     expect(first?.spend).toBe(150);
     expect(first?.purchases).toBe(6);
     expect(first?.revenue).toBe(580);
+    expect(first?.refunds).toBe(1);
+    expect(first?.refundRate).toBeCloseTo(16.66, 1);
     expect(first?.roas).toBeCloseTo(3.866, 2);
     expect(first?.hookRate).toBeCloseTo(38.33, 1);
+    expect(first?.scores.hook).toBe(82);
+    expect(first?.scores.clareza).toBe(74);
+    expect(first?.scores.potencial_de_escala).toBe(88);
     expect(first?.tags).toContain("hook");
     expect(first?.pipelineStatus).toBe("ready");
     expect(first?.transcriptSegments).toHaveLength(1);
