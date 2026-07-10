@@ -26,7 +26,7 @@ interface SavedSimulation {
   id: string;
   name: string | null;
   inputs: SimInputs;
-  result: SimResult;
+  result: StoredSimulationResult;
   created_at: string;
 }
 
@@ -72,6 +72,14 @@ interface SimResult {
   cpm: number | null;
 }
 
+interface StoredSimulationResult extends SimResult {
+  schemaVersion?: number;
+  actualInputs?: Partial<SimInputs> | null;
+  actualResult?: Partial<SimResult> | null;
+  projectedInputs?: Partial<SimInputs> | null;
+  projectedResult?: Partial<SimResult> | null;
+}
+
 const num = (v: number | null | undefined, fallback = 0) =>
   v == null || isNaN(v) || !isFinite(v) ? fallback : v;
 
@@ -99,6 +107,47 @@ const REVENUE_LEVERS: { key: keyof SimInputs; label: string }[] = [
   { key: "takeRateBump", label: "Take-rate Bump" },
   { key: "takeRateUpsell", label: "Take-rate Upsell" },
 ];
+
+const SIM_INPUT_KEYS: Array<keyof SimInputs> = [
+  "ticketFront",
+  "ticketBump",
+  "ticketUpsell",
+  "takeRateBump",
+  "takeRateUpsell",
+  "impressoes",
+  "investimento",
+  "ctr",
+  "connectRate",
+  "playRate",
+  "pitchRet",
+  "pitchChk",
+  "chkVenda",
+];
+
+const normalizeSimInputs = (value: unknown, fallback: SimInputs) => {
+  if (!value || typeof value !== "object") {
+    return { inputs: fallback, hasAnyValue: false };
+  }
+
+  const record = value as Record<string, unknown>;
+  let hasAnyValue = false;
+  const inputs = { ...fallback };
+
+  SIM_INPUT_KEYS.forEach((key) => {
+    const n = Number(record[key]);
+    if (Number.isFinite(n)) {
+      inputs[key] = n;
+      hasAnyValue = true;
+    }
+  });
+
+  return { inputs, hasAnyValue };
+};
+
+const getChangedInputKeys = (projected: SimInputs, actual: SimInputs) =>
+  new Set(
+    SIM_INPUT_KEYS.filter((key) => Math.abs(projected[key] - actual[key]) > 0.0001),
+  );
 
 function runSim(i: SimInputs): SimResult {
   const cliques = i.impressoes * (i.ctr / 100);
@@ -273,13 +322,22 @@ export const SimulatorPanel = ({ rows }: Props) => {
       toast.error("Selecione um workspace antes de salvar");
       return;
     }
+    const storedResult: StoredSimulationResult = {
+      ...simResult,
+      schemaVersion: 2,
+      actualInputs,
+      actualResult: baseResult,
+      projectedInputs: inputs,
+      projectedResult: simResult,
+    };
+
     const { error } = await supabase.from("simulations").insert({
       user_id: user.id,
       workspace_id: currentWorkspace.id,
       project_id: projectId,
       name: simName.trim() || null,
       inputs: inputs as unknown as Record<string, number>,
-      result: simResult as unknown as Record<string, number | null>,
+      result: storedResult as unknown as Record<string, unknown>,
     });
     setSaving(false);
     if (error) {
@@ -293,10 +351,18 @@ export const SimulatorPanel = ({ rows }: Props) => {
   };
 
   const handleLoad = (sim: SavedSimulation) => {
-    setInputs(sim.inputs);
-    setDirtyProjectedKeys(new Set(Object.keys(sim.inputs) as Array<keyof SimInputs>));
+    const projected = normalizeSimInputs(sim.result?.projectedInputs ?? sim.inputs, baselineInputs);
+    const actual = normalizeSimInputs(sim.result?.actualInputs, baselineInputs);
+
+    setInputs(projected.inputs);
+    setActualInputs(actual.inputs);
+    setDirtyProjectedKeys(getChangedInputKeys(projected.inputs, actual.inputs));
     setHistoryOpen(false);
-    toast.success(sim.name ? `Carregado: ${sim.name}` : "Simulação carregada");
+    toast.success(sim.name ? `Carregado: ${sim.name}` : "Simulação carregada", {
+      description: actual.hasAnyValue
+        ? "Cenário atual e simulado restaurados."
+        : "Histórico antigo: cenário atual reconstruído pelo período aberto.",
+    });
   };
 
   const handleDelete = async (id: string) => {
