@@ -25,7 +25,7 @@ interface Props {
 interface SavedSimulation {
   id: string;
   name: string | null;
-  inputs: SimInputs;
+  inputs: StoredSimulationInputs;
   result: StoredSimulationResult;
   created_at: string;
 }
@@ -78,6 +78,19 @@ interface StoredSimulationResult extends SimResult {
   actualResult?: Partial<SimResult> | null;
   projectedInputs?: Partial<SimInputs> | null;
   projectedResult?: Partial<SimResult> | null;
+}
+
+type StoredSimulationInputs = Partial<SimInputs> & {
+  schemaVersion?: number;
+  actualInputs?: Partial<SimInputs> | null;
+  projectedInputs?: Partial<SimInputs> | null;
+};
+
+interface SimulationStateSnapshot {
+  actualInputs: SimInputs;
+  projectedInputs: SimInputs;
+  actualHasAnyValue: boolean;
+  projectedHasAnyValue: boolean;
 }
 
 const num = (v: number | null | undefined, fallback = 0) =>
@@ -149,6 +162,48 @@ const getChangedInputKeys = (projected: SimInputs, actual: SimInputs) =>
     SIM_INPUT_KEYS.filter((key) => Math.abs(projected[key] - actual[key]) > 0.0001),
   );
 
+const readSimulationState = (
+  source: Pick<SavedSimulation, "inputs" | "result">,
+  fallback: SimInputs,
+): SimulationStateSnapshot => {
+  const projected = normalizeSimInputs(
+    source.result?.projectedInputs ?? source.inputs?.projectedInputs ?? source.inputs,
+    fallback,
+  );
+  const actual = normalizeSimInputs(
+    source.result?.actualInputs ?? source.inputs?.actualInputs,
+    fallback,
+  );
+
+  return {
+    actualInputs: actual.hasAnyValue ? actual.inputs : fallback,
+    projectedInputs: projected.hasAnyValue ? projected.inputs : fallback,
+    actualHasAnyValue: actual.hasAnyValue,
+    projectedHasAnyValue: projected.hasAnyValue,
+  };
+};
+
+const makeStoredInputs = (actualInputs: SimInputs, projectedInputs: SimInputs): StoredSimulationInputs => ({
+  ...projectedInputs,
+  schemaVersion: 2,
+  actualInputs,
+  projectedInputs,
+});
+
+const makeStoredResult = (
+  actualInputs: SimInputs,
+  actualResult: SimResult,
+  projectedInputs: SimInputs,
+  projectedResult: SimResult,
+): StoredSimulationResult => ({
+  ...projectedResult,
+  schemaVersion: 2,
+  actualInputs,
+  actualResult,
+  projectedInputs,
+  projectedResult,
+});
+
 function runSim(i: SimInputs): SimResult {
   const cliques = i.impressoes * (i.ctr / 100);
   const pageviews = cliques * (i.connectRate / 100);
@@ -179,6 +234,13 @@ function runSim(i: SimInputs): SimResult {
 export const SimulatorPanel = ({ rows }: Props) => {
   const totals = useMemo(() => computeTotals(rows), [rows]);
   const { currentWorkspace } = useWorkspace();
+  const [searchParams] = useSearchParams();
+  const projectId = searchParams.get("project");
+
+  const simulatorStorageKey = useMemo(() => {
+    if (!currentWorkspace?.id || !projectId) return null;
+    return `infiniteprofit:simulator:last:${currentWorkspace.id}:${projectId}`;
+  }, [currentWorkspace?.id, projectId]);
 
   // Valores inferidos do CSV (médias do período)
   const baselineInputs = useMemo<SimInputs>(() => {
@@ -210,12 +272,56 @@ export const SimulatorPanel = ({ rows }: Props) => {
   const [actualInputs, setActualInputs] = useState<SimInputs>(baselineInputs);
   const [dirtyProjectedKeys, setDirtyProjectedKeys] = useState<Set<keyof SimInputs>>(() => new Set());
 
-  // Quando o período muda e o usuário ainda não tocou em nada, atualiza baseline
+  const applySnapshot = useCallback((snapshot: SimulationStateSnapshot) => {
+    setActualInputs(snapshot.actualInputs);
+    setInputs(snapshot.projectedInputs);
+    setDirtyProjectedKeys(getChangedInputKeys(snapshot.projectedInputs, snapshot.actualInputs));
+  }, []);
+
+  const rememberSnapshot = useCallback((
+    snapshot: SimulationStateSnapshot,
+    meta?: { id?: string; name?: string | null },
+  ) => {
+    if (!simulatorStorageKey) return;
+    window.localStorage.setItem(simulatorStorageKey, JSON.stringify({
+      schemaVersion: 2,
+      savedAt: new Date().toISOString(),
+      simulationId: meta?.id ?? null,
+      name: meta?.name ?? null,
+      actualInputs: snapshot.actualInputs,
+      projectedInputs: snapshot.projectedInputs,
+    }));
+  }, [simulatorStorageKey]);
+
+  // Quando o período muda, restaura o último cenário salvo/carregado deste projeto.
+  // Sem histórico local, volta para o baseline do período.
   useEffect(() => {
+    if (simulatorStorageKey) {
+      try {
+        const stored = window.localStorage.getItem(simulatorStorageKey);
+        if (stored) {
+          const snapshot = readSimulationState(
+            {
+              inputs: JSON.parse(stored) as StoredSimulationInputs,
+              result: {} as StoredSimulationResult,
+            },
+            baselineInputs,
+          );
+
+          if (snapshot.actualHasAnyValue || snapshot.projectedHasAnyValue) {
+            applySnapshot(snapshot);
+            return;
+          }
+        }
+      } catch {
+        window.localStorage.removeItem(simulatorStorageKey);
+      }
+    }
+
     setInputs(baselineInputs);
     setActualInputs(baselineInputs);
     setDirtyProjectedKeys(new Set());
-  }, [baselineInputs]);
+  }, [applySnapshot, baselineInputs, simulatorStorageKey]);
 
   const baseResult = useMemo(() => runSim(actualInputs), [actualInputs]);
   const simResult = useMemo(() => runSim(inputs), [inputs]);
@@ -242,6 +348,9 @@ export const SimulatorPanel = ({ rows }: Props) => {
   };
 
   const reset = () => {
+    if (simulatorStorageKey) {
+      window.localStorage.removeItem(simulatorStorageKey);
+    }
     setInputs(baselineInputs);
     setActualInputs(baselineInputs);
     setDirtyProjectedKeys(new Set());
@@ -282,8 +391,6 @@ export const SimulatorPanel = ({ rows }: Props) => {
   const maxImpact = Math.max(...impactRanking.map((item) => Math.abs(item.fatDelta)), 1);
 
   // ===== Salvar / Histórico de simulações =====
-  const [searchParams] = useSearchParams();
-  const projectId = searchParams.get("project");
   const [saveOpen, setSaveOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [simName, setSimName] = useState("");
@@ -322,44 +429,39 @@ export const SimulatorPanel = ({ rows }: Props) => {
       toast.error("Selecione um workspace antes de salvar");
       return;
     }
-    const storedResult: StoredSimulationResult = {
-      ...simResult,
-      schemaVersion: 2,
-      actualInputs,
-      actualResult: baseResult,
-      projectedInputs: inputs,
-      projectedResult: simResult,
-    };
+    const storedInputs = makeStoredInputs(actualInputs, inputs);
+    const storedResult = makeStoredResult(actualInputs, baseResult, inputs, simResult);
 
-    const { error } = await supabase.from("simulations").insert({
+    const { data, error } = await supabase.from("simulations").insert({
       user_id: user.id,
       workspace_id: currentWorkspace.id,
       project_id: projectId,
       name: simName.trim() || null,
-      inputs: inputs as unknown as Record<string, number>,
+      inputs: storedInputs as unknown as Record<string, unknown>,
       result: storedResult as unknown as Record<string, unknown>,
-    });
+    }).select("id, name, inputs, result, created_at").single();
     setSaving(false);
     if (error) {
       toast.error("Não foi possível salvar", { description: error.message });
       return;
     }
+    const savedSimulation = data as unknown as SavedSimulation;
+    const snapshot = readSimulationState(savedSimulation, baselineInputs);
+    rememberSnapshot(snapshot, { id: savedSimulation.id, name: savedSimulation.name });
+    setHistory((previous) => [savedSimulation, ...previous.filter((item) => item.id !== savedSimulation.id)]);
     toast.success("Simulação salva");
     setSimName("");
     setSaveOpen(false);
-    loadHistory();
   };
 
   const handleLoad = (sim: SavedSimulation) => {
-    const projected = normalizeSimInputs(sim.result?.projectedInputs ?? sim.inputs, baselineInputs);
-    const actual = normalizeSimInputs(sim.result?.actualInputs, baselineInputs);
+    const snapshot = readSimulationState(sim, baselineInputs);
 
-    setInputs(projected.inputs);
-    setActualInputs(actual.inputs);
-    setDirtyProjectedKeys(getChangedInputKeys(projected.inputs, actual.inputs));
+    applySnapshot(snapshot);
+    rememberSnapshot(snapshot, { id: sim.id, name: sim.name });
     setHistoryOpen(false);
     toast.success(sim.name ? `Carregado: ${sim.name}` : "Simulação carregada", {
-      description: actual.hasAnyValue
+      description: snapshot.actualHasAnyValue
         ? "Cenário atual e simulado restaurados."
         : "Histórico antigo: cenário atual reconstruído pelo período aberto.",
     });
