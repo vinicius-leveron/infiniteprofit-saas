@@ -1,11 +1,8 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import {
-  Sliders, RotateCcw, Wand2, ArrowRight, TrendingUp, TrendingDown,
+  RotateCcw, ArrowRight, TrendingUp, TrendingDown,
   Save, History, Trash2, Loader2, Play,
 } from "lucide-react";
-import {
-  ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
-} from "recharts";
 import { useSearchParams } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -15,7 +12,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { fBRL, fNum, fPct, fMult, computeTotals, META_TAX_RATE } from "@/lib/metrics";
+import { fBRL, fNum, fMult, computeTotals, META_TAX_RATE } from "@/lib/metrics";
 import type { DailyRow } from "@/lib/csv";
 import { supabase } from "@/integrations/supabase/client";
 import { useWorkspace } from "@/hooks/useWorkspace";
@@ -75,17 +72,33 @@ interface SimResult {
   cpm: number | null;
 }
 
-interface SensitivityPoint {
-  delta: string;
-  value: number;
-  lucro: number;
-  fat: number;
-  lucroDelta: number;
-  fatDelta: number;
-}
-
 const num = (v: number | null | undefined, fallback = 0) =>
   v == null || isNaN(v) || !isFinite(v) ? fallback : v;
+
+interface ImpactRankingItem {
+  key: keyof SimInputs;
+  label: string;
+  currentValue: number;
+  projectedValue: number;
+  inputDeltaPct: number;
+  fatDelta: number;
+  lucroDelta: number;
+}
+
+const REVENUE_LEVERS: { key: keyof SimInputs; label: string }[] = [
+  { key: "impressoes", label: "Impressões" },
+  { key: "ctr", label: "CTR" },
+  { key: "connectRate", label: "Connect Rate" },
+  { key: "playRate", label: "Play Rate" },
+  { key: "pitchRet", label: "Retenção Pitch" },
+  { key: "pitchChk", label: "Pitch → Checkout" },
+  { key: "chkVenda", label: "Checkout → Venda" },
+  { key: "ticketFront", label: "Ticket Front" },
+  { key: "ticketBump", label: "Ticket Bump" },
+  { key: "ticketUpsell", label: "Ticket Upsell" },
+  { key: "takeRateBump", label: "Take-rate Bump" },
+  { key: "takeRateUpsell", label: "Take-rate Upsell" },
+];
 
 function runSim(i: SimInputs): SimResult {
   const cliques = i.impressoes * (i.ctr / 100);
@@ -146,91 +159,78 @@ export const SimulatorPanel = ({ rows }: Props) => {
 
   const [inputs, setInputs] = useState<SimInputs>(baselineInputs);
   const [actualInputs, setActualInputs] = useState<SimInputs>(baselineInputs);
+  const [dirtyProjectedKeys, setDirtyProjectedKeys] = useState<Set<keyof SimInputs>>(() => new Set());
 
   // Quando o período muda e o usuário ainda não tocou em nada, atualiza baseline
   useEffect(() => {
     setInputs(baselineInputs);
     setActualInputs(baselineInputs);
+    setDirtyProjectedKeys(new Set());
   }, [baselineInputs]);
 
   const baseResult = useMemo(() => runSim(actualInputs), [actualInputs]);
   const simResult = useMemo(() => runSim(inputs), [inputs]);
 
-  const update = <K extends keyof SimInputs>(k: K, v: SimInputs[K]) =>
+  const update = <K extends keyof SimInputs>(k: K, v: SimInputs[K]) => {
+    setDirtyProjectedKeys((previous) => {
+      const next = new Set(previous);
+      next.add(k);
+      return next;
+    });
     setInputs((p) => ({ ...p, [k]: v }));
+  };
 
-  const updateActual = <K extends keyof SimInputs>(k: K, v: SimInputs[K]) =>
+  const updateActual = <K extends keyof SimInputs>(k: K, v: SimInputs[K]) => {
     setActualInputs((p) => ({ ...p, [k]: v }));
+    if (!dirtyProjectedKeys.has(k)) {
+      setInputs((p) => ({ ...p, [k]: v }));
+    }
+  };
+
+  const copyActualToProjected = () => {
+    setInputs(actualInputs);
+    setDirtyProjectedKeys(new Set());
+  };
 
   const reset = () => {
     setInputs(baselineInputs);
     setActualInputs(baselineInputs);
+    setDirtyProjectedKeys(new Set());
   };
 
-  // Sensibilidade: varia uma variável de -30% a +30% e mostra impacto incremental.
-  const [sensVar, setSensVar] = useState<keyof SimInputs>("chkVenda");
+  const impactRanking = useMemo<ImpactRankingItem[]>(() => {
+    return REVENUE_LEVERS
+      .map((lever) => {
+        const currentValue = actualInputs[lever.key] ?? 0;
+        const projectedValue = inputs[lever.key] ?? 0;
+        const next = { ...actualInputs, [lever.key]: projectedValue };
+        const result = runSim(next);
+        const inputDeltaPct = currentValue
+          ? ((projectedValue - currentValue) / Math.abs(currentValue)) * 100
+          : projectedValue
+            ? 100
+            : 0;
 
-  // Ranking de alavancas: mede o impacto isolado de levar cada métrica do atual ao projetado.
-  const sensitivityRanking = useMemo(() => {
-    const vars: { key: keyof SimInputs; label: string }[] = [
-      { key: "ctr", label: "CTR" },
-      { key: "connectRate", label: "Connect Rate" },
-      { key: "playRate", label: "Play Rate" },
-      { key: "pitchRet", label: "Pitch Retention" },
-      { key: "pitchChk", label: "Pitch → Checkout" },
-      { key: "chkVenda", label: "Checkout → Venda" },
-      { key: "ticketFront", label: "Ticket Front" },
-      { key: "ticketBump", label: "Ticket Bump" },
-      { key: "ticketUpsell", label: "Ticket Upsell" },
-      { key: "takeRateBump", label: "Take-rate Bump" },
-      { key: "takeRateUpsell", label: "Take-rate Upsell" },
-      { key: "investimento", label: "Investimento" },
-      { key: "impressoes", label: "Impressões" },
-    ];
-    const baseLucro = baseResult.lucro;
-    const baseFat = baseResult.fatLiquido;
-    const ranked = vars
-      .map((v) => {
-        const currentValue = actualInputs[v.key];
-        const projectedValue = inputs[v.key];
-        const next = { ...actualInputs, [v.key]: projectedValue };
-        const newLucro = runSim(next).lucro;
-        const newFat = runSim(next).fatLiquido;
-        const deltaLucro = newLucro - baseLucro;
-        const deltaFat = newFat - baseFat;
-        const deltaPct = baseLucro ? (deltaLucro / Math.abs(baseLucro)) * 100 : 0;
-        const valueDeltaPct = currentValue ? ((projectedValue - currentValue) / Math.abs(currentValue)) * 100 : 0;
-        return { ...v, currentValue, projectedValue, valueDeltaPct, deltaLucro, deltaFat, deltaPct };
+        return {
+          ...lever,
+          currentValue,
+          projectedValue,
+          inputDeltaPct,
+          fatDelta: result.fatLiquido - baseResult.fatLiquido,
+          lucroDelta: result.lucro - baseResult.lucro,
+        };
       })
-      .sort((a, b) => Math.abs(b.deltaLucro) - Math.abs(a.deltaLucro));
-    return ranked;
+      .sort((a, b) => {
+        const fatSort = Math.abs(b.fatDelta) - Math.abs(a.fatDelta);
+        if (fatSort !== 0) return fatSort;
+        return Math.abs(b.lucroDelta) - Math.abs(a.lucroDelta);
+      });
   }, [actualInputs, baseResult.fatLiquido, baseResult.lucro, inputs]);
 
-  const topSensitive = sensitivityRanking[0];
-
-  const sensitivityData = useMemo(() => {
-    const base = inputs[sensVar];
-    if (!base) return [];
-    const baseScenario = runSim(inputs);
-    const points: SensitivityPoint[] = [];
-    for (let pct = -30; pct <= 30; pct += 5) {
-      const value = base * (1 + pct / 100);
-      const next = { ...inputs, [sensVar]: value };
-      const r = runSim(next);
-      points.push({
-        delta: (pct > 0 ? "+" : "") + pct + "%",
-        value,
-        lucro: Math.round(r.lucro),
-        fat: Math.round(r.fatLiquido),
-        lucroDelta: Math.round(r.lucro - baseScenario.lucro),
-        fatDelta: Math.round(r.fatLiquido - baseScenario.fatLiquido),
-      });
-    }
-    return points;
-  }, [inputs, sensVar]);
-  const selectedSensitivityLabel = sensitivityRanking.find((item) => item.key === sensVar)?.label ?? String(sensVar);
-  const sensitivityLow = sensitivityData[0] ?? null;
-  const sensitivityHigh = sensitivityData[sensitivityData.length - 1] ?? null;
+  const hasProjectedChanges = impactRanking.some(
+    (item) => Math.abs(item.projectedValue - item.currentValue) > 0.0001,
+  );
+  const maxImpact = Math.max(...impactRanking.map((item) => Math.abs(item.fatDelta)), 1);
 
   // ===== Salvar / Histórico de simulações =====
   const [searchParams] = useSearchParams();
@@ -294,6 +294,7 @@ export const SimulatorPanel = ({ rows }: Props) => {
 
   const handleLoad = (sim: SavedSimulation) => {
     setInputs(sim.inputs);
+    setDirtyProjectedKeys(new Set(Object.keys(sim.inputs) as Array<keyof SimInputs>));
     setHistoryOpen(false);
     toast.success(sim.name ? `Carregado: ${sim.name}` : "Simulação carregada");
   };
@@ -327,8 +328,8 @@ export const SimulatorPanel = ({ rows }: Props) => {
         {/* Inputs */}
         <div className="space-y-4">
           <SectionCard
-            title="Tickets"
-            subtitle="Valor medio por venda"
+            title="Cenário atual"
+            subtitle="Base real usada no lado esquerdo do comparativo"
             right={
               <div className="flex items-center gap-1.5">
                 <Button variant="ghost" size="sm" onClick={openHistory} className="gap-1.5 h-8">
@@ -348,6 +349,39 @@ export const SimulatorPanel = ({ rows }: Props) => {
           >
             <div className="grid sm:grid-cols-3 gap-3">
               <NumberField
+                label="Ticket Front" prefix="R$" value={actualInputs.ticketFront} step={1}
+                onChange={(v) => updateActual("ticketFront", v)}
+              />
+              <NumberField
+                label="Ticket Order Bump" prefix="R$" value={actualInputs.ticketBump} step={1}
+                onChange={(v) => updateActual("ticketBump", v)}
+              />
+              <NumberField
+                label="Ticket Upsell" prefix="R$" value={actualInputs.ticketUpsell} step={1}
+                onChange={(v) => updateActual("ticketUpsell", v)}
+              />
+              <NumberField
+                label="Impressões" value={actualInputs.impressoes} step={1000}
+                onChange={(v) => updateActual("impressoes", v)}
+              />
+              <NumberField
+                label="Investimento" prefix="R$" value={actualInputs.investimento} step={100}
+                onChange={(v) => updateActual("investimento", v)}
+              />
+            </div>
+          </SectionCard>
+
+          <SectionCard
+            title="Cenário simulado"
+            subtitle="Projeção usada no lado direito do comparativo"
+            right={
+              <Button variant="outline" size="sm" onClick={copyActualToProjected} className="h-8">
+                Igualar ao atual
+              </Button>
+            }
+          >
+            <div className="grid sm:grid-cols-3 gap-3">
+              <NumberField
                 label="Ticket Front" prefix="R$" value={inputs.ticketFront} step={1}
                 onChange={(v) => update("ticketFront", v)}
               />
@@ -359,11 +393,6 @@ export const SimulatorPanel = ({ rows }: Props) => {
                 label="Ticket Upsell" prefix="R$" value={inputs.ticketUpsell} step={1}
                 onChange={(v) => update("ticketUpsell", v)}
               />
-            </div>
-          </SectionCard>
-
-          <SectionCard title="Aquisição" subtitle="Topo do funil e custo">
-            <div className="grid sm:grid-cols-2 gap-3">
               <NumberField
                 label="Impressões" value={inputs.impressoes} step={1000}
                 onChange={(v) => update("impressoes", v)}
@@ -441,145 +470,47 @@ export const SimulatorPanel = ({ rows }: Props) => {
         <FunnelBreakdown base={baseResult} sim={simResult} />
       </SectionCard>
 
-      {/* Sensibilidade */}
       <SectionCard
-        title="Análise de sensibilidade"
-        subtitle="Impacto incremental ao variar uma única alavanca de -30% a +30%"
-        right={
-          <select
-            value={sensVar}
-            onChange={(e) => setSensVar(e.target.value as keyof SimInputs)}
-            className="h-8 text-xs rounded-md border border-input bg-background px-2"
-          >
-            <option value="chkVenda">Checkout → Venda</option>
-            <option value="ctr">CTR</option>
-            <option value="connectRate">Connect Rate</option>
-            <option value="playRate">Play Rate</option>
-            <option value="pitchRet">Pitch Retention</option>
-            <option value="pitchChk">Pitch → Checkout</option>
-            <option value="ticketFront">Ticket Front</option>
-            <option value="ticketBump">Ticket Bump</option>
-            <option value="ticketUpsell">Ticket Upsell</option>
-            <option value="takeRateBump">Take-rate Bump</option>
-            <option value="takeRateUpsell">Take-rate Upsell</option>
-            <option value="investimento">Investimento</option>
-            <option value="impressoes">Impressões</option>
-          </select>
-        }
+        title="Ranking de impacto no faturamento"
+        subtitle="Aplica cada métrica projetada isoladamente sobre o cenário atual"
       >
-        {topSensitive && topSensitive.deltaLucro !== 0 && (
-          <div className="mb-3 flex items-start gap-2.5 p-2.5 rounded-md bg-primary/5 border border-primary/20">
-            <div className="w-7 h-7 rounded-md bg-primary/15 flex items-center justify-center shrink-0">
-              <Wand2 className="w-3.5 h-3.5 text-primary" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-[11px] text-muted-foreground uppercase tracking-wide">
-                Alavanca mais sensível
-              </div>
-              <div className="text-sm font-semibold text-foreground mt-0.5">
-                {topSensitive.label}
-                <span className="text-xs text-muted-foreground font-normal ml-2">
-                  projetado ={" "}
-                  <span className={cn(
-                    "font-semibold",
-                    topSensitive.deltaLucro > 0 ? "text-kpi-emerald" : "text-kpi-red",
-                  )}>
-                    {topSensitive.deltaLucro > 0 ? "+" : ""}{fBRL(topSensitive.deltaLucro)} de lucro
-                  </span>
-                </span>
-              </div>
-            </div>
-            {sensVar !== topSensitive.key && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-[11px] shrink-0"
-                onClick={() => setSensVar(topSensitive.key)}
-              >
-                Analisar
-              </Button>
-            )}
+        {!hasProjectedChanges && (
+          <div className="mb-3 rounded-md border border-border/60 bg-secondary/30 px-3 py-2 text-xs text-muted-foreground">
+            Ajuste uma ou mais métricas em “Simulado” para ver quais alavancas mais mudam o faturamento.
           </div>
         )}
-        {sensitivityLow && sensitivityHigh && (
-          <div className="mb-3 grid gap-2 sm:grid-cols-3">
-            <SensitivitySummaryCard
-              label="Alavanca"
-              value={selectedSensitivityLabel}
-              detail={`${formatSensitivityValue(sensitivityLow.value, sensVar)} → ${formatSensitivityValue(sensitivityHigh.value, sensVar)}`}
-            />
-            <SensitivitySummaryCard
-              label="Impacto no lucro"
-              value={`${formatSignedCurrency(sensitivityLow.lucroDelta)} / ${formatSignedCurrency(sensitivityHigh.lucroDelta)}`}
-              detail="mínimo e máximo no intervalo"
-            />
-            <SensitivitySummaryCard
-              label="Impacto no faturamento"
-              value={`${formatSignedCurrency(sensitivityLow.fatDelta)} / ${formatSignedCurrency(sensitivityHigh.fatDelta)}`}
-              detail="variação contra o cenário simulado"
-            />
-          </div>
-        )}
-        <div className="h-64">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={sensitivityData} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.4} />
-              <XAxis dataKey="delta" stroke="hsl(var(--muted-foreground))" fontSize={11} />
-              <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11}
-                tickFormatter={(v) => `R$ ${(v / 1000).toFixed(0)}k`} />
-              <Tooltip
-                contentStyle={{
-                  background: "hsl(var(--popover))",
-                  border: "1px solid hsl(var(--border))",
-                  borderRadius: 8,
-                  fontSize: 12,
-                }}
-                formatter={(v: number, name: string) => {
-                  if (name === "lucroDelta") return [formatSignedCurrency(v), "Impacto no lucro"];
-                  if (name === "fatDelta") return [formatSignedCurrency(v), "Impacto no faturamento"];
-                  return [fBRL(v), name];
-                }}
-                labelFormatter={(label, payload) => {
-                  const point = payload?.[0]?.payload as SensitivityPoint | undefined;
-                  return point
-                    ? `${label} · ${formatSensitivityValue(point.value, sensVar)}`
-                    : String(label);
-                }}
-              />
-              <Line type="monotone" dataKey="fatDelta" name="fatDelta" stroke="hsl(var(--kpi-blue))" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="lucroDelta" name="lucroDelta" stroke="hsl(var(--primary))" strokeWidth={2.5} dot={{ r: 3 }} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-        <p className="text-[11px] text-muted-foreground mt-2">
-          Mantém todas as outras variáveis fixas e mostra a diferença contra o cenário simulado atual.
-        </p>
-      </SectionCard>
 
-      {/* Top alavancas */}
-      <SectionCard
-        title="Ranking de alavancas"
-        subtitle="Impacto isolado de cada métrica alterada no cenário projetado"
-      >
-        <div className="space-y-1.5">
-          {sensitivityRanking.slice(0, 5).map((v, idx) => {
-            const max = Math.abs(sensitivityRanking[0]?.deltaLucro || 1);
-            const widthPct = Math.max(2, (Math.abs(v.deltaLucro) / max) * 100);
-            const positive = v.deltaLucro >= 0;
+        <div className="space-y-2">
+          {impactRanking.slice(0, 8).map((item, idx) => {
+            const widthPct = Math.abs(item.fatDelta) === 0
+              ? 0
+              : Math.max(3, (Math.abs(item.fatDelta) / maxImpact) * 100);
+            const positive = item.fatDelta >= 0;
             return (
-              <button
-                key={v.key}
-                onClick={() => setSensVar(v.key)}
-                className={cn(
-                  "w-full flex items-center gap-3 p-1.5 rounded-md hover:bg-secondary/40 transition-colors text-left",
-                  sensVar === v.key && "bg-primary/5 ring-1 ring-primary/20",
-                )}
+              <div
+                key={item.key}
+                className="w-full grid gap-2 rounded-md border border-border/45 bg-card/40 p-2 sm:grid-cols-[2rem_11rem_minmax(0,1fr)_9.5rem] sm:items-center"
               >
                 <div className="w-6 text-[11px] font-bold text-muted-foreground tabular-nums shrink-0">
                   #{idx + 1}
                 </div>
-                <div className="w-32 text-xs text-foreground shrink-0 truncate">{v.label}</div>
-                <div className="flex-1 h-6 bg-secondary/40 rounded-md relative overflow-hidden">
+                <div className="min-w-0">
+                  <div className="truncate text-xs font-semibold text-foreground">{item.label}</div>
+                  <div className="mt-0.5 truncate text-[10px] text-muted-foreground">
+                    {formatInputValue(item.currentValue, item.key)}
+                    {" → "}
+                    {formatInputValue(item.projectedValue, item.key)}
+                    {item.inputDeltaPct !== 0 && (
+                      <span className={cn(
+                        "ml-1 font-semibold",
+                        item.inputDeltaPct > 0 ? "text-kpi-emerald" : "text-kpi-red",
+                      )}>
+                        ({item.inputDeltaPct > 0 ? "+" : ""}{item.inputDeltaPct.toFixed(1)}%)
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="h-7 rounded-md bg-secondary/40 relative overflow-hidden">
                   <div
                     className={cn(
                       "absolute inset-y-0 left-0 rounded-md transition-all",
@@ -591,14 +522,22 @@ export const SimulatorPanel = ({ rows }: Props) => {
                   />
                   <div className="absolute inset-0 flex items-center px-2.5">
                     <span className="text-xs font-semibold text-foreground tabular-nums">
-                      {positive ? "+" : ""}{fBRL(v.deltaLucro)}
+                      {formatSignedCurrency(item.fatDelta)}
                     </span>
                   </div>
                 </div>
-                <div className="w-14 text-right text-[11px] font-semibold tabular-nums shrink-0 text-muted-foreground">
-                  {v.valueDeltaPct > 0 ? "+" : ""}{v.valueDeltaPct.toFixed(1)}%
+                <div className="text-left sm:text-right">
+                  <div className={cn(
+                    "text-xs font-bold tabular-nums",
+                    item.fatDelta === 0 ? "text-muted-foreground" : positive ? "text-kpi-emerald" : "text-kpi-red",
+                  )}>
+                    {formatSignedCurrency(item.fatDelta)}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground tabular-nums">
+                    lucro {formatSignedCurrency(item.lucroDelta)}
+                  </div>
                 </div>
-              </button>
+              </div>
             );
           })}
         </div>
@@ -834,42 +773,6 @@ const SliderField = ({
   </div>
 );
 
-const SensitivitySummaryCard = ({
-  label,
-  value,
-  detail,
-}: {
-  label: string;
-  value: string;
-  detail: string;
-}) => (
-  <div className="rounded-md border border-border/60 bg-secondary/30 px-3 py-2">
-    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
-    <div className="mt-1 text-sm font-semibold tabular-nums text-foreground">{value}</div>
-    <div className="mt-0.5 text-[10px] text-muted-foreground">{detail}</div>
-  </div>
-);
-
-const ReadOnlyRate = ({ label, value }: { label: string; value: number }) => {
-  const pct = Math.max(0, Math.min(100, value));
-  return (
-    <div className="space-y-1.5">
-      <div className="flex items-center justify-between">
-        <label className="text-[11px] font-medium text-muted-foreground">{label}</label>
-        <span className="text-xs font-semibold text-muted-foreground tabular-nums">
-          {value.toFixed(2)}%
-        </span>
-      </div>
-      <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
-        <div
-          className="h-full bg-muted-foreground/40 rounded-full transition-all"
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-    </div>
-  );
-};
-
 const ComparisonRow = ({
   label, base, sim, fmt, highlight, invert,
 }: {
@@ -923,7 +826,7 @@ function formatSignedCurrency(value: number) {
   return `${value > 0 ? "+" : ""}${fBRL(value)}`;
 }
 
-function formatSensitivityValue(value: number, key: keyof SimInputs) {
+function formatInputValue(value: number, key: keyof SimInputs) {
   if (key.startsWith("ticket") || key === "investimento") return fBRL(value);
   if (key === "impressoes") return fNum(Math.round(value));
   return `${value.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%`;
@@ -979,6 +882,3 @@ const FunnelBreakdown = ({ base, sim }: { base: SimResult; sim: SimResult }) => 
     </div>
   );
 };
-
-// reduce unused-import noise
-void fPct;
