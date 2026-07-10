@@ -337,9 +337,6 @@ export const SimulatorPanel = ({ rows }: Props) => {
 
   const updateActual = <K extends keyof SimInputs>(k: K, v: SimInputs[K]) => {
     setActualInputs((p) => ({ ...p, [k]: v }));
-    if (!dirtyProjectedKeys.has(k)) {
-      setInputs((p) => ({ ...p, [k]: v }));
-    }
   };
 
   const copyActualToProjected = () => {
@@ -472,6 +469,17 @@ export const SimulatorPanel = ({ rows }: Props) => {
     if (error) {
       toast.error("Erro ao excluir", { description: error.message });
       return;
+    }
+    if (simulatorStorageKey) {
+      try {
+        const stored = window.localStorage.getItem(simulatorStorageKey);
+        const storedId = stored ? (JSON.parse(stored) as { simulationId?: string | null }).simulationId : null;
+        if (storedId === id) {
+          window.localStorage.removeItem(simulatorStorageKey);
+        }
+      } catch {
+        window.localStorage.removeItem(simulatorStorageKey);
+      }
     }
     setHistory((p) => p.filter((s) => s.id !== id));
     toast.success("Simulação removida");
