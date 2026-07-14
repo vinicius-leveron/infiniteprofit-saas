@@ -14,6 +14,7 @@ type SupabaseClientAny = ReturnType<typeof createClient<any, "public", any>>;
 
 /**
  * Tests Meta access.
+ * Body, discovery mode: { action: "list_accounts", workspace_id: uuid, access_token: string }
  * Body, unsaved setup mode: { account_id: string, access_token: string }
  * Body, stored account mode: { meta_account_id: uuid }
  */
@@ -25,6 +26,25 @@ Deno.serve(async (req) => {
     const directAccountId = stringOrNull(body.account_id);
     const directToken = stringOrNull(body.access_token);
     const metaAccountId = stringOrNull(body.meta_account_id);
+    const action = stringOrNull(body.action);
+
+    if (action === "list_accounts") {
+      const workspaceId = stringOrNull(body.workspace_id);
+      if (!workspaceId || !directToken) {
+        return json({ ok: false, error: "workspace_id e access_token sao obrigatorios" }, 400);
+      }
+
+      const caller = await resolveUser(req.headers.get("Authorization"));
+      if (!caller) return json({ ok: false, error: "Unauthorized" }, 401);
+
+      const sb = createClient(SUPABASE_URL, SERVICE_KEY, {
+        auth: { persistSession: false },
+      });
+      await assertWorkspaceAdmin(sb, workspaceId, caller.userId);
+
+      const accounts = await listAccessibleAdAccounts(directToken);
+      return json({ ok: true, accounts });
+    }
 
     let accountId = directAccountId;
     let token = directToken;
@@ -57,9 +77,11 @@ Deno.serve(async (req) => {
     }
 
     const normalizedAccountId = accountId.startsWith("act_") ? accountId : `act_${accountId}`;
-    const url = `https://graph.facebook.com/v21.0/${normalizedAccountId}?fields=name,account_status,currency,timezone_name&access_token=${encodeURIComponent(token)}`;
+    const url = `https://graph.facebook.com/v21.0/${normalizedAccountId}?fields=name,account_status,currency,timezone_name`;
 
-    const response = await fetch(url);
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
     const data: any = await response.json().catch(() => ({}));
 
     if (!response.ok || data.error) {
@@ -78,6 +100,49 @@ Deno.serve(async (req) => {
     return json({ ok: false, error: error instanceof Error ? error.message : "Erro inesperado" }, 500);
   }
 });
+
+async function listAccessibleAdAccounts(token: string) {
+  const accounts = new Map<string, Record<string, unknown>>();
+  const baseUrl =
+    "https://graph.facebook.com/v21.0/me/adaccounts?fields=id,account_id,name,account_status,currency,timezone_name&limit=200";
+  let after: string | null = null;
+  let hasNextPage = true;
+
+  for (let page = 0; hasNextPage && page < 10; page += 1) {
+    const url = new URL(baseUrl);
+    if (after) url.searchParams.set("after", after);
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const payload: any = await response.json().catch(() => ({}));
+    if (!response.ok || payload.error) {
+      const message = payload?.error?.message ?? `HTTP ${response.status}`;
+      throw new Error(message);
+    }
+
+    const rows = Array.isArray(payload.data) ? payload.data : [];
+    for (const row of rows) {
+      const rawId = stringOrNull(row?.account_id) ?? stringOrNull(row?.id);
+      if (!rawId) continue;
+      const accountId = rawId.startsWith("act_") ? rawId : `act_${rawId}`;
+      accounts.set(accountId, {
+        id: accountId,
+        account_id: accountId,
+        name: stringOrNull(row?.name),
+        account_status: typeof row?.account_status === "number" ? row.account_status : null,
+        currency: stringOrNull(row?.currency),
+        timezone: stringOrNull(row?.timezone_name),
+      });
+    }
+
+    after = stringOrNull(payload?.paging?.cursors?.after);
+    hasNextPage = Boolean(payload?.paging?.next && after);
+  }
+
+  return [...accounts.values()].sort((left, right) =>
+    String(left.name ?? left.account_id).localeCompare(String(right.name ?? right.account_id), "pt-BR")
+  );
+}
 
 async function resolveUser(authHeader: string | null) {
   if (!authHeader?.startsWith("Bearer ")) return null;

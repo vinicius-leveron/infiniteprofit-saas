@@ -3,6 +3,10 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import SetupOperation from "./SetupOperation";
 
+const { invokeMock } = vi.hoisted(() => ({
+  invokeMock: vi.fn(),
+}));
+
 const metaAccounts = [
   {
     id: "meta-1",
@@ -44,7 +48,7 @@ vi.mock("@/hooks/useWorkspace", () => ({
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
     from: vi.fn(() => createMetaAccountsQuery()),
-    functions: { invoke: vi.fn() },
+    functions: { invoke: invokeMock },
   },
 }));
 
@@ -60,9 +64,38 @@ describe("SetupOperation Meta step", () => {
   beforeEach(() => {
     window.sessionStorage.clear();
     vi.clearAllMocks();
+    invokeMock.mockImplementation(async (functionName: string, options?: { body?: Record<string, unknown> }) => {
+      if (functionName === "meta-test" && options?.body?.action === "list_accounts") {
+        return {
+          data: {
+            ok: true,
+            accounts: [
+              {
+                id: "act_333",
+                account_id: "act_333",
+                name: "Conta Gamma",
+                account_status: 1,
+                currency: "BRL",
+                timezone: "America/Sao_Paulo",
+              },
+              {
+                id: "act_444",
+                account_id: "act_444",
+                name: "Conta Delta",
+                account_status: 1,
+                currency: "USD",
+                timezone: "America/New_York",
+              },
+            ],
+          },
+          error: null,
+        };
+      }
+      return { data: { ok: true }, error: null };
+    });
   });
 
-  it("selects existing workspace accounts and supports multiple new accounts", async () => {
+  it("uses one token to discover and select multiple Meta accounts", async () => {
     render(
       <MemoryRouter initialEntries={["/setup-operation"]}>
         <SetupOperation />
@@ -81,12 +114,28 @@ describe("SetupOperation Meta step", () => {
       expect(screen.getByText("2 de 2 selecionada(s)")).toBeInTheDocument();
     });
 
-    expect(screen.getAllByPlaceholderText("act_123 ou 123")).toHaveLength(1);
-    fireEvent.click(screen.getByRole("button", { name: "Adicionar conta" }));
-    expect(screen.getAllByPlaceholderText("act_123 ou 123")).toHaveLength(2);
+    const tokenInput = screen.getByLabelText("Access token Meta");
+    fireEvent.change(tokenInput, { target: { value: "token-unico" } });
+    expect(screen.getAllByPlaceholderText("Cole o token Meta uma única vez")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Buscar contas" }));
+
+    expect(await screen.findByText("Conta Gamma")).toBeInTheDocument();
+    expect(screen.getByText("Conta Delta")).toBeInTheDocument();
+    expect(invokeMock).toHaveBeenCalledWith("meta-test", {
+      body: {
+        action: "list_accounts",
+        workspace_id: "workspace-1",
+        access_token: "token-unico",
+      },
+    });
+
+    fireEvent.click(screen.getByText("Conta Gamma"));
+    await waitFor(() => {
+      expect(screen.getByText("1 de 2 selecionada(s)")).toBeInTheDocument();
+    });
 
     fireEvent.click(screen.getByRole("button", { name: "Revisão" }));
-    expect(screen.getByText("2 conta(s) selecionada(s)")).toBeInTheDocument();
+    expect(screen.getByText("3 conta(s) selecionada(s)")).toBeInTheDocument();
   });
 
   it("migrates the previous single-account draft without losing its credentials", async () => {
@@ -108,8 +157,9 @@ describe("SetupOperation Meta step", () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByDisplayValue("123456")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("Conta legada")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("token-legado")).toBeInTheDocument();
+    expect(await screen.findByDisplayValue("token-legado")).toBeInTheDocument();
+    expect(screen.getByText("Conta legada")).toBeInTheDocument();
+    expect(screen.getByText("act_123456")).toBeInTheDocument();
+    expect(screen.getByText("1 de 1 selecionada(s)")).toBeInTheDocument();
   });
 });
