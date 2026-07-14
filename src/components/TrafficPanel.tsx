@@ -14,19 +14,33 @@ import {
 import { format } from "date-fns";
 import { Eye, MousePointerClick, FileText, ShoppingBag, Percent, Gauge, Target, Download } from "lucide-react";
 import type { DailyRow } from "@/lib/csv";
+import type { DashboardDateRange } from "@/lib/dashboardRows";
 import { computeTotals, weekdayAggregates, fBRL, fNum, fPct } from "@/lib/metrics";
 import { KpiCard } from "./KpiCard";
 import { ChartSection } from "./ChartSection";
+import { SalesHeatmap } from "./SalesHeatmap";
 import { axis, grid, RichTooltip, chartColors, barCursor } from "./charts/chartShared";
 
 interface Props {
   rows: DailyRow[];
+  previous?: DailyRow[];
+  projectId?: string | null;
+  dateRange?: DashboardDateRange;
 }
 
 const fmtDay = (d: Date | null) => (d ? format(d, "dd/MM") : "");
 
-export const TrafficPanel = ({ rows }: Props) => {
+const delta = (current: number | null | undefined, previous: number | null | undefined) => {
+  if (current == null || previous == null || previous === 0) return null;
+  return ((current - previous) / Math.abs(previous)) * 100;
+};
+
+export const TrafficPanel = ({ rows, previous, projectId, dateRange }: Props) => {
   const t = useMemo(() => computeTotals(rows), [rows]);
+  const tPrev = useMemo(
+    () => (previous && previous.length > 0 ? computeTotals(previous) : null),
+    [previous],
+  );
   const weekday = useMemo(() => weekdayAggregates(rows), [rows]);
 
   const series = useMemo(
@@ -48,15 +62,30 @@ export const TrafficPanel = ({ rows }: Props) => {
   );
 
   const bestDay = [...weekday].sort((a, b) => b.avgVendas - a.avgVendas)[0];
+  const sparks = useMemo(
+    () => ({
+      impressoes: series.map((item) => item.impressoes),
+      cliques: series.map((item) => item.cliques),
+      landingPageviews: series.map((item) => item.landingPageviews),
+      checkouts: series.map((item) => item.checkouts),
+      ctr: series.map((item) => item.ctr),
+      taxaCarreg: series.map((item) => item.taxaCarreg),
+      cpm: series.map((item) => item.cpm),
+      cpc: series.map((item) => item.cpc),
+      custoIC: series.map((item) => item.custoIC),
+      custoPageview: series.map((item) => item.custoPageview),
+    }),
+    [series],
+  );
 
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
         {/* — Volume — */}
-        <KpiCard label="Impressões" value={fNum(t.impressoes)} icon={Eye} tone="cyan" />
-        <KpiCard label="Cliques no link" value={fNum(t.cliques)} icon={MousePointerClick} tone="blue" />
-        <KpiCard label="LP Views" value={fNum(t.landingPageviews)} icon={FileText} tone="indigo" />
-        <KpiCard label="Checkouts" value={fNum(t.checkouts)} hint={`P/ Chk: ${fPct(t.passChk)}`} icon={ShoppingBag} tone="violet" />
+        <KpiCard label="Impressões" value={fNum(t.impressoes)} icon={Eye} tone="cyan" spark={sparks.impressoes} deltaPct={delta(t.impressoes, tPrev?.impressoes)} />
+        <KpiCard label="Cliques no link" value={fNum(t.cliques)} icon={MousePointerClick} tone="blue" spark={sparks.cliques} deltaPct={delta(t.cliques, tPrev?.cliques)} />
+        <KpiCard label="LP Views" value={fNum(t.landingPageviews)} icon={FileText} tone="indigo" spark={sparks.landingPageviews} deltaPct={delta(t.landingPageviews, tPrev?.landingPageviews)} />
+        <KpiCard label="Checkouts" value={fNum(t.checkouts)} hint={`P/ Chk: ${fPct(t.passChk)}`} icon={ShoppingBag} tone="violet" spark={sparks.checkouts} deltaPct={delta(t.checkouts, tPrev?.checkouts)} />
 
         {/* — Conversões / Taxas — */}
         <KpiCard
@@ -65,6 +94,8 @@ export const TrafficPanel = ({ rows }: Props) => {
           hint="Cliques no link ÷ Impressões"
           icon={Target}
           tone="emerald"
+          spark={sparks.ctr}
+          deltaPct={delta(t.ctr, tPrev?.ctr)}
         />
         <KpiCard
           label="Taxa de Carregamento"
@@ -72,14 +103,23 @@ export const TrafficPanel = ({ rows }: Props) => {
           hint="Landing Page Views ÷ Cliques no link"
           icon={Download}
           tone="emerald"
+          spark={sparks.taxaCarreg}
+          deltaPct={delta(t.taxaCarreg, tPrev?.taxaCarreg)}
         />
 
         {/* — Custos — */}
-        <KpiCard label="CPM" value={fBRL(t.cpm)} icon={Gauge} tone="orange" />
-        <KpiCard label="CPC" value={fBRL(t.cpc)} icon={Gauge} tone="yellow" />
-        <KpiCard label="Custo por I.C" value={fBRL(t.custoIC)} icon={Percent} tone="pink" />
-        <KpiCard label="Custo LP View" value={fBRL(t.custoPageview)} icon={Percent} tone="purple" />
+        <KpiCard label="CPM" value={fBRL(t.cpm)} icon={Gauge} tone="orange" spark={sparks.cpm} deltaPct={delta(t.cpm, tPrev?.cpm)} goodWhenUp={false} />
+        <KpiCard label="CPC" value={fBRL(t.cpc)} icon={Gauge} tone="yellow" spark={sparks.cpc} deltaPct={delta(t.cpc, tPrev?.cpc)} goodWhenUp={false} />
+        <KpiCard label="Custo por I.C" value={fBRL(t.custoIC)} icon={Percent} tone="pink" spark={sparks.custoIC} deltaPct={delta(t.custoIC, tPrev?.custoIC)} goodWhenUp={false} />
+        <KpiCard label="Custo LP View" value={fBRL(t.custoPageview)} icon={Percent} tone="purple" spark={sparks.custoPageview} deltaPct={delta(t.custoPageview, tPrev?.custoPageview)} goodWhenUp={false} />
       </div>
+
+      <ChartSection
+        title="Mapa de Calor de Vendas"
+        description="Vendas aprovadas por dia da semana e horário de Brasília — passe o mouse para ver quantidade e faturamento"
+      >
+        <SalesHeatmap projectId={projectId} dateRange={dateRange} />
+      </ChartSection>
 
       <ChartSection
         title="Vendas por Dia da Semana"

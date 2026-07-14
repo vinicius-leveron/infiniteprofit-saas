@@ -91,6 +91,22 @@ interface SectionDef {
   metrics: Metric[];
 }
 
+interface ProductPeriodMetrics {
+  name: string;
+  type: "orderbump" | "upsell";
+  sales: number;
+  revenue: number;
+  ticket: number | null;
+  conversion: number | null;
+}
+
+interface ProductComparison {
+  name: string;
+  type: "orderbump" | "upsell";
+  current: ProductPeriodMetrics | null;
+  previous: ProductPeriodMetrics | null;
+}
+
 const Section = ({ def }: { def: SectionDef }) => {
   if (!def.metrics.length) return null;
   return (
@@ -142,12 +158,61 @@ function bumpTotals(rows: DailyRow[]) {
   };
 }
 
+function productTotals(rows: DailyRow[]) {
+  const products = new Map<string, Omit<ProductPeriodMetrics, "ticket" | "conversion">>();
+  const frontSales = rows.reduce((sum, row) => sum + (row.vendasFront ?? 0), 0);
+
+  for (const row of rows) {
+    for (const bump of row.bumps ?? []) {
+      const key = `${bump.type}:${bump.name}`;
+      const current = products.get(key) ?? {
+        name: bump.name,
+        type: bump.type,
+        sales: 0,
+        revenue: 0,
+      };
+      current.sales += bump.count ?? 0;
+      current.revenue += bump.revenue ?? 0;
+      products.set(key, current);
+    }
+  }
+
+  return new Map(
+    [...products.entries()].map(([key, product]) => [key, {
+      ...product,
+      ticket: product.sales > 0 ? product.revenue / product.sales : null,
+      conversion: frontSales > 0 ? (product.sales / frontSales) * 100 : null,
+    }]),
+  );
+}
+
+function compareProducts(current: DailyRow[], previous: DailyRow[]): ProductComparison[] {
+  const currentProducts = productTotals(current);
+  const previousProducts = productTotals(previous);
+  const keys = new Set([...currentProducts.keys(), ...previousProducts.keys()]);
+
+  return [...keys]
+    .map((key) => {
+      const currentProduct = currentProducts.get(key) ?? null;
+      const previousProduct = previousProducts.get(key) ?? null;
+      return {
+        name: currentProduct?.name ?? previousProduct?.name ?? key,
+        type: currentProduct?.type ?? previousProduct?.type ?? "orderbump",
+        current: currentProduct,
+        previous: previousProduct,
+      } satisfies ProductComparison;
+    })
+    .filter((product) => (product.current?.sales ?? 0) > 0 || (product.previous?.sales ?? 0) > 0)
+    .sort((left, right) => (right.current?.revenue ?? 0) - (left.current?.revenue ?? 0));
+}
+
 export const ComparisonStrip = ({ current, previous }: Props) => {
   if (!previous || previous.length === 0) return null;
   const c = computeTotals(current);
   const p = computeTotals(previous);
   const cb = bumpTotals(current);
   const pb = bumpTotals(previous);
+  const products = compareProducts(current, previous);
 
   const sections: SectionDef[] = [
     {
@@ -230,7 +295,80 @@ export const ComparisonStrip = ({ current, previous }: Props) => {
         {sections.map((s) => (
           <Section key={s.title} def={s} />
         ))}
+        {products.length > 0 && <ProductComparisonTable products={products} />}
       </div>
     </div>
   );
 };
+
+function ProductComparisonTable({ products }: { products: ProductComparison[] }) {
+  return (
+    <section>
+      <div className="mb-3 flex items-center gap-2">
+        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-kpi-orange/15 text-kpi-orange">
+          <Gift className="h-3.5 w-3.5" />
+        </div>
+        <div>
+          <h4 className="text-sm font-semibold text-foreground">Produtos do Funil</h4>
+          <p className="text-[11px] text-muted-foreground">Order bumps e upsells, produto por produto</p>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto rounded-lg border border-border/60">
+        <table className="w-full min-w-[760px] text-sm">
+          <thead className="bg-secondary/50 text-[10px] uppercase tracking-wider text-muted-foreground">
+            <tr>
+              <th className="px-3 py-2.5 text-left font-medium">Produto</th>
+              <th className="px-3 py-2.5 text-right font-medium">Vendas</th>
+              <th className="px-3 py-2.5 text-right font-medium">Receita</th>
+              <th className="px-3 py-2.5 text-right font-medium">Ticket</th>
+              <th className="px-3 py-2.5 text-right font-medium">Conversão</th>
+              <th className="px-3 py-2.5 text-right font-medium">Δ Receita</th>
+            </tr>
+          </thead>
+          <tbody>
+            {products.map((product) => (
+              <tr key={`${product.type}:${product.name}`} className="border-t border-border/50">
+                <td className="px-3 py-3">
+                  <div className="font-medium text-foreground">{product.name}</div>
+                  <span className={cn(
+                    "mt-1 inline-flex rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide",
+                    product.type === "upsell"
+                      ? "bg-kpi-violet/15 text-kpi-violet"
+                      : "bg-kpi-emerald/15 text-kpi-emerald",
+                  )}>
+                    {product.type === "upsell" ? "Upsell" : "Order Bump"}
+                  </span>
+                </td>
+                <ProductValue current={product.current?.sales} previous={product.previous?.sales} format="num" />
+                <ProductValue current={product.current?.revenue} previous={product.previous?.revenue} format="brl" />
+                <ProductValue current={product.current?.ticket} previous={product.previous?.ticket} format="brl" />
+                <ProductValue current={product.current?.conversion} previous={product.previous?.conversion} format="pct" />
+                <td className="px-3 py-3 text-right">
+                  <Delta cur={product.current?.revenue ?? null} prev={product.previous?.revenue ?? null} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function ProductValue({
+  current,
+  previous,
+  format,
+}: {
+  current: number | null | undefined;
+  previous: number | null | undefined;
+  format: Format;
+}) {
+  return (
+    <td className="px-3 py-3 text-right tabular-nums">
+      <div className="font-semibold text-foreground">{fmt(current, format)}</div>
+      <div className="mt-0.5 text-[10px] text-muted-foreground">vs {fmt(previous, format)}</div>
+    </td>
+  );
+}

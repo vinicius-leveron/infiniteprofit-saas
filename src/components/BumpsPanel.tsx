@@ -3,6 +3,9 @@ import {
   ResponsiveContainer,
   BarChart,
   Bar,
+  LineChart,
+  Line,
+  ComposedChart,
   XAxis,
   YAxis,
   Tooltip,
@@ -109,6 +112,10 @@ export const BumpsPanel = ({ rows }: Props) => {
         fatFront: r.fatFront ?? 0,
         fatOrderbump: r.fatOrderbump ?? 0,
         fatFunil: r.fatFunil ?? 0,
+        convGeralOrderbump:
+          r.convGeralOrderbump ?? dailyOrderbumpConversion(r),
+        proporcaoFunilFront:
+          r.proporcaoFunilFront ?? dailyFunnelProportion(r),
       })),
     [rows],
   );
@@ -394,29 +401,79 @@ export const BumpsPanel = ({ rows }: Props) => {
         </ChartSection>
       )}
 
-      {/* Conversion rates per bump */}
-      {topBumps.length > 0 && (
+      <div className="grid gap-6 xl:grid-cols-2">
         <ChartSection
-          title="Taxa de Conversão dos Bumps"
-          description="Vendas do bump ÷ vendas Front · acumulado do período"
+          title="Conversão Geral de Order Bump"
+          description="Vendas de todos os order bumps ÷ vendas Front, dia a dia"
         >
-          <div className="h-64">
+          <div className="h-72">
             <ResponsiveContainer>
-              <BarChart
-                data={topBumps.map((b) => ({ name: b.name, conv: b.convRate ?? 0 }))}
-                margin={{ top: 8, right: 8, left: -10, bottom: 0 }}
-                layout="vertical"
-              >
-                <CartesianGrid stroke={grid} horizontal={false} />
-                <XAxis type="number" {...axis} domain={[0, "auto"]} />
-                <YAxis type="category" dataKey="name" {...axis} width={140} />
-                <Tooltip content={<RichTooltip formatter={(v) => fPct(v)} />} cursor={barCursor} />
-                <Bar dataKey="conv" name="Conversão" fill={chartColors.positive} radius={[0, 6, 6, 0]} />
-              </BarChart>
+              <LineChart data={series} margin={{ top: 8, right: 8, left: -10, bottom: 0 }}>
+                <CartesianGrid stroke={grid} vertical={false} />
+                <XAxis dataKey="day" {...axis} />
+                <YAxis {...axis} domain={[0, "auto"]} tickFormatter={(value) => `${value}%`} />
+                <Tooltip content={<RichTooltip formatter={(value) => fPct(value)} />} />
+                <Line
+                  type="monotone"
+                  dataKey="convGeralOrderbump"
+                  name="Conversão geral"
+                  stroke={chartColors.positive}
+                  strokeWidth={2.6}
+                  dot={{ r: 3, fill: chartColors.positive }}
+                  connectNulls
+                />
+              </LineChart>
             </ResponsiveContainer>
           </div>
         </ChartSection>
-      )}
+
+        <ChartSection
+          title="Conversão x Proporção do Funil"
+          description="Relação diária entre conversão geral e faturamento Funil ÷ Front"
+        >
+          <div className="h-72">
+            <ResponsiveContainer>
+              <ComposedChart data={series} margin={{ top: 8, right: 8, left: -10, bottom: 0 }}>
+                <CartesianGrid stroke={grid} vertical={false} />
+                <XAxis dataKey="day" {...axis} />
+                <YAxis yAxisId="proportion" {...axis} tickFormatter={(value) => `${value}%`} />
+                <YAxis yAxisId="conversion" orientation="right" {...axis} tickFormatter={(value) => `${value}%`} />
+                <Tooltip content={<RichTooltip formatter={(value) => fPct(value)} />} cursor={barCursor} />
+                <Legend wrapperStyle={{ fontSize: 12, paddingBottom: 8 }} verticalAlign="top" />
+                <Bar
+                  yAxisId="proportion"
+                  dataKey="proporcaoFunilFront"
+                  name="Proporção Funil ÷ Front"
+                  fill={chartColors.primary}
+                  radius={[5, 5, 0, 0]}
+                  opacity={0.78}
+                />
+                <Line
+                  yAxisId="conversion"
+                  type="monotone"
+                  dataKey="convGeralOrderbump"
+                  name="Conversão geral"
+                  stroke={chartColors.positive}
+                  strokeWidth={2.6}
+                  dot={{ r: 3, fill: chartColors.positive }}
+                  connectNulls
+                />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </ChartSection>
+      </div>
     </div>
   );
 };
+
+function dailyOrderbumpConversion(row: DailyRow) {
+  const orderbumpSales = row.bumps
+    ?.filter((bump) => bump.type === "orderbump")
+    .reduce((sum, bump) => sum + (bump.count ?? 0), 0) ?? 0;
+  return row.vendasFront ? (orderbumpSales / row.vendasFront) * 100 : null;
+}
+
+function dailyFunnelProportion(row: DailyRow) {
+  return row.fatFront ? ((row.fatFunil ?? 0) / row.fatFront) * 100 : null;
+}

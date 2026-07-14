@@ -22,6 +22,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { readHublaImportFile } from "@/lib/hublaImportFile";
+import { getProjectMetaBindingChanges } from "@/lib/projectMetaBindings";
 import { syncVturbUntilDone } from "@/lib/vturbSync";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -152,6 +153,7 @@ export default function Connections() {
   const [workspaceIntegration, setWorkspaceIntegration] = useState<WorkspaceIntegrationRow | null>(null);
   const [metaAccounts, setMetaAccounts] = useState<MetaAccountRow[]>([]);
   const [selectedMetaIds, setSelectedMetaIds] = useState<string[]>([]);
+  const [savedMetaIds, setSavedMetaIds] = useState<string[]>([]);
   const [vturbPlayers, setVturbPlayers] = useState<VturbPlayerRow[]>([]);
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<string[]>([]);
   const [vturbPlayerQuery, setVturbPlayerQuery] = useState("");
@@ -189,9 +191,9 @@ export default function Connections() {
     void loadEvents();
   }, [projectId, userId]);
 
-  async function load() {
+  async function load(showLoading = true) {
     if (!projectId) return;
-    setLoading(true);
+    if (showLoading) setLoading(true);
     try {
       const { data: projectData, error: projectError } = await supabase
         .from("projects")
@@ -251,9 +253,10 @@ export default function Connections() {
 
       setWorkspaceIntegration((integrationRow ?? null) as WorkspaceIntegrationRow | null);
       setMetaAccounts((metaRows ?? []) as MetaAccountRow[]);
-      setSelectedMetaIds(
-        ((selectedMetaRows ?? []) as ProjectMetaSelectionRow[]).map((row) => row.meta_account_id),
-      );
+      const nextSelectedMetaIds = ((selectedMetaRows ?? []) as ProjectMetaSelectionRow[])
+        .map((row) => row.meta_account_id);
+      setSelectedMetaIds(nextSelectedMetaIds);
+      setSavedMetaIds(nextSelectedMetaIds);
       setVturbPlayers((playerRows ?? []) as VturbPlayerRow[]);
       setSelectedPlayerIds(
         ((selectedPlayerRows ?? []) as ProjectVturbSelectionRow[]).map((row) => row.vturb_player_id),
@@ -270,7 +273,7 @@ export default function Connections() {
       toast.error(error instanceof Error ? error.message : "Falha ao carregar conexões");
       navigate("/projects", { replace: true });
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   }
 
@@ -287,7 +290,7 @@ export default function Connections() {
       } as never);
       if (error) throw error;
       toast.success("Link público criado");
-      await load();
+      await load(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Falha ao criar link");
     }
@@ -301,9 +304,51 @@ export default function Connections() {
         .eq("id", link.id);
       if (error) throw error;
       toast.success(link.enabled ? "Link desativado" : "Link ativado");
-      await load();
+      await load(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Falha ao atualizar link");
+    }
+  }
+
+  async function persistMetaBindings() {
+    if (!project?.id) return;
+
+    const { nextIds, idsToAdd, idsToRemove } = getProjectMetaBindingChanges(selectedMetaIds, savedMetaIds);
+
+    // Add first so a failed request never erases the project's previous selection.
+    if (idsToAdd.length > 0) {
+      const { error } = await supabase.from("project_meta_accounts").upsert(
+        idsToAdd.map((metaAccountId) => ({
+          project_id: project.id,
+          meta_account_id: metaAccountId,
+        })),
+        { onConflict: "project_id,meta_account_id" },
+      );
+      if (error) throw error;
+    }
+
+    if (idsToRemove.length > 0) {
+      const { error } = await supabase
+        .from("project_meta_accounts")
+        .delete()
+        .eq("project_id", project.id)
+        .in("meta_account_id", idsToRemove);
+      if (error) throw error;
+    }
+
+    setSavedMetaIds(nextIds);
+  }
+
+  async function saveMetaSelection() {
+    if (!project?.id) return;
+    setSaving(true);
+    try {
+      await persistMetaBindings();
+      toast.success("Seleção de contas Meta salva");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Falha ao salvar contas Meta");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -311,21 +356,7 @@ export default function Connections() {
     if (!project?.id || !checkoutBinding) return;
     setSaving(true);
     try {
-      const { error: metaDeleteError } = await supabase
-        .from("project_meta_accounts")
-        .delete()
-        .eq("project_id", project.id);
-      if (metaDeleteError) throw metaDeleteError;
-
-      if (selectedMetaIds.length > 0) {
-        const { error } = await supabase.from("project_meta_accounts").insert(
-          selectedMetaIds.map((metaAccountId) => ({
-            project_id: project.id,
-            meta_account_id: metaAccountId,
-          })),
-        );
-        if (error) throw error;
-      }
+      await persistMetaBindings();
 
       const { error: playerDeleteError } = await supabase
         .from("project_vturb_players")
@@ -351,7 +382,7 @@ export default function Connections() {
       if (checkoutError) throw checkoutError;
 
       toast.success("Conexões do projeto salvas");
-      await load();
+      await load(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Falha ao salvar");
     } finally {
@@ -406,6 +437,9 @@ export default function Connections() {
     else setSyncing(true);
 
     try {
+      // A seleção exibida na tela é a fonte de verdade para este sync.
+      // Persisti-la antes evita que o reload final restaure os vínculos antigos.
+      await persistMetaBindings();
       const { data, error } = await supabase.functions.invoke("meta-pull", {
         body: { project_id: project.id, days: 30, ...(accountId ? { account_id: accountId } : {}) },
       });
@@ -417,7 +451,7 @@ export default function Connections() {
       } else {
         toast.success(accountId ? "Conta Meta sincronizada" : "Meta sincronizada");
       }
-      await load();
+      await load(false);
       await loadEvents();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Erro ao sincronizar Meta");
@@ -529,6 +563,9 @@ export default function Connections() {
   const publicOrigin = typeof window !== "undefined" ? window.location.origin : "";
 
   const selectedMetaAccounts = metaAccounts.filter((account) => selectedMetaIds.includes(account.id));
+  const metaSelectionDirty =
+    selectedMetaIds.length !== savedMetaIds.length ||
+    selectedMetaIds.some((id) => !savedMetaIds.includes(id));
   const selectedPlayers = vturbPlayers.filter((player) => selectedPlayerIds.includes(player.id));
   const filteredVturbPlayers = useMemo(() => {
     const query = vturbPlayerQuery.trim().toLowerCase();
@@ -660,12 +697,34 @@ export default function Connections() {
                 ))}
               </div>
 
-              {selectedMetaAccounts.length > 1 && (
-                <Button onClick={() => syncMeta()} disabled={syncing} variant="secondary" size="sm" className="gap-2">
-                  {syncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                  Sincronizar contas selecionadas
-                </Button>
-              )}
+              <div className="flex flex-wrap items-center gap-2">
+                {isWorkspaceAdmin && (
+                  <Button
+                    type="button"
+                    onClick={saveMetaSelection}
+                    disabled={saving || !metaSelectionDirty}
+                    variant="outline"
+                    size="sm"
+                    className="gap-2"
+                  >
+                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                    {metaSelectionDirty ? "Salvar seleção" : "Seleção salva"}
+                  </Button>
+                )}
+                {selectedMetaAccounts.length > 0 && (
+                  <Button
+                    type="button"
+                    onClick={() => syncMeta()}
+                    disabled={syncing || saving}
+                    variant="secondary"
+                    size="sm"
+                    className="gap-2"
+                  >
+                    {syncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                    {metaSelectionDirty ? "Salvar e sincronizar selecionadas" : "Sincronizar selecionadas"}
+                  </Button>
+                )}
+              </div>
             </div>
           )}
         </ConnectionCard>

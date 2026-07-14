@@ -8,6 +8,7 @@ export type NormalizedEvent = {
     | "purchase.refunded"
     | "checkout_created";
   event_date: string;
+  event_occurred_at: string;
   external_id: string;
   payload: any;
 };
@@ -80,6 +81,7 @@ function normalizeHotmart(raw: any): NormalizedEvent[] {
   return [{
     event_type: type,
     event_date: eventDate,
+    event_occurred_at: new Date(ts).toISOString(),
     external_id: externalId,
     payload: {
       raw_event: event,
@@ -330,6 +332,7 @@ export function normalizeHubla(raw: any): NormalizedEvent[] {
     events.push({
       event_type: "checkout_created",
       event_date: eventDate,
+      event_occurred_at: new Date(ts).toISOString(),
       external_id: originalExternalId,
       payload,
     });
@@ -339,6 +342,7 @@ export function normalizeHubla(raw: any): NormalizedEvent[] {
     events.push({
       event_type: type,
       event_date: eventDate,
+      event_occurred_at: new Date(ts).toISOString(),
       external_id: originalExternalId,
       payload,
     });
@@ -346,6 +350,7 @@ export function normalizeHubla(raw: any): NormalizedEvent[] {
     events.push({
       event_type: type,
       event_date: eventDate,
+      event_occurred_at: new Date(ts).toISOString(),
       external_id: originalExternalId,
       payload,
     });
@@ -401,6 +406,7 @@ function normalizeKiwify(raw: any): NormalizedEvent[] {
   return [{
     event_type: type,
     event_date: eventDate,
+    event_occurred_at: new Date(ts).toISOString(),
     external_id: externalId,
     payload: {
       raw_event: eventType || status,

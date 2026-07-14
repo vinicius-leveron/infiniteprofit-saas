@@ -105,6 +105,7 @@ Deno.serve(async (req) => {
             source: "gateway",
             event_type: event.event_type,
             event_date: event.event_date,
+            event_occurred_at: event.event_occurred_at,
             external_id: event.external_id,
             payload: event.payload,
           },

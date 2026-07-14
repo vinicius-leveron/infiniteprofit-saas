@@ -392,6 +392,7 @@ export type Database = {
         Row: {
           account_id: string | null
           event_date: string
+          event_occurred_at: string | null
           event_type: string
           external_id: string | null
           id: string
@@ -404,6 +405,7 @@ export type Database = {
         Insert: {
           account_id?: string | null
           event_date: string
+          event_occurred_at?: string | null
           event_type: string
           external_id?: string | null
           id?: string
@@ -416,6 +418,7 @@ export type Database = {
         Update: {
           account_id?: string | null
           event_date?: string
+          event_occurred_at?: string | null
           event_type?: string
           external_id?: string | null
           id?: string

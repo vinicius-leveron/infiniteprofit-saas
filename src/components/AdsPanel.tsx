@@ -13,6 +13,7 @@ import {
   Layers,
   Loader2,
   Play,
+  Pencil,
   Plus,
   RefreshCw,
   Search,
@@ -21,6 +22,7 @@ import {
   Tag,
   Target,
   TrendingUp,
+  Trash2,
   Wand2,
   Zap,
 } from "lucide-react";
@@ -44,6 +46,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   Tabs,
   TabsContent,
@@ -84,6 +96,7 @@ import {
 import { AdsFunnelView } from "@/components/ads/AdsFunnelView";
 import { AdsPathsView } from "@/components/ads/AdsPathsView";
 import { useAuth } from "@/hooks/useAuth";
+import { type RawVturbPayload } from "@/lib/adFunnelCorrelation";
 
 interface AdsPanelProps {
   projectId: string | null;
@@ -100,6 +113,11 @@ type SyncRunRow = {
   status: "queued" | "running" | "succeeded" | "failed";
   error_message: string | null;
   created_at: string;
+};
+
+type CreativeVturbMetrics = {
+  playRate: number | null;
+  pitchRetention: number | null;
 };
 
 type GroupFormState = {
@@ -175,6 +193,7 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
   const [groups, setGroups] = useState<CreativeGroupRow[]>([]);
   const [latestSyncRun, setLatestSyncRun] = useState<SyncRunRow | null>(null);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const [vturbEvents, setVturbEvents] = useState<Array<{ payload: RawVturbPayload | null }>>([]);
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<CreativeSortKey>("purchases");
   const [groupBy, setGroupBy] = useState<CreativeGroupBy>("none");
@@ -186,6 +205,8 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
   const [analyzingAssetId, setAnalyzingAssetId] = useState<string | null>(null);
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
   const [groupForm, setGroupForm] = useState<GroupFormState>(EMPTY_GROUP_FORM);
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+  const [groupToDelete, setGroupToDelete] = useState<CreativeGroupRow | null>(null);
 
   const load = useCallback(async () => {
     if (!projectId) return;
@@ -199,6 +220,19 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
       if (dateRange?.from) metricsQuery = metricsQuery.gte("event_date", dateRange.from);
       if (dateRange?.to) metricsQuery = metricsQuery.lte("event_date", dateRange.to);
 
+      let vturbEventQuery = supabase
+        .from("raw_events")
+        .select("payload")
+        .eq("project_id", projectId)
+        .eq("source", "vturb")
+        .eq("event_type", "traffic_by_source");
+      if (dateRange?.from) {
+        vturbEventQuery = vturbEventQuery.gte("event_date", dateRange.from);
+      }
+      if (dateRange?.to) {
+        vturbEventQuery = vturbEventQuery.lte("event_date", dateRange.to);
+      }
+
       const [
         { data: projectRow },
         { data: assetRows },
@@ -208,6 +242,7 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
         { data: jobRows },
         { data: groupRows },
         { data: syncRows },
+        { data: vturbEventRows },
       ] = await Promise.all([
         supabase
           .from("projects")
@@ -245,6 +280,7 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
           .eq("source", "creative")
           .order("created_at", { ascending: false })
           .limit(1),
+        vturbEventQuery.limit(5000),
       ]);
 
       const loadedAssets = (assetRows ?? []) as unknown as CreativeAssetRow[];
@@ -258,6 +294,7 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
       setJobs((jobRows ?? []) as unknown as CreativeAssetJobRow[]);
       setGroups((groupRows ?? []) as unknown as CreativeGroupRow[]);
       setLatestSyncRun(((syncRows ?? [])[0] as SyncRunRow | undefined) ?? null);
+      setVturbEvents((vturbEventRows ?? []) as Array<{ payload: RawVturbPayload | null }>);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Erro ao carregar criativos");
     } finally {
@@ -328,8 +365,8 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
     }
   }
 
-  async function createGroup() {
-    if (!projectId || !workspaceId || !user?.id) {
+  async function saveGroup() {
+    if (!projectId || (!editingGroupId && (!workspaceId || !user?.id))) {
       toast.error("Contexto do projeto indisponível para salvar o grupo");
       return;
     }
@@ -341,6 +378,26 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
 
     const rules = buildGroupRulesFromForm(groupForm);
     try {
+      if (editingGroupId) {
+        const { data, error } = await supabase
+          .from("creative_groups" as never)
+          .update({
+            name: groupForm.name.trim(),
+            rules,
+            sort_key: groupForm.sortKey,
+          })
+          .eq("id", editingGroupId)
+          .eq("project_id", projectId)
+          .select("id, name, rules, sort_key")
+          .single();
+        if (error) throw error;
+        const updated = data as unknown as CreativeGroupRow;
+        setGroups((current) => current.map((group) => group.id === updated.id ? updated : group));
+        closeGroupDialog();
+        toast.success("Grupo atualizado");
+        return;
+      }
+
       const { data, error } = await supabase
         .from("creative_groups" as never)
         .insert({
@@ -359,11 +416,50 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
       setGroups((current) => [...current, nextRow]);
       setActiveCustomGroupId(nextRow.id);
       setActiveFixedGroup("all");
-      setGroupDialogOpen(false);
-      setGroupForm(EMPTY_GROUP_FORM);
+      closeGroupDialog();
       toast.success("Grupo salvo");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Erro ao salvar grupo");
+    }
+  }
+
+  function openCreateGroupDialog() {
+    setEditingGroupId(null);
+    setGroupForm(EMPTY_GROUP_FORM);
+    setGroupDialogOpen(true);
+  }
+
+  function openEditGroupDialog(group: CreativeGroupRow) {
+    setEditingGroupId(group.id);
+    setGroupForm(groupFormFromRow(group));
+    setGroupDialogOpen(true);
+  }
+
+  function closeGroupDialog() {
+    setGroupDialogOpen(false);
+    setEditingGroupId(null);
+    setGroupForm(EMPTY_GROUP_FORM);
+  }
+
+  async function deleteGroup() {
+    if (!projectId || !groupToDelete) return;
+    const target = groupToDelete;
+    try {
+      const { error } = await supabase
+        .from("creative_groups" as never)
+        .delete()
+        .eq("id", target.id)
+        .eq("project_id", projectId);
+      if (error) throw error;
+      setGroups((current) => current.filter((group) => group.id !== target.id));
+      if (activeCustomGroupId === target.id) {
+        setActiveCustomGroupId(null);
+        setActiveFixedGroup("all");
+      }
+      setGroupToDelete(null);
+      toast.success("Grupo removido");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Erro ao remover grupo");
     }
   }
 
@@ -416,14 +512,20 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
     [groupBy, sortedCards],
   );
 
+  const vturbMetricsByAsset = useMemo(
+    () => buildCreativeVturbMetrics(cards, vturbEvents),
+    [cards, vturbEvents],
+  );
+
   const metricScale = useMemo(() => {
     const values = {
       ctr: Math.max(...sortedCards.map((card) => card.ctr ?? 0), 1),
       cpm: Math.max(...sortedCards.map((card) => card.cpm ?? 0), 1),
-      hookRate: Math.max(...sortedCards.map((card) => card.hookRate ?? 0), 1),
+      playRate: Math.max(...sortedCards.map((card) => vturbMetricsByAsset.get(card.id)?.playRate ?? 0), 1),
+      pitchRetention: Math.max(...sortedCards.map((card) => vturbMetricsByAsset.get(card.id)?.pitchRetention ?? 0), 1),
     };
     return values;
-  }, [sortedCards]);
+  }, [sortedCards, vturbMetricsByAsset]);
 
   if (!projectId) {
     return (
@@ -575,28 +677,52 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
             {groups.map((group) => {
               const isActive = activeCustomGroupId === group.id;
               return (
-                <button
+                <div
                   key={group.id}
-                  type="button"
-                  onClick={() => {
-                    setActiveCustomGroupId(group.id);
-                    setActiveFixedGroup("all");
-                  }}
                   className={cn(
-                    "inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-medium transition-all",
+                    "group/saved inline-flex items-center overflow-hidden rounded-xl text-xs font-medium transition-all",
                     isActive
                       ? "bg-cyan-500/15 text-cyan-300 ring-1 ring-cyan-500/30"
                       : "bg-muted/40 text-muted-foreground hover:bg-muted/60 hover:text-foreground",
                   )}
                 >
-                  <Tag className="w-3 h-3" />
-                  {group.name}
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveCustomGroupId(group.id);
+                      setActiveFixedGroup("all");
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2"
+                  >
+                    <Tag className="w-3 h-3" />
+                    {group.name}
+                  </button>
+                  <span className="mr-1 flex items-center border-l border-current/10 pl-1">
+                    <button
+                      type="button"
+                      onClick={() => openEditGroupDialog(group)}
+                      className="rounded-md p-1.5 opacity-65 transition hover:bg-background/30 hover:opacity-100 focus-visible:opacity-100"
+                      aria-label={`Editar grupo ${group.name}`}
+                      title="Editar grupo"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setGroupToDelete(group)}
+                      className="rounded-md p-1.5 opacity-65 transition hover:bg-red-500/15 hover:text-red-300 hover:opacity-100 focus-visible:opacity-100"
+                      aria-label={`Remover grupo ${group.name}`}
+                      title="Remover grupo"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </span>
+                </div>
               );
             })}
             <button
               type="button"
-              onClick={() => setGroupDialogOpen(true)}
+              onClick={openCreateGroupDialog}
               className="inline-flex items-center gap-1.5 rounded-xl border border-dashed border-border/60 px-3 py-2 text-xs font-medium text-muted-foreground transition-all hover:border-border hover:bg-muted/30 hover:text-foreground"
             >
               <Plus className="w-3.5 h-3.5" />
@@ -700,13 +826,14 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
                       <div className="h-px flex-1 bg-gradient-to-l from-border/60 to-transparent" />
                     </div>
                   )}
-                  <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                  <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
                     {group.cards.map((card) => (
                       <CreativeCard
                         key={card.id}
                         card={card}
                         expanded={expandedCardId === card.id}
                         metricScale={metricScale}
+                        vturbMetrics={vturbMetricsByAsset.get(card.id) ?? null}
                         onToggle={() => setExpandedCardId((current) => current === card.id ? null : card.id)}
                         onAnalyze={() => analyzeCreative(card)}
                         analyzing={analyzingAssetId === card.id}
@@ -720,12 +847,14 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
         </>
       )}
 
-      <Dialog open={groupDialogOpen} onOpenChange={setGroupDialogOpen}>
+      <Dialog open={groupDialogOpen} onOpenChange={(open) => open ? setGroupDialogOpen(true) : closeGroupDialog()}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Novo grupo de criativos</DialogTitle>
+            <DialogTitle>{editingGroupId ? "Editar grupo de criativos" : "Novo grupo de criativos"}</DialogTitle>
             <DialogDescription>
-              Salve um conjunto de regras para reaplicar filtros e ordenação na grade de cards.
+              {editingGroupId
+                ? "Altere as regras e a ordenação aplicadas por este grupo."
+                : "Salve um conjunto de regras para reaplicar filtros e ordenação na grade de cards."}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 md:grid-cols-2">
@@ -795,11 +924,28 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
             </Field>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setGroupDialogOpen(false)}>Cancelar</Button>
-            <Button onClick={createGroup}>Salvar grupo</Button>
+            <Button variant="outline" onClick={closeGroupDialog}>Cancelar</Button>
+            <Button onClick={saveGroup}>{editingGroupId ? "Salvar alterações" : "Salvar grupo"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={Boolean(groupToDelete)} onOpenChange={(open) => !open && setGroupToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remover grupo?</AlertDialogTitle>
+            <AlertDialogDescription>
+              O grupo “{groupToDelete?.name}” será removido. Os criativos e seus dados não serão apagados.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void deleteGroup()} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Remover grupo
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -885,13 +1031,15 @@ function CreativeCard({
   card,
   expanded,
   metricScale,
+  vturbMetrics,
   analyzing,
   onAnalyze,
   onToggle,
 }: {
   card: CreativeAssetCard;
   expanded: boolean;
-  metricScale: { ctr: number; cpm: number; hookRate: number };
+  metricScale: { ctr: number; cpm: number; playRate: number; pitchRetention: number };
+  vturbMetrics: CreativeVturbMetrics | null;
   analyzing: boolean;
   onToggle: () => void;
   onAnalyze: () => void;
@@ -1015,6 +1163,7 @@ function CreativeCard({
           <InfoPill label="Ads" value={String(card.adsCount)} />
           <InfoPill label="Campanhas" value={String(card.campaignNames.length)} />
           <InfoPill label="Adsets" value={String(card.adsetNames.length)} />
+          <InfoPill label="Hook" value={card.hookRate != null ? fPct(card.hookRate, 1) : "—"} />
           {card.landingUrl && (
             <a
               href={card.landingUrl}
@@ -1051,7 +1200,7 @@ function CreativeCard({
         </div>
 
         {/* Primary Metrics */}
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+        <div className="grid grid-cols-2 gap-2">
           <MetricTile
             label="Gasto"
             value={fBRL(card.spend)}
@@ -1069,21 +1218,15 @@ function CreativeCard({
             highlight={card.roas != null && card.roas >= 2}
           />
           <MetricTile
-            label="Reemb."
-            value={fNum(card.refunds)}
+            label="Reembolsos"
+            value={`${fNum(card.refunds)} · ${card.refundRate != null ? fPct(card.refundRate, 1) : "—"}`}
             accent="amber"
             highlight={card.refunds > 0}
-          />
-          <MetricTile
-            label="Tx Reemb."
-            value={card.refundRate != null ? fPct(card.refundRate, 1) : "—"}
-            accent="amber"
-            highlight={(card.refundRate ?? 0) > 0}
           />
         </div>
 
         {/* Secondary Metrics */}
-        <div className="space-y-2">
+        <div className="grid gap-x-4 gap-y-2 sm:grid-cols-2">
           <MetricBar
             label="CPM"
             value={card.cpm != null ? fBRL(card.cpm) : "—"}
@@ -1097,10 +1240,16 @@ function CreativeCard({
             tone="cyan"
           />
           <MetricBar
-            label="Hook"
-            value={card.hookRate != null ? fPct(card.hookRate, 2) : "—"}
-            width={card.hookRate != null ? Math.min(100, (card.hookRate / metricScale.hookRate) * 100) : 0}
+            label="Play Rate"
+            value={vturbMetrics?.playRate != null ? fPct(vturbMetrics.playRate, 1) : "—"}
+            width={vturbMetrics?.playRate != null ? Math.min(100, (vturbMetrics.playRate / metricScale.playRate) * 100) : 0}
             tone="emerald"
+          />
+          <MetricBar
+            label="Ret. Pitch"
+            value={vturbMetrics?.pitchRetention != null ? fPct(vturbMetrics.pitchRetention, 1) : "—"}
+            width={vturbMetrics?.pitchRetention != null ? Math.min(100, (vturbMetrics.pitchRetention / metricScale.pitchRetention) * 100) : 0}
+            tone="violet"
           />
         </div>
 
@@ -1408,11 +1557,11 @@ function MetricBar({
   label: string;
   value: string;
   width: number;
-  tone: "amber" | "cyan" | "emerald";
+  tone: "amber" | "cyan" | "emerald" | "violet";
 }) {
   return (
-    <div className="flex items-center gap-3">
-      <span className="w-12 text-[11px] text-muted-foreground font-medium shrink-0">{label}</span>
+    <div className="flex min-w-0 items-center gap-2">
+      <span className="w-[68px] shrink-0 truncate text-[11px] font-medium text-muted-foreground" title={label}>{label}</span>
       <div className="flex-1 h-1.5 rounded-full bg-muted/50 overflow-hidden">
         <div
           className={cn(
@@ -1420,11 +1569,12 @@ function MetricBar({
             tone === "amber" && "bg-gradient-to-r from-amber-500 to-amber-400",
             tone === "cyan" && "bg-gradient-to-r from-cyan-500 to-cyan-400",
             tone === "emerald" && "bg-gradient-to-r from-emerald-500 to-emerald-400",
+            tone === "violet" && "bg-gradient-to-r from-violet-500 to-violet-400",
           )}
-          style={{ width: `${Math.max(2, width)}%` }}
+          style={{ width: width > 0 ? `${Math.max(2, width)}%` : "0%" }}
         />
       </div>
-      <span className="w-16 text-right tabular-nums text-xs font-medium text-foreground/80">{value}</span>
+      <span className="w-14 shrink-0 text-right tabular-nums text-xs font-medium text-foreground/80">{value}</span>
     </div>
   );
 }
@@ -1617,6 +1767,93 @@ function compactUrlLabel(url: string | null) {
   } catch {
     return url.slice(0, 48);
   }
+}
+
+function buildCreativeVturbMetrics(
+  cards: CreativeAssetCard[],
+  events: Array<{ payload: RawVturbPayload | null }>,
+) {
+  const metricsByAdId = new Map<string, { pageviews: number; plays: number; pitchReached: number }>();
+
+  for (const event of events) {
+    const payload = event.payload ?? {};
+    const adId = String(payload.utm_content ?? "");
+    if (!adId) continue;
+    const current = metricsByAdId.get(adId) ?? { pageviews: 0, plays: 0, pitchReached: 0 };
+    current.pageviews += firstPositiveMetric(payload.pageviews, payload.page_views, payload.landing_page_views);
+    current.plays += firstPositiveMetric(
+      payload.plays,
+      payload.play,
+      payload.total_plays,
+      payload.views,
+      payload.sessions,
+      payload.unique_views,
+    );
+    current.pitchReached += metricNumber(payload.pitch_reached ?? payload.conversions);
+    metricsByAdId.set(adId, current);
+  }
+
+  const result = new Map<string, CreativeVturbMetrics>();
+
+  for (const card of cards) {
+    let pageviews = 0;
+    let plays = 0;
+    let pitchReached = 0;
+
+    for (const adId of card.adIds) {
+      const metrics = metricsByAdId.get(adId);
+      if (!metrics) continue;
+      pageviews += metrics.pageviews;
+      plays += metrics.plays;
+      pitchReached += metrics.pitchReached;
+    }
+
+    result.set(card.id, {
+      playRate: pageviews > 0 ? (plays / pageviews) * 100 : null,
+      pitchRetention: plays > 0 ? (pitchReached / plays) * 100 : null,
+    });
+  }
+
+  return result;
+}
+
+function firstPositiveMetric(...values: unknown[]) {
+  for (const value of values) {
+    const parsed = metricNumber(value);
+    if (parsed > 0) return parsed;
+  }
+  return 0;
+}
+
+function metricNumber(value: unknown) {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function groupFormFromRow(group: CreativeGroupRow): GroupFormState {
+  const rules = parseCreativeGroupRules(group.rules);
+  const sortKeys: CreativeSortKey[] = ["purchases", "roas", "hook_rate", "ctr", "cpm", "spend"];
+  const sortKey = sortKeys.includes(group.sort_key as CreativeSortKey)
+    ? (group.sort_key as CreativeSortKey)
+    : "purchases";
+
+  return {
+    name: group.name,
+    mediaType: rules.mediaType ?? "all",
+    pipelineStatus: rules.pipelineStatus ?? "all",
+    campaignQuery: rules.campaignQuery ?? "",
+    adsetQuery: rules.adsetQuery ?? "",
+    minHookRate: numberInputValue(rules.minHookRate),
+    minRoas: numberInputValue(rules.minRoas),
+    minCtr: numberInputValue(rules.minCtr),
+    maxCpm: numberInputValue(rules.maxCpm),
+    minSpend: numberInputValue(rules.minSpend),
+    sortKey,
+  };
+}
+
+function numberInputValue(value: number | null | undefined) {
+  return value == null ? "" : String(value);
 }
 
 function buildGroupRulesFromForm(form: GroupFormState): CreativeGroupRules {

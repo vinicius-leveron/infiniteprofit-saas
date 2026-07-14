@@ -14,10 +14,26 @@
     "meta-test",
     "public-share",
     "pull-sheet",
+    "sync-scheduler",
+    "sync-watchdog",
+    "sync-worker",
     "vturb-pull",
     "vturb-test",
     "webhook-gateway",
     "workspace-credentials"
   ],
-  "documentedExternalFunctions": []
+  "documentedExternalFunctions": [
+    {
+      "name": "sync-scheduler",
+      "reason": "Queue scheduler deployed in Supabase; source is not present in this repository."
+    },
+    {
+      "name": "sync-watchdog",
+      "reason": "Queue watchdog deployed in Supabase; source is not present in this repository."
+    },
+    {
+      "name": "sync-worker",
+      "reason": "Queue worker deployed in Supabase; source is not present in this repository."
+    }
+  ]
 }

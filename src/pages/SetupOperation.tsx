@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type React from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Check, Copy, Loader2, Plug, Zap } from "lucide-react";
+import { ArrowLeft, Check, Copy, Loader2, Plug, Plus, Trash2, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -23,13 +23,32 @@ type SyncSource = "meta" | "vturb";
 type SetupDraft = {
   step: StepId;
   name: string;
-  metaAccountId: string;
-  metaToken: string;
-  metaLabel: string;
+  selectedExistingMetaIds: string[];
+  metaAccounts: SetupMetaAccountDraft[];
   vturbKey: string;
   playersText: string;
   hublaSecret: string;
   webhookToken: string;
+};
+
+type SetupMetaAccountDraft = {
+  draftId: string;
+  accountId: string;
+  accessToken: string;
+  label: string;
+};
+
+type WorkspaceMetaAccount = {
+  id: string;
+  account_id: string;
+  label: string | null;
+  last_synced_at: string | null;
+};
+
+type MetaTestResult = {
+  ok: boolean;
+  name?: string;
+  error?: string;
 };
 
 type VturbDetectedPlayer = {
@@ -55,17 +74,17 @@ export default function SetupOperation() {
   const [savingLabel, setSavingLabel] = useState("Criar operação");
   const [hydratedDraftKey, setHydratedDraftKey] = useState<string | null>(null);
   const [name, setName] = useState("");
-  const [metaAccountId, setMetaAccountId] = useState("");
-  const [metaToken, setMetaToken] = useState("");
-  const [metaLabel, setMetaLabel] = useState("");
+  const [existingMetaAccounts, setExistingMetaAccounts] = useState<WorkspaceMetaAccount[]>([]);
+  const [selectedExistingMetaIds, setSelectedExistingMetaIds] = useState<string[]>([]);
+  const [metaAccounts, setMetaAccounts] = useState<SetupMetaAccountDraft[]>(() => [emptyMetaAccountDraft()]);
   const [vturbKey, setVturbKey] = useState("");
   const [playersText, setPlayersText] = useState("");
   const [hublaSecret, setHublaSecret] = useState("");
   const [webhookToken, setWebhookToken] = useState(() => randomHex(24));
 
   // Test states
-  const [testingMeta, setTestingMeta] = useState(false);
-  const [metaTestResult, setMetaTestResult] = useState<{ ok: boolean; name?: string; error?: string } | null>(null);
+  const [testingMetaKey, setTestingMetaKey] = useState<string | null>(null);
+  const [metaTestResults, setMetaTestResults] = useState<Record<string, MetaTestResult>>({});
   const [testingVturb, setTestingVturb] = useState(false);
   const [vturbTestResult, setVturbTestResult] = useState<{ ok: boolean; players?: VturbDetectedPlayer[]; error?: string } | null>(null);
 
@@ -79,6 +98,23 @@ export default function SetupOperation() {
   );
   const currentStepIndex = STEPS.findIndex((item) => item.id === step);
   const canSubmit = name.trim().length >= 2;
+  const configuredNewMetaAccounts = metaAccounts.filter(hasAnyMetaAccountValue);
+  const validNewMetaAccounts = configuredNewMetaAccounts.filter(isCompleteMetaAccount);
+  const hasIncompleteMetaAccount = configuredNewMetaAccounts.some((account) => !isCompleteMetaAccount(account));
+  const selectedExistingMetaAccounts = existingMetaAccounts.filter((account) =>
+    selectedExistingMetaIds.includes(account.id)
+  );
+  const selectedMetaAccountKeys = [
+    ...selectedExistingMetaAccounts.map((account) => existingMetaTestKey(account.id)),
+    ...validNewMetaAccounts.map((account) => newMetaTestKey(account.draftId)),
+  ];
+  const metaAccountCount = new Set([
+    ...selectedExistingMetaAccounts.map((account) => normalizeAccountId(account.account_id)),
+    ...validNewMetaAccounts.map((account) => normalizeAccountId(account.accountId)),
+  ]).size;
+  const allSelectedMetaAccountsTested =
+    metaAccountCount > 0 && selectedMetaAccountKeys.every((key) => metaTestResults[key]?.ok);
+  const hasMetaTestError = selectedMetaAccountKeys.some((key) => metaTestResults[key]?.ok === false);
   const playerIds = useMemo(
     () => playersText.split(/\n|,|;/).map((value) => value.trim()).filter(Boolean),
     [playersText],
@@ -118,18 +154,120 @@ export default function SetupOperation() {
     setPlayerIds(playerIds.filter((playerId) => !detectedIds.has(playerId)));
   }
 
+  function toggleExistingMetaAccount(accountId: string, checked: boolean) {
+    setSelectedExistingMetaIds((current) =>
+      checked
+        ? [...new Set([...current, accountId])]
+        : current.filter((id) => id !== accountId)
+    );
+  }
+
+  function updateMetaAccount(draftId: string, patch: Partial<SetupMetaAccountDraft>) {
+    setMetaAccounts((current) =>
+      current.map((account) => account.draftId === draftId ? { ...account, ...patch } : account)
+    );
+    setMetaTestResults((current) => {
+      const key = newMetaTestKey(draftId);
+      if (!(key in current)) return current;
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+  }
+
+  function removeMetaAccount(draftId: string) {
+    setMetaAccounts((current) => {
+      const next = current.filter((account) => account.draftId !== draftId);
+      return next.length > 0 ? next : [emptyMetaAccountDraft()];
+    });
+    setMetaTestResults((current) => {
+      const next = { ...current };
+      delete next[newMetaTestKey(draftId)];
+      return next;
+    });
+  }
+
+  async function testExistingMetaAccount(account: WorkspaceMetaAccount) {
+    const key = existingMetaTestKey(account.id);
+    setTestingMetaKey(key);
+    try {
+      const { data, error } = await supabase.functions.invoke("meta-test", {
+        body: { meta_account_id: account.id },
+      });
+      const result = metaTestResultFromResponse(data, error);
+      setMetaTestResults((current) => ({ ...current, [key]: result }));
+    } catch (error) {
+      setMetaTestResults((current) => ({
+        ...current,
+        [key]: { ok: false, error: error instanceof Error ? error.message : "Erro ao testar" },
+      }));
+    } finally {
+      setTestingMetaKey(null);
+    }
+  }
+
+  async function testNewMetaAccount(account: SetupMetaAccountDraft) {
+    const key = newMetaTestKey(account.draftId);
+    setTestingMetaKey(key);
+    try {
+      const { data, error } = await supabase.functions.invoke("meta-test", {
+        body: {
+          account_id: normalizeAccountId(account.accountId),
+          access_token: account.accessToken.trim(),
+        },
+      });
+      const result = metaTestResultFromResponse(data, error);
+      setMetaTestResults((current) => ({ ...current, [key]: result }));
+    } catch (error) {
+      setMetaTestResults((current) => ({
+        ...current,
+        [key]: { ok: false, error: error instanceof Error ? error.message : "Erro ao testar" },
+      }));
+    } finally {
+      setTestingMetaKey(null);
+    }
+  }
+
+  useEffect(() => {
+    if (!currentWorkspace?.id) {
+      setExistingMetaAccounts([]);
+      return;
+    }
+
+    let cancelled = false;
+    void supabase
+      .from("workspace_meta_accounts")
+      .select("id, account_id, label, last_synced_at")
+      .eq("workspace_id", currentWorkspace.id)
+      .order("created_at", { ascending: true })
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) {
+          toast.error("Falha ao carregar contas Meta do workspace");
+          return;
+        }
+        const accounts = (data ?? []) as WorkspaceMetaAccount[];
+        const accountIds = new Set(accounts.map((account) => account.id));
+        setExistingMetaAccounts(accounts);
+        setSelectedExistingMetaIds((current) => current.filter((id) => accountIds.has(id)));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentWorkspace?.id]);
+
   useEffect(() => {
     const draft = readSetupDraft(draftStorageKey) ?? emptySetupDraft();
     setStep(draft.step);
     setName(draft.name);
-    setMetaAccountId(draft.metaAccountId);
-    setMetaToken(draft.metaToken);
-    setMetaLabel(draft.metaLabel);
+    setSelectedExistingMetaIds(draft.selectedExistingMetaIds);
+    setMetaAccounts(draft.metaAccounts);
     setVturbKey(draft.vturbKey);
     setPlayersText(draft.playersText);
     setHublaSecret(draft.hublaSecret);
     setWebhookToken(draft.webhookToken);
-    setMetaTestResult(null);
+    setMetaTestResults({});
     setVturbTestResult(null);
     setHydratedDraftKey(draftStorageKey);
   }, [draftStorageKey]);
@@ -140,9 +278,8 @@ export default function SetupOperation() {
     const draft: SetupDraft = {
       step,
       name,
-      metaAccountId,
-      metaToken,
-      metaLabel,
+      selectedExistingMetaIds,
+      metaAccounts,
       vturbKey,
       playersText,
       hublaSecret,
@@ -159,11 +296,10 @@ export default function SetupOperation() {
     draftStorageKey,
     hydratedDraftKey,
     hublaSecret,
-    metaAccountId,
-    metaLabel,
-    metaToken,
+    metaAccounts,
     name,
     playersText,
+    selectedExistingMetaIds,
     step,
     vturbKey,
     webhookToken,
@@ -171,6 +307,18 @@ export default function SetupOperation() {
 
   async function createOperation() {
     if (!user || !currentWorkspace?.id || !canSubmit) return;
+    if (hasIncompleteMetaAccount) {
+      setStep("meta");
+      toast.error("Preencha o Ad Account ID e o access token de cada conta Meta adicionada.");
+      return;
+    }
+    const duplicateMetaAccountId = findDuplicateMetaAccountId(validNewMetaAccounts);
+    if (duplicateMetaAccountId) {
+      setStep("meta");
+      toast.error(`A conta ${duplicateMetaAccountId} foi adicionada mais de uma vez.`);
+      return;
+    }
+
     setSaving(true);
     setSavingLabel("Criando operação");
     try {
@@ -187,25 +335,31 @@ export default function SetupOperation() {
         .single();
       if (projectError || !project) throw projectError ?? new Error("Falha ao criar projeto");
 
-      let metaRowId: string | null = null;
-      if (metaAccountId.trim() && metaToken.trim()) {
-        const normalized = normalizeAccountId(metaAccountId);
+      const metaRowIds = new Set(selectedExistingMetaIds);
+      for (const account of validNewMetaAccounts) {
+        const normalized = normalizeAccountId(account.accountId);
         const { data: metaData, error: metaError } = await supabase.functions.invoke("workspace-credentials", {
           body: {
             action: "upsert_meta_account",
             workspace_id: currentWorkspace.id,
             account_id: normalized,
-            access_token: metaToken.trim(),
-            label: metaLabel.trim() || normalized,
+            access_token: account.accessToken.trim(),
+            label: account.label.trim() || normalized,
           },
         });
         const metaRow = metaData?.meta_account;
         if (metaError || !metaRow) throw metaError ?? new Error("Falha ao salvar Meta");
-        metaRowId = metaRow.id;
-        const { error } = await supabase.from("project_meta_accounts").insert({
-          project_id: project.id,
-          meta_account_id: metaRowId,
-        });
+        metaRowIds.add(metaRow.id);
+      }
+
+      if (metaRowIds.size > 0) {
+        const { error } = await supabase.from("project_meta_accounts").upsert(
+          [...metaRowIds].map((metaAccountId) => ({
+            project_id: project.id,
+            meta_account_id: metaAccountId,
+          })),
+          { onConflict: "project_id,meta_account_id" },
+        );
         if (error) throw error;
       }
 
@@ -263,7 +417,7 @@ export default function SetupOperation() {
       const finalWebhookUrl = `${SUPABASE_URL}/functions/v1/webhook-gateway/${provider}/${webhookToken}`;
 
       const syncSources: SyncSource[] = [];
-      if (metaAccountId.trim() && metaToken.trim()) syncSources.push("meta");
+      if (metaRowIds.size > 0) syncSources.push("meta");
       if (vturbKey.trim() && playerIds.length > 0) syncSources.push("vturb");
 
       let syncFailures: string[] = [];
@@ -288,7 +442,7 @@ export default function SetupOperation() {
       }
       void navigator.clipboard.writeText(finalWebhookUrl).catch(() => undefined);
 
-      navigate(`/diagnostics?project=${project.id}`);
+      navigate(`/dashboard?project=${project.id}`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Falha ao criar operação");
     } finally {
@@ -350,51 +504,164 @@ export default function SetupOperation() {
 
         {step === "meta" && (
           <StepSection title="Meta Ads">
-            <div className="grid md:grid-cols-2 gap-3">
-              <Field label="Ad account ID">
-                <Input value={metaAccountId} onChange={(e) => setMetaAccountId(e.target.value)} placeholder="act_123 ou 123" />
-              </Field>
-              <Field label="Nome interno">
-                <Input value={metaLabel} onChange={(e) => setMetaLabel(e.target.value)} placeholder="Kosmos" />
-              </Field>
-            </div>
-            <Field label="Access token">
-              <Input value={metaToken} onChange={(e) => setMetaToken(e.target.value)} type="password" placeholder="Cole o token Meta" />
-            </Field>
-            <div className="flex items-center gap-3 mt-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={!metaAccountId.trim() || !metaToken.trim() || testingMeta}
-                onClick={async () => {
-                  setTestingMeta(true);
-                  setMetaTestResult(null);
-                  try {
-                    const { data, error } = await supabase.functions.invoke("meta-test", {
-                      body: { account_id: normalizeAccountId(metaAccountId), access_token: metaToken },
-                    });
-                    if (error || data?.error) {
-                      setMetaTestResult({ ok: false, error: data?.error ?? error?.message });
-                    } else {
-                      setMetaTestResult({ ok: true, name: data?.name });
-                    }
-                  } catch (err) {
-                    setMetaTestResult({ ok: false, error: err instanceof Error ? err.message : "Erro ao testar" });
-                  } finally {
-                    setTestingMeta(false);
-                  }
-                }}
-                className="gap-2"
-              >
-                {testingMeta ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-                Testar Meta
-              </Button>
-              {metaTestResult && (
-                <span className={cn("text-xs", metaTestResult.ok ? "text-green-600" : "text-red-600")}>
-                  {metaTestResult.ok ? `Conectado: ${metaTestResult.name}` : metaTestResult.error}
-                </span>
-              )}
+            {existingMetaAccounts.length > 0 && (
+              <div className="rounded-lg border border-border/50 bg-muted/10 p-3 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-medium">Contas já cadastradas no workspace</div>
+                    <div className="text-xs text-muted-foreground">
+                      {selectedExistingMetaAccounts.length} de {existingMetaAccounts.length} selecionada(s)
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setSelectedExistingMetaIds(existingMetaAccounts.map((account) => account.id))}
+                    >
+                      Selecionar todas
+                    </Button>
+                    <Button type="button" variant="ghost" size="sm" onClick={() => setSelectedExistingMetaIds([])}>
+                      Limpar
+                    </Button>
+                  </div>
+                </div>
+                <div className="max-h-[280px] space-y-2 overflow-y-auto pr-1">
+                  {existingMetaAccounts.map((account) => {
+                    const testKey = existingMetaTestKey(account.id);
+                    const testResult = metaTestResults[testKey];
+                    return (
+                      <div
+                        key={account.id}
+                        className="flex items-start justify-between gap-3 rounded-md border border-border/40 bg-background/50 p-3"
+                      >
+                        <label className="flex min-w-0 flex-1 cursor-pointer items-start gap-3">
+                          <Checkbox
+                            checked={selectedExistingMetaIds.includes(account.id)}
+                            onCheckedChange={(checked) => toggleExistingMetaAccount(account.id, checked === true)}
+                          />
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-medium">{account.label || account.account_id}</div>
+                            <div className="break-all font-mono text-xs text-muted-foreground">{account.account_id}</div>
+                            {testResult && (
+                              <div className={cn("mt-1 text-[11px]", testResult.ok ? "text-green-600" : "text-red-600")}>
+                                {testResult.ok ? `Conectada${testResult.name ? `: ${testResult.name}` : ""}` : testResult.error}
+                              </div>
+                            )}
+                          </div>
+                        </label>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          aria-label={`Testar conta ${account.label || account.account_id}`}
+                          onClick={() => testExistingMetaAccount(account)}
+                          disabled={testingMetaKey === testKey}
+                        >
+                          {testingMetaKey === testKey
+                            ? <Loader2 className="h-4 w-4 animate-spin" />
+                            : <Zap className="h-4 w-4" />}
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-medium">
+                    {existingMetaAccounts.length > 0 ? "Adicionar outras contas" : "Adicionar contas Meta"}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    Você pode cadastrar várias contas agora; todas serão vinculadas a esta operação.
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setMetaAccounts((current) => [...current, emptyMetaAccountDraft()])}
+                  className="gap-2"
+                >
+                  <Plus className="h-4 w-4" />
+                  Adicionar conta
+                </Button>
+              </div>
+
+              {metaAccounts.map((account, index) => {
+                const testKey = newMetaTestKey(account.draftId);
+                const testResult = metaTestResults[testKey];
+                const accountIdInputId = `meta-account-id-${account.draftId}`;
+                const accountLabelInputId = `meta-account-label-${account.draftId}`;
+                const accountTokenInputId = `meta-account-token-${account.draftId}`;
+                return (
+                  <div key={account.draftId} className="rounded-lg border border-border/50 p-3 space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-xs font-medium text-muted-foreground">Conta {index + 1}</div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => removeMetaAccount(account.draftId)}
+                        aria-label={`Remover conta ${index + 1}`}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <Field label="Ad Account ID" htmlFor={accountIdInputId}>
+                        <Input
+                          id={accountIdInputId}
+                          value={account.accountId}
+                          onChange={(event) => updateMetaAccount(account.draftId, { accountId: event.target.value })}
+                          placeholder="act_123 ou 123"
+                        />
+                      </Field>
+                      <Field label="Nome interno" htmlFor={accountLabelInputId}>
+                        <Input
+                          id={accountLabelInputId}
+                          value={account.label}
+                          onChange={(event) => updateMetaAccount(account.draftId, { label: event.target.value })}
+                          placeholder="Conta principal"
+                        />
+                      </Field>
+                    </div>
+                    <Field label="Access token" htmlFor={accountTokenInputId}>
+                      <Input
+                        id={accountTokenInputId}
+                        value={account.accessToken}
+                        onChange={(event) => updateMetaAccount(account.draftId, { accessToken: event.target.value })}
+                        type="password"
+                        placeholder="Cole o token Meta desta conta"
+                      />
+                    </Field>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={!isCompleteMetaAccount(account) || testingMetaKey === testKey}
+                        onClick={() => testNewMetaAccount(account)}
+                        className="gap-2"
+                      >
+                        {testingMetaKey === testKey
+                          ? <Loader2 className="h-4 w-4 animate-spin" />
+                          : <Zap className="h-4 w-4" />}
+                        Testar conta
+                      </Button>
+                      {testResult && (
+                        <span className={cn("text-xs", testResult.ok ? "text-green-600" : "text-red-600")}>
+                          {testResult.ok ? `Conectada${testResult.name ? `: ${testResult.name}` : ""}` : testResult.error}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </StepSection>
         )}
@@ -505,9 +772,9 @@ export default function SetupOperation() {
               <Review label="Funil" value={name || "Pendente"} ok={!!name.trim()} />
               <Review
                 label="Meta"
-                value={metaAccountId || "Pendente"}
-                ok={!!metaAccountId.trim() && !!metaToken.trim()}
-                testStatus={metaTestResult?.ok ? "success" : metaTestResult?.error ? "error" : undefined}
+                value={metaAccountCount > 0 ? `${metaAccountCount} conta(s) selecionada(s)` : "Pendente"}
+                ok={metaAccountCount > 0 && !hasIncompleteMetaAccount}
+                testStatus={allSelectedMetaAccountsTested ? "success" : hasMetaTestError ? "error" : undefined}
               />
               <Review
                 label="VTurb"
@@ -558,10 +825,10 @@ function StepSection({ title, children }: { title: string; children: React.React
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, htmlFor, children }: { label: string; htmlFor?: string; children: React.ReactNode }) {
   return (
     <div className="space-y-1.5">
-      <Label>{label}</Label>
+      <Label htmlFor={htmlFor}>{label}</Label>
       {children}
     </div>
   );
@@ -617,18 +884,71 @@ function normalizeAccountId(value: string) {
   return trimmed.startsWith("act_") ? trimmed : `act_${trimmed}`;
 }
 
+function existingMetaTestKey(accountId: string) {
+  return `existing:${accountId}`;
+}
+
+function newMetaTestKey(draftId: string) {
+  return `new:${draftId}`;
+}
+
+function metaTestResultFromResponse(data: unknown, error: { message?: string } | null): MetaTestResult {
+  const payload = data && typeof data === "object"
+    ? data as { error?: unknown; name?: unknown }
+    : {};
+  const errorMessage = typeof payload.error === "string" ? payload.error : error?.message;
+  if (errorMessage) return { ok: false, error: errorMessage };
+  return {
+    ok: true,
+    name: typeof payload.name === "string" ? payload.name : undefined,
+  };
+}
+
+function emptyMetaAccountDraft(): SetupMetaAccountDraft {
+  return {
+    draftId: randomHex(8),
+    accountId: "",
+    accessToken: "",
+    label: "",
+  };
+}
+
+function hasAnyMetaAccountValue(account: SetupMetaAccountDraft) {
+  return Boolean(account.accountId.trim() || account.accessToken.trim() || account.label.trim());
+}
+
+function isCompleteMetaAccount(account: SetupMetaAccountDraft) {
+  return Boolean(account.accountId.trim() && account.accessToken.trim());
+}
+
+function findDuplicateMetaAccountId(accounts: SetupMetaAccountDraft[]) {
+  const accountIds = new Set<string>();
+  for (const account of accounts) {
+    const accountId = normalizeAccountId(account.accountId);
+    if (accountIds.has(accountId)) return accountId;
+    accountIds.add(accountId);
+  }
+  return null;
+}
+
 function readSetupDraft(storageKey: string) {
   const raw = sessionStorage.getItem(storageKey);
   if (!raw) return null;
 
   try {
-    const parsed = JSON.parse(raw) as Partial<SetupDraft>;
+    const parsed = JSON.parse(raw) as Partial<SetupDraft> & {
+      metaAccountId?: unknown;
+      metaToken?: unknown;
+      metaLabel?: unknown;
+    };
+    const metaAccounts = readDraftMetaAccounts(parsed);
     return {
       step: isStepId(parsed.step) ? parsed.step : "nome",
       name: typeof parsed.name === "string" ? parsed.name : "",
-      metaAccountId: typeof parsed.metaAccountId === "string" ? parsed.metaAccountId : "",
-      metaToken: typeof parsed.metaToken === "string" ? parsed.metaToken : "",
-      metaLabel: typeof parsed.metaLabel === "string" ? parsed.metaLabel : "",
+      selectedExistingMetaIds: Array.isArray(parsed.selectedExistingMetaIds)
+        ? [...new Set(parsed.selectedExistingMetaIds.filter((id): id is string => typeof id === "string" && Boolean(id)))]
+        : [],
+      metaAccounts,
       vturbKey: typeof parsed.vturbKey === "string" ? parsed.vturbKey : "",
       playersText: typeof parsed.playersText === "string" ? parsed.playersText : "",
       hublaSecret: typeof parsed.hublaSecret === "string" ? parsed.hublaSecret : "",
@@ -640,6 +960,44 @@ function readSetupDraft(storageKey: string) {
   }
 }
 
+function readDraftMetaAccounts(parsed: Partial<SetupDraft> & {
+  metaAccountId?: unknown;
+  metaToken?: unknown;
+  metaLabel?: unknown;
+}) {
+  if (Array.isArray(parsed.metaAccounts)) {
+    const accounts = parsed.metaAccounts
+      .map(parseDraftMetaAccount)
+      .filter((account): account is SetupMetaAccountDraft => account !== null);
+    if (accounts.length > 0) return accounts;
+  }
+
+  const legacyAccountId = typeof parsed.metaAccountId === "string" ? parsed.metaAccountId : "";
+  const legacyAccessToken = typeof parsed.metaToken === "string" ? parsed.metaToken : "";
+  const legacyLabel = typeof parsed.metaLabel === "string" ? parsed.metaLabel : "";
+  if (legacyAccountId || legacyAccessToken || legacyLabel) {
+    return [{
+      draftId: randomHex(8),
+      accountId: legacyAccountId,
+      accessToken: legacyAccessToken,
+      label: legacyLabel,
+    }];
+  }
+
+  return [emptyMetaAccountDraft()];
+}
+
+function parseDraftMetaAccount(value: unknown): SetupMetaAccountDraft | null {
+  if (!value || typeof value !== "object") return null;
+  const account = value as Partial<SetupMetaAccountDraft>;
+  return {
+    draftId: typeof account.draftId === "string" && account.draftId ? account.draftId : randomHex(8),
+    accountId: typeof account.accountId === "string" ? account.accountId : "",
+    accessToken: typeof account.accessToken === "string" ? account.accessToken : "",
+    label: typeof account.label === "string" ? account.label : "",
+  };
+}
+
 function isStepId(value: unknown): value is StepId {
   return typeof value === "string" && STEPS.some((step) => step.id === value);
 }
@@ -648,9 +1006,8 @@ function isSetupDraftEmpty(draft: SetupDraft) {
   return (
     draft.step === "nome" &&
     !draft.name.trim() &&
-    !draft.metaAccountId.trim() &&
-    !draft.metaToken.trim() &&
-    !draft.metaLabel.trim() &&
+    draft.selectedExistingMetaIds.length === 0 &&
+    draft.metaAccounts.every((account) => !hasAnyMetaAccountValue(account)) &&
     !draft.vturbKey.trim() &&
     !draft.playersText.trim() &&
     !draft.hublaSecret.trim()
@@ -661,9 +1018,8 @@ function emptySetupDraft(): SetupDraft {
   return {
     step: "nome",
     name: "",
-    metaAccountId: "",
-    metaToken: "",
-    metaLabel: "",
+    selectedExistingMetaIds: [],
+    metaAccounts: [emptyMetaAccountDraft()],
     vturbKey: "",
     playersText: "",
     hublaSecret: "",

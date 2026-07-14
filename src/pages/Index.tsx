@@ -225,7 +225,7 @@ const Index = () => {
   const reloadProject = async () => {
     if (!currentProjectId) return;
     if (projectSource === "api") {
-      const [{ data: metrics }, { data: bindings }] = await Promise.all([
+      const [metricsResult, bindingsResult] = await Promise.all([
         supabase
           .from("daily_metrics")
           .select("*")
@@ -236,25 +236,31 @@ const Index = () => {
           .select("meta_account_id")
           .eq("project_id", currentProjectId)
       ]);
+      if (metricsResult.error) throw metricsResult.error;
+      if (bindingsResult.error) throw bindingsResult.error;
+      const metrics = metricsResult.data;
+      const bindings = bindingsResult.data;
       let accs: Array<{ account_id: string; label: string | null }> = [];
       const accountIds = ((bindings ?? []) as ProjectMetaBindingRow[]).map((binding) => binding.meta_account_id);
       if (accountIds.length > 0) {
-        const { data: accountRows } = await supabase
+        const { data: accountRows, error: accountRowsError } = await supabase
           .from("workspace_meta_accounts")
           .select("account_id, label")
           .in("id", accountIds)
           .order("created_at", { ascending: true });
+        if (accountRowsError) throw accountRowsError;
         accs = (accountRows ?? []) as Array<{ account_id: string; label: string | null }>;
       }
       const apiRows = dailyMetricsToDailyRows((metrics ?? []) as unknown as DailyMetricsRow[]);
       setRawApiRows(apiRows);
       setRows(apiRows);
       setMetaAccounts(accs);
-      const { data: proj } = await supabase
+      const { data: proj, error: projectError } = await supabase
         .from("projects")
         .select("last_synced_at")
         .eq("id", currentProjectId)
         .maybeSingle();
+      if (projectError) throw projectError;
       if (proj) setLastSyncedAt(proj.last_synced_at ?? null);
       return;
     }
@@ -263,7 +269,8 @@ const Index = () => {
       .select("csv_content, file_name, last_synced_at")
       .eq("id", currentProjectId)
       .maybeSingle();
-    if (error || !data || !data.csv_content) return;
+    if (error) throw error;
+    if (!data || !data.csv_content) return;
     const parsed = parseCsv(data.csv_content);
     setRows(parsed.rows);
     setCsvText(data.csv_content);
@@ -289,19 +296,21 @@ const Index = () => {
 
   const handleQuickSync = async () => {
     if (!currentProjectId) return;
-    if (!sheetUrl) {
+    if (projectSource === "sheet" && !sheetUrl) {
       setSyncDialogOpen(true);
       return;
     }
     setSyncingNow(true);
     try {
-      const { data, error } = await supabase.functions.invoke("pull-sheet", {
-        body: { projectId: currentProjectId },
-      });
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
+      if (projectSource === "sheet" && sheetUrl) {
+        const { data, error } = await supabase.functions.invoke("pull-sheet", {
+          body: { projectId: currentProjectId },
+        });
+        if (error) throw error;
+        if (data?.error) throw new Error(data.error);
+      }
       await reloadProject();
-      toast.success("Planilha sincronizada");
+      toast.success(projectSource === "sheet" ? "Planilha sincronizada" : "Dados atualizados");
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Erro ao sincronizar";
       toast.error(msg);
@@ -484,16 +493,17 @@ const Index = () => {
 
             {/* Acoes secundarias */}
             <div className="flex items-center gap-1">
-              {currentProjectId && sheetUrl && (
+              {currentProjectId && (
                 <Button
                   variant="ghost"
-                  size="icon"
-                  className="h-8 w-8"
+                  size="sm"
+                  className="h-8 gap-1.5"
                   onClick={handleQuickSync}
                   disabled={syncingNow}
-                  title="Sincronizar dados"
+                  title="Atualizar dados do dashboard"
                 >
                   <RefreshCw className={cn("w-4 h-4", syncingNow && "animate-spin")} />
+                  <span className="hidden sm:inline">Atualizar</span>
                 </Button>
               )}
               <Button
@@ -616,7 +626,12 @@ const Index = () => {
             {tab === "geral" ? (
               <OverviewPanel rows={filtered} previous={previous} onDayClick={setDrilldownRow} />
             ) : tab === "trafego" ? (
-              <TrafficPanel rows={filtered} />
+              <TrafficPanel
+                rows={filtered}
+                previous={previous}
+                projectId={currentProjectId}
+                dateRange={selectedDateRange}
+              />
             ) : tab === "funil" ? (
               <FunnelPanel rows={filtered} projectId={currentProjectId} dateRange={selectedDateRange} />
             ) : tab === "bumps" ? (
