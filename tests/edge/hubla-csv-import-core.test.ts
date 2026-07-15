@@ -116,6 +116,40 @@ describe("hubla csv import core", () => {
     expect(result.events[0].payload.items[1].price).toBeCloseTo(44.42);
   });
 
+  it("splits multiple Hubla order bumps stored in one cell", () => {
+    const csv = [
+      "ID da fatura;Tipo de fatura;Detalhamento da fatura;Status da fatura;Data de pagamento;Itens na fatura;Nome da oferta;ID do produto;Nome do produto;ID do produto de orderbump;Nome do produto de orderbump;Valor do produto;Valor total",
+      "fat-multi;Compra;Compra avulsa;Paga;15/07/2026 10:00;3;Oferta Front;front-1;Produto Front;ob-1, ob-2;Bump A, Bump B;197;241.42",
+    ].join("\n");
+
+    const result = parseHublaCsv(csv);
+
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0].payload.items).toHaveLength(3);
+    expect(result.events[0].payload.items).toEqual([
+      expect.objectContaining({ external_id: "front-1", is_bump: false, price: 197 }),
+      expect.objectContaining({ external_id: "ob-1", name: "Bump A", is_bump: true, count_as_sale: true }),
+      expect.objectContaining({ external_id: "ob-2", name: "Bump B", is_bump: true, count_as_sale: true }),
+    ]);
+    expect(result.events[0].payload.items[1].price).toBeCloseTo(22.21);
+    expect(result.events[0].payload.items[2].price).toBeCloseTo(22.21);
+  });
+
+  it("marks Hubla rows whose offer name contains upsell as funnel offers", () => {
+    const csv = [
+      "ID da fatura;Tipo de fatura;Detalhamento da fatura;Status da fatura;Data de pagamento;Itens na fatura;Nome da oferta;ID do produto;Nome do produto;Valor total",
+      "fat-upsell;Compra;Compra avulsa;Paga;15/07/2026 10:00;1;Acompanhamento - UPSELL PERPETUO;up-1;Acompanhamento Individual;780",
+    ].join("\n");
+
+    const result = parseHublaCsv(csv);
+
+    expect(result.events[0].payload).toMatchObject({
+      is_front: false,
+      is_offer_event: true,
+      items: [expect.objectContaining({ type: "upsell", is_bump: true, count_as_sale: true })],
+    });
+  });
+
   it("keeps Hubla liquid value below 100 as reais, not cents", () => {
     const csv = [
       "ID da fatura;Status da fatura;Data de pagamento;Valor total;Valor Líquido;Nome do produto",

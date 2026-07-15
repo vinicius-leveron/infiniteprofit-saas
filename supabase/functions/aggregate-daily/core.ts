@@ -179,7 +179,7 @@ export function aggregateOneDay(events: RawEvent[]) {
         const key = String(item.external_id ?? item.name ?? "");
         if (!key) continue;
         const price = num(item.price);
-        if (price <= 0) continue;
+        if (price <= 0 && item.count_as_sale !== true) continue;
         const itemDedupKey = `${key}:${price}`;
         if (itemSeen.has(itemDedupKey)) continue;
         itemSeen.add(itemDedupKey);
@@ -820,7 +820,7 @@ function realBumpItemsForGroup(group: RawEvent[], frontIdentity: ProductIdentity
     const items: any[] = Array.isArray(event.payload?.items) ? event.payload.items : [];
     for (const item of items) {
       if (!item?.is_bump) continue;
-      if (num(item?.price) <= 0) continue;
+      if (num(item?.price) <= 0 && item?.count_as_sale !== true) continue;
       if (isOfferEvent(event) && isDuplicateMainOffer(event, group, frontIdentity)) continue;
       result.add(item);
     }

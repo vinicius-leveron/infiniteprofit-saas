@@ -526,6 +526,7 @@ function normalizeHublaItems(invoice: Record<string, any>) {
       ]),
       type: isBump ? (itemType.includes("upsell") ? "upsell" : "orderbump") : "main",
       is_bump: isBump,
+      ...(itemRecord.count_as_sale === true ? { count_as_sale: true } : {}),
     };
   });
 }

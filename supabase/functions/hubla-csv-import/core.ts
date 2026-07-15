@@ -228,6 +228,15 @@ function parseMetricNumber(value: string) {
   return isNegative ? -parsed : parsed;
 }
 
+function splitHublaList(value: string) {
+  const text = String(value ?? "").trim();
+  if (!text) return [];
+  return text
+    .split(/\s*[,;\n]\s*/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function hasDailyMetricSignal(payload: Record<string, unknown>) {
   return [
     "investimento",
@@ -352,17 +361,38 @@ function rowToHublaRaw(headers: string[], row: string[], line: number): RowConve
   const refundedDate = get("data_de_reembolso", "data_reembolso", "refunded_at");
   const date = parseDate(type === "invoice.refunded" ? (refundedDate || paidDate || createdDate) : (paidDate || createdDate));
 
+  const offerName = get("nome_da_oferta", "oferta", "offer");
   const productName = get("nome_do_produto", "produto", "produto_nome", "product", "product_name", "nome_da_oferta", "oferta", "offer");
   const productId = get("id_do_produto", "produto_id", "product_id", "offer_id");
   const orderBumpProductId = get("id_do_produto_de_orderbump", "produto_orderbump_id", "orderbump_product_id", "bump_product_id");
   const orderBumpProductName = get("nome_do_produto_de_orderbump", "produto_orderbump", "orderbump_product_name", "bump_product_name");
   const itemType = get("tipo_de_fatura", "detalhamento_da_fatura", "tipo_produto", "tipo_oferta", "item_type", "offer_type", "tipo").toLowerCase();
-  const isBump = itemType.includes("bump") || itemType.includes("upsell") || itemType.includes("order");
-  const offerType = itemType.includes("upsell") ? "upsell" : "orderbump";
-  const hasOrderBump = Boolean(orderBumpProductId || orderBumpProductName);
+  const offerDescriptor = `${itemType} ${offerName}`.toLowerCase();
+  const isUpsellOffer = /upsell/.test(offerDescriptor);
+  const isBump = itemType.includes("bump") || itemType.includes("upsell") || itemType.includes("order") || isUpsellOffer;
+  const offerType = isUpsellOffer || itemType.includes("upsell") ? "upsell" : "orderbump";
+  const orderBumpIds = splitHublaList(orderBumpProductId);
+  const invoiceItemCount = parseMetricNumber(get("itens_na_fatura", "itens_fatura", "item_count", "items_count"));
+  const expectedBumpCount = invoiceItemCount != null ? Math.max(0, Math.round(invoiceItemCount) - 1) : 0;
+  const orderBumpNames = orderBumpIds.length > 1 || expectedBumpCount > 1 || !orderBumpIds.length && /[,;\n]/.test(orderBumpProductName)
+    ? splitHublaList(orderBumpProductName)
+    : orderBumpProductName.trim()
+    ? [orderBumpProductName.trim()]
+    : [];
+  const hasOrderBump = orderBumpIds.length > 0 || orderBumpNames.length > 0;
+  const bumpCount = hasOrderBump ? Math.max(orderBumpIds.length, orderBumpNames.length, expectedBumpCount) : 0;
   const mainItemIsOffer = isBump && !hasOrderBump;
   const mainItemPrice = hasOrderBump && productTotal > 0 ? productTotal : total;
-  const orderBumpPrice = hasOrderBump && productTotal > 0 ? Math.max(0, total - productTotal) : 0;
+  const orderBumpRevenue = hasOrderBump && productTotal > 0 ? Math.max(0, total - productTotal) : 0;
+  const orderBumpPrice = bumpCount > 0 ? orderBumpRevenue / bumpCount : 0;
+  const orderBumpItems = Array.from({ length: bumpCount }, (_, index) => ({
+    id: orderBumpIds[index] || `${transaction}-orderbump-${index + 1}`,
+    name: orderBumpNames[index] || orderBumpIds[index] || `Order bump ${index + 1}`,
+    price: orderBumpPrice,
+    type: offerType,
+    is_bump: true,
+    count_as_sale: true,
+  }));
   const items = [
     ...(productName || productId
       ? [{
@@ -371,17 +401,10 @@ function rowToHublaRaw(headers: string[], row: string[], line: number): RowConve
         price: mainItemPrice,
         type: mainItemIsOffer ? offerType : "main",
         is_bump: mainItemIsOffer,
+        ...(mainItemIsOffer ? { count_as_sale: true } : {}),
       }]
       : []),
-    ...(hasOrderBump
-      ? [{
-        id: orderBumpProductId || `${transaction}-orderbump`,
-        name: orderBumpProductName || orderBumpProductId || "Order bump",
-        price: orderBumpPrice,
-        type: offerType,
-        is_bump: true,
-      }]
-      : []),
+    ...orderBumpItems,
   ];
 
   return {
@@ -400,6 +423,7 @@ function rowToHublaRaw(headers: string[], row: string[], line: number): RowConve
           paid_at: date,
           created_at: date,
           is_offer: mainItemIsOffer,
+          is_upsell: mainItemIsOffer && offerType === "upsell",
           items,
           metadata: {
             utm_source: get("utm_origem", "utm_source", "source"),

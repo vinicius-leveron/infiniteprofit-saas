@@ -180,6 +180,35 @@ describe("aggregate daily core", () => {
     ]);
   });
 
+  it("counts explicit zero-price Hubla bumps as sales without inventing revenue", () => {
+    const metrics = aggregateOneDay([
+      {
+        source: "gateway",
+        event_type: "purchase.approved",
+        external_id: "tx-free-bumps",
+        payload: {
+          transaction_id: "tx-free-bumps",
+          total: 197,
+          net: 180,
+          is_front: true,
+          items: [
+            { external_id: "front", name: "Front", price: 197, type: "main", is_bump: false },
+            { external_id: "ob-1", name: "Bump 1", price: 0, type: "orderbump", is_bump: true, count_as_sale: true },
+            { external_id: "ob-2", name: "Bump 2", price: 0, type: "orderbump", is_bump: true, count_as_sale: true },
+          ],
+        },
+      },
+    ]);
+
+    expect(metrics.vendas_front).toBe(1);
+    expect(metrics.vendas_totais).toBe(3);
+    expect(metrics.fat_orderbump).toBeNull();
+    expect(metrics.bumps).toEqual([
+      expect.objectContaining({ name: "Bump 1", count: 1, revenue: 0 }),
+      expect.objectContaining({ name: "Bump 2", count: 1, revenue: 0 }),
+    ]);
+  });
+
   it("uses the offer-suffix base id to deduplicate legacy rows without losing bump sales", () => {
     const metrics = aggregateOneDay([
       {
