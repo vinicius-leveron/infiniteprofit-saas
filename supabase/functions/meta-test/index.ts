@@ -42,8 +42,19 @@ Deno.serve(async (req) => {
       });
       await assertWorkspaceAdmin(sb, workspaceId, caller.userId);
 
-      const accounts = await listAccessibleAdAccounts(directToken);
-      return json({ ok: true, accounts });
+      try {
+        const accounts = await listAccessibleAdAccounts(directToken);
+        return json({ ok: true, accounts });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Falha ao buscar contas Meta";
+        console.warn("[meta-test] Meta account discovery failed", {
+          workspaceId,
+          message,
+        });
+        // Graph validation errors are an expected response to the discovery form.
+        // Keep HTTP 200 so the client receives the useful Meta error instead of a generic FunctionsHttpError.
+        return json({ ok: false, error: message, code: "META_DISCOVERY_FAILED" });
+      }
     }
 
     let accountId = directAccountId;

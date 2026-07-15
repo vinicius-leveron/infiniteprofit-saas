@@ -134,8 +134,42 @@ describe("SetupOperation Meta step", () => {
       expect(screen.getByText("1 de 2 selecionada(s)")).toBeInTheDocument();
     });
 
+    fireEvent.click(screen.getByRole("button", { name: "Buscar contas" }));
+    await waitFor(() => {
+      expect(screen.getByText("1 de 2 selecionada(s)")).toBeInTheDocument();
+    });
+
+    fireEvent.change(tokenInput, { target: { value: "token-alterado" } });
+    expect(screen.getByText("Conta Gamma")).toBeInTheDocument();
+    expect(screen.getByText("1 de 2 selecionada(s)")).toBeInTheDocument();
+    expect(screen.getByText(/suas contas continuam marcadas/i)).toBeInTheDocument();
+
     fireEvent.click(screen.getByRole("button", { name: "Revisão" }));
     expect(screen.getByText("3 conta(s) selecionada(s)")).toBeInTheDocument();
+  });
+
+  it("keeps the accounts selected when a new Meta discovery attempt fails", async () => {
+    render(
+      <MemoryRouter initialEntries={["/setup-operation"]}>
+        <SetupOperation />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Meta" }));
+    fireEvent.change(screen.getByLabelText("Access token Meta"), { target: { value: "token-unico" } });
+    fireEvent.click(screen.getByRole("button", { name: "Buscar contas" }));
+    fireEvent.click(await screen.findByText("Conta Gamma"));
+    expect(await screen.findByText("1 de 2 selecionada(s)")).toBeInTheDocument();
+
+    invokeMock.mockResolvedValueOnce({
+      data: { ok: false, error: "The access token could not be decrypted" },
+      error: null,
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Buscar contas" }));
+
+    expect(await screen.findByText(/a meta não aceitou este token/i)).toBeInTheDocument();
+    expect(screen.getByText("Conta Gamma")).toBeInTheDocument();
+    expect(screen.getByText("1 de 2 selecionada(s)")).toBeInTheDocument();
   });
 
   it("migrates the previous single-account draft without losing its credentials", async () => {

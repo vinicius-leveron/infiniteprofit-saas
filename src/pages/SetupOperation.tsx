@@ -82,6 +82,7 @@ export default function SetupOperation() {
   const [metaToken, setMetaToken] = useState("");
   const [discoveredMetaAccounts, setDiscoveredMetaAccounts] = useState<DiscoveredMetaAccount[]>([]);
   const [selectedDiscoveredMetaIds, setSelectedDiscoveredMetaIds] = useState<string[]>([]);
+  const [discoveredMetaToken, setDiscoveredMetaToken] = useState("");
   const [discoveringMetaAccounts, setDiscoveringMetaAccounts] = useState(false);
   const [metaDiscoveryError, setMetaDiscoveryError] = useState<string | null>(null);
   const [vturbKey, setVturbKey] = useState("");
@@ -111,6 +112,8 @@ export default function SetupOperation() {
   const selectedDiscoveredMetaAccounts = discoveredMetaAccounts.filter((account) =>
     selectedDiscoveredMetaIds.includes(account.accountId)
   );
+  const metaDiscoveryIsStale =
+    discoveredMetaAccounts.length > 0 && discoveredMetaToken !== metaToken.trim();
   const selectedMetaAccountKeys = selectedExistingMetaAccounts.map((account) => existingMetaTestKey(account.id));
   const metaAccountCount = new Set([
     ...selectedExistingMetaAccounts.map((account) => normalizeAccountId(account.account_id)),
@@ -168,8 +171,7 @@ export default function SetupOperation() {
 
   function updateMetaToken(value: string) {
     setMetaToken(value);
-    setDiscoveredMetaAccounts([]);
-    setSelectedDiscoveredMetaIds([]);
+    if (value.trim() !== discoveredMetaToken) setDiscoveredMetaToken("");
     setMetaDiscoveryError(null);
   }
 
@@ -201,7 +203,8 @@ export default function SetupOperation() {
   }
 
   async function discoverMetaAccounts() {
-    if (!currentWorkspace?.id || !metaToken.trim()) return;
+    const token = metaToken.trim();
+    if (!currentWorkspace?.id || !token) return;
     setDiscoveringMetaAccounts(true);
     setMetaDiscoveryError(null);
     try {
@@ -209,25 +212,26 @@ export default function SetupOperation() {
         body: {
           action: "list_accounts",
           workspace_id: currentWorkspace.id,
-          access_token: metaToken.trim(),
+          access_token: token,
         },
       });
       const payload = data && typeof data === "object"
         ? data as { accounts?: unknown; error?: unknown }
         : {};
-      const errorMessage = typeof payload.error === "string" ? payload.error : error?.message;
+      const errorMessage = await metaInvokeErrorMessage(payload.error, error);
       if (errorMessage) throw new Error(errorMessage);
 
       const accounts = parseDiscoveredMetaAccounts(payload.accounts);
       setDiscoveredMetaAccounts(accounts);
-      setSelectedDiscoveredMetaIds([]);
+      setDiscoveredMetaToken(token);
+      const availableIds = new Set(accounts.map((account) => account.accountId));
+      setSelectedDiscoveredMetaIds((current) => current.filter((id) => availableIds.has(id)));
       if (accounts.length === 0) {
         setMetaDiscoveryError("Nenhuma conta de anúncios foi encontrada para este token.");
       }
     } catch (error) {
-      setDiscoveredMetaAccounts([]);
-      setSelectedDiscoveredMetaIds([]);
-      setMetaDiscoveryError(error instanceof Error ? error.message : "Erro ao buscar contas Meta");
+      const message = error instanceof Error ? error.message : "Erro ao buscar contas Meta";
+      setMetaDiscoveryError(humanizeMetaDiscoveryError(message));
     } finally {
       setDiscoveringMetaAccounts(false);
     }
@@ -270,6 +274,7 @@ export default function SetupOperation() {
     setMetaToken(draft.metaToken);
     setDiscoveredMetaAccounts(draft.discoveredMetaAccounts);
     setSelectedDiscoveredMetaIds(draft.selectedDiscoveredMetaIds);
+    setDiscoveredMetaToken(draft.discoveredMetaAccounts.length > 0 ? draft.metaToken.trim() : "");
     setVturbKey(draft.vturbKey);
     setPlayersText(draft.playersText);
     setHublaSecret(draft.hublaSecret);
@@ -321,6 +326,11 @@ export default function SetupOperation() {
     if (selectedDiscoveredMetaAccounts.length > 0 && !metaToken.trim()) {
       setStep("meta");
       toast.error("Informe o token Meta para salvar as contas selecionadas.");
+      return;
+    }
+    if (selectedDiscoveredMetaAccounts.length > 0 && metaDiscoveryIsStale) {
+      setStep("meta");
+      toast.error("Busque as contas novamente após alterar o token Meta.");
       return;
     }
 
@@ -613,6 +623,11 @@ export default function SetupOperation() {
               </div>
 
               {metaDiscoveryError && <p className="text-xs text-red-600">{metaDiscoveryError}</p>}
+              {metaDiscoveryIsStale && (
+                <p className="text-xs text-amber-600">
+                  O token foi alterado. Suas contas continuam marcadas; busque novamente para validar o novo token.
+                </p>
+              )}
 
               {discoveredMetaAccounts.length > 0 && (
                 <div className="rounded-lg border border-border/50 bg-muted/10 p-3 space-y-3">
@@ -650,8 +665,11 @@ export default function SetupOperation() {
                         <div className="min-w-0">
                           <div className="truncate text-sm font-medium">{account.name || account.accountId}</div>
                           <div className="break-all font-mono text-xs text-muted-foreground">{account.accountId}</div>
-                          <div className="mt-1 text-[11px] text-green-600">
-                            Acesso confirmado
+                          <div className={cn(
+                            "mt-1 text-[11px]",
+                            metaDiscoveryIsStale ? "text-amber-600" : "text-green-600",
+                          )}>
+                            {metaDiscoveryIsStale ? "Aguardando validação do novo token" : "Acesso confirmado"}
                             {account.currency ? ` · ${account.currency}` : ""}
                             {account.timezone ? ` · ${account.timezone}` : ""}
                           </div>
@@ -1030,6 +1048,42 @@ function readStringArray(value: unknown) {
   return Array.isArray(value)
     ? [...new Set(value.filter((entry): entry is string => typeof entry === "string" && Boolean(entry.trim())))]
     : [];
+}
+
+async function metaInvokeErrorMessage(payloadError: unknown, invokeError: unknown) {
+  if (typeof payloadError === "string" && payloadError.trim()) return payloadError.trim();
+
+  const context = invokeError && typeof invokeError === "object"
+    ? (invokeError as { context?: unknown }).context
+    : null;
+  if (typeof Response !== "undefined" && context instanceof Response) {
+    try {
+      const body = await context.clone().json() as { error?: unknown };
+      if (typeof body.error === "string" && body.error.trim()) return body.error.trim();
+    } catch {
+      // The generic invoke error below is still preferable to hiding the failure.
+    }
+  }
+
+  return invokeError instanceof Error && invokeError.message.trim()
+    ? invokeError.message.trim()
+    : null;
+}
+
+function humanizeMetaDiscoveryError(message: string) {
+  const normalized = message.toLowerCase();
+  if (
+    normalized.includes("access token") ||
+    normalized.includes("oauth") ||
+    normalized.includes("session has expired") ||
+    normalized.includes("token de acesso")
+  ) {
+    return "A Meta não aceitou este token. Confirme se ele está válido e possui a permissão ads_read.";
+  }
+  if (normalized.includes("unauthorized") || normalized.includes("jwt")) {
+    return "Sua sessão expirou. Entre novamente antes de buscar as contas Meta.";
+  }
+  return message;
 }
 
 function isStepId(value: unknown): value is StepId {
