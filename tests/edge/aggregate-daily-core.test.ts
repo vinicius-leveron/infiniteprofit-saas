@@ -241,6 +241,91 @@ describe("aggregate daily core", () => {
     expect(metrics.roi).toBeCloseTo(2.6755);
   });
 
+  it("rebuilds historical Hubla net before coproduction from receiver roles", () => {
+    const metrics = aggregateOneDay([
+      {
+        source: "gateway",
+        event_type: "purchase.approved",
+        external_id: "tx-coproduction",
+        payload: {
+          total: 100,
+          net: 40.5,
+          is_front: true,
+          raw_payload: {
+            event: {
+              invoice: {
+                receivers: [
+                  { role: "seller", totalCents: 4050 },
+                  { role: "partner", totalCents: 4950 },
+                  { role: "platform", totalCents: 1000 },
+                ],
+              },
+            },
+          },
+        },
+      },
+    ]);
+
+    expect(metrics.fat_bruto).toBeCloseTo(100);
+    expect(metrics.fat_liquido).toBeCloseTo(90);
+  });
+
+  it("rebuilds consolidated net from gross minus Hubla platform receiver", () => {
+    const metrics = aggregateOneDay([
+      {
+        source: "gateway",
+        event_type: "purchase.approved",
+        external_id: "tx-coproduction-owner-only",
+        payload: {
+          total: 100,
+          net: 40.5,
+          is_front: true,
+          raw_payload: {
+            event: {
+              invoice: {
+                receivers: [
+                  { role: "platform", totalCents: 1000 },
+                  { role: "seller", totalCents: 4050 },
+                ],
+              },
+            },
+          },
+        },
+      },
+    ]);
+
+    expect(metrics.fat_bruto).toBeCloseTo(100);
+    expect(metrics.fat_liquido).toBeCloseTo(90);
+  });
+
+  it("deduplicates refunds and divides the rate by approved front sales", () => {
+    const approved = Array.from({ length: 4 }, (_, index) => ({
+      source: "gateway",
+      event_type: "purchase.approved",
+      external_id: `approved-${index}`,
+      payload: { transaction_id: `approved-${index}`, total: 100, net: 90, is_front: true },
+    }));
+    const metrics = aggregateOneDay([
+      ...approved,
+      {
+        source: "gateway",
+        event_type: "purchase.refunded",
+        external_id: "refund-1",
+        payload: { transaction_id: "refund-1", total: 100, net: 90 },
+      },
+      {
+        source: "gateway",
+        event_type: "purchase.refunded",
+        external_id: "refund-1-offer-1",
+        payload: { transaction_id: "refund-1", total: 100, net: 90 },
+      },
+    ]);
+
+    expect(metrics.reembolsos).toBe(1);
+    expect(metrics.valor_reembolsado).toBeCloseTo(100);
+    expect(metrics.taxa_reembolso).toBeCloseTo(25);
+  });
+
   it("deduplicates payment approval attempts by method using checkout_created and approved events", () => {
     const metrics = aggregateOneDay([
       {

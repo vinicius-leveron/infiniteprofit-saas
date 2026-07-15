@@ -168,7 +168,41 @@ describe("creative sync core", () => {
     });
   });
 
-  it("falls back to inferred transcript when media analysis is unavailable", () => {
+  it("keeps a late refund linked when only the approved event has UTM", () => {
+    const rows = buildCreativeDailyMetrics({
+      metaRows: [],
+      gatewayRows: [
+        {
+          event_date: "2026-06-01",
+          event_type: "purchase.approved",
+          payload: { utm_content: "ad-late-refund", transaction_id: "tx-late", total: 200 },
+        },
+        {
+          event_date: "2026-06-10",
+          event_type: "purchase.refunded",
+          payload: { transaction_id: "tx-late", refund_amount: 200 },
+        },
+        {
+          event_date: "2026-06-10",
+          event_type: "purchase.refunded",
+          payload: { transaction_id: "tx-late", refund_amount: 200 },
+        },
+      ],
+      assetIdByAdId: new Map([["ad-late-refund", "asset-late-refund"]]),
+      mediaTypeByAssetId: new Map([["asset-late-refund", "video"]]),
+    });
+
+    expect(rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        asset_id: "asset-late-refund",
+        event_date: "2026-06-10",
+        refunds: 1,
+        refund_value: 200,
+      }),
+    ]));
+  });
+
+  it("does not present ad metadata as inferred AI analysis", () => {
     const fallback = buildCreativeAnalysisFallback({
       mediaType: "video",
       transcriptStatus: "pending",
@@ -179,7 +213,10 @@ describe("creative sync core", () => {
 
     expect(fallback.status).toBe("pending");
     expect(fallback.transcript).toBeNull();
-    expect(fallback.summary).toContain("Headline");
+    expect(fallback.summary).toBe("Criativo aguardando processamento.");
+    expect(fallback.hook).toBeNull();
+    expect(fallback.angle).toBeNull();
+    expect(fallback.copy).toBe("Texto");
     expect(fallback.analysisCoverage).toBe("pending");
   });
 });

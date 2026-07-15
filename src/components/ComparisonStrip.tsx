@@ -96,7 +96,6 @@ interface ProductPeriodMetrics {
   type: "orderbump" | "upsell";
   sales: number;
   revenue: number;
-  ticket: number | null;
   conversion: number | null;
 }
 
@@ -159,7 +158,7 @@ function bumpTotals(rows: DailyRow[]) {
 }
 
 function productTotals(rows: DailyRow[]) {
-  const products = new Map<string, Omit<ProductPeriodMetrics, "ticket" | "conversion">>();
+  const products = new Map<string, Omit<ProductPeriodMetrics, "conversion">>();
   const frontSales = rows.reduce((sum, row) => sum + (row.vendasFront ?? 0), 0);
 
   for (const row of rows) {
@@ -180,7 +179,6 @@ function productTotals(rows: DailyRow[]) {
   return new Map(
     [...products.entries()].map(([key, product]) => [key, {
       ...product,
-      ticket: product.sales > 0 ? product.revenue / product.sales : null,
       conversion: frontSales > 0 ? (product.sales / frontSales) * 100 : null,
     }]),
   );
@@ -225,6 +223,7 @@ export const ComparisonStrip = ({ current, previous }: Props) => {
         { label: "Faturamento Líquido", cur: c.fatLiquido, prev: p.fatLiquido, format: "brl" },
         { label: "Lucro", cur: c.lucro, prev: p.lucro, format: "brl" },
         { label: "ROI", cur: c.roi, prev: p.roi, format: "mult" },
+        { label: "ROAS", cur: c.roas, prev: p.roas, format: "mult" },
         { label: "Vendas Totais", cur: c.vendasTotais, prev: p.vendasTotais, format: "num" },
         { label: "Vendas Front", cur: c.vendasFront, prev: p.vendasFront, format: "num" },
         { label: "CAC", cur: c.cac, prev: p.cac, format: "brl", inverse: true },
@@ -233,6 +232,7 @@ export const ComparisonStrip = ({ current, previous }: Props) => {
         { label: "Aprov. Pix", cur: c.avgAprovPix, prev: p.avgAprovPix, format: "pct" },
         { label: "Reembolsos", cur: c.reembolsos, prev: p.reembolsos, format: "num", inverse: true },
         { label: "Taxa de Reembolso", cur: c.taxaReembolso, prev: p.taxaReembolso, format: "pct", inverse: true },
+        { label: "Valor Reembolsado", cur: c.valorReembolsado, prev: p.valorReembolsado, format: "brl", inverse: true },
       ],
     },
     {
@@ -315,13 +315,12 @@ function ProductComparisonTable({ products }: { products: ProductComparison[] })
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-border/60">
-        <table className="w-full min-w-[760px] text-sm">
+        <table className="w-full min-w-[680px] text-sm">
           <thead className="bg-secondary/50 text-[10px] uppercase tracking-wider text-muted-foreground">
             <tr>
               <th className="px-3 py-2.5 text-left font-medium">Produto</th>
               <th className="px-3 py-2.5 text-right font-medium">Vendas</th>
               <th className="px-3 py-2.5 text-right font-medium">Receita</th>
-              <th className="px-3 py-2.5 text-right font-medium">Ticket</th>
               <th className="px-3 py-2.5 text-right font-medium">Conversão</th>
               <th className="px-3 py-2.5 text-right font-medium">Δ Receita</th>
             </tr>
@@ -342,7 +341,6 @@ function ProductComparisonTable({ products }: { products: ProductComparison[] })
                 </td>
                 <ProductValue current={product.current?.sales} previous={product.previous?.sales} format="num" />
                 <ProductValue current={product.current?.revenue} previous={product.previous?.revenue} format="brl" />
-                <ProductValue current={product.current?.ticket} previous={product.previous?.ticket} format="brl" />
                 <ProductValue current={product.current?.conversion} previous={product.previous?.conversion} format="pct" />
                 <td className="px-3 py-3 text-right">
                   <Delta cur={product.current?.revenue ?? null} prev={product.previous?.revenue ?? null} />

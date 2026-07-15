@@ -211,9 +211,9 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   const [groupToDelete, setGroupToDelete] = useState<CreativeGroupRow | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (showPageLoader = true) => {
     if (!projectId) return;
-    setLoading(true);
+    if (showPageLoader) setLoading(true);
     try {
       let metricsQuery = supabase
         .from("creative_asset_daily_metrics" as never)
@@ -301,7 +301,7 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Erro ao carregar criativos");
     } finally {
-      setLoading(false);
+      if (showPageLoader) setLoading(false);
     }
   }, [dateRange?.from, dateRange?.to, projectId]);
 
@@ -338,7 +338,7 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
         throw new Error((vturbResponse.data as { error: string }).error);
       }
       toast.success("Criativos sincronizados");
-      await load();
+      await load(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Erro ao sincronizar criativos");
     } finally {
@@ -372,7 +372,7 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
           ? "Transcrição e análise enfileiradas"
           : "Análise enfileirada",
       );
-      await load();
+      await load(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Erro ao enfileirar análise");
     } finally {
@@ -504,7 +504,17 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
   const filteredCards = useMemo(() => {
     const base = applyCreativeFilters(cards, { search, rules: composedRules });
     const activityScoped = activityFilter === "active"
-      ? base.filter((card) => card.spend > 0 || card.purchases > 0 || card.impressions > 0)
+      ? base.filter((card) =>
+        // A creative is active when it had any source event in the selected
+        // range.  Relying only on spend/purchases hides creatives that only
+        // received a refund, a zero-spend impression row, or gateway data.
+        card.hasMetaData
+        || card.hasGatewayData
+        || card.spend > 0
+        || card.purchases > 0
+        || card.impressions > 0
+        || card.refunds > 0,
+      )
       : base;
     if (activeFixedGroup === "best-hooks") {
       return activityScoped.filter((card) => (card.hookRate ?? 0) > 0);
@@ -1097,7 +1107,7 @@ function CreativeCard({
   return (
     <article
       className={cn(
-        "group relative overflow-hidden rounded-2xl border transition-all duration-300",
+        "group relative min-w-0 overflow-hidden rounded-2xl border transition-all duration-300",
         expanded
           ? "border-violet-500/30 bg-gradient-to-b from-card to-card/80 shadow-xl shadow-violet-500/5"
           : "border-border/40 bg-card/90 hover:border-border/60 hover:shadow-lg hover:shadow-black/20",
@@ -1187,7 +1197,7 @@ function CreativeCard({
         )}
 
         {/* Source Metadata */}
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex min-w-0 flex-wrap gap-1.5">
           {card.cta && <InfoPill label="CTA" value={card.cta} />}
           {card.firstAdCreatedAt && (
             <InfoPill label="Criado" value={format(new Date(card.firstAdCreatedAt), "dd/MM/yyyy", { locale: ptBR })} />
@@ -1200,43 +1210,50 @@ function CreativeCard({
               href={card.landingUrl}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-lg border border-border/40 bg-muted/30 px-2 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:border-border hover:text-foreground"
+              className="inline-flex min-w-0 max-w-full basis-full items-center gap-1 rounded-lg border border-border/40 bg-muted/30 px-2 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:border-border hover:text-foreground"
             >
               <ExternalLink className="w-3 h-3 shrink-0" />
               <span className="truncate">{landingLabel}</span>
             </a>
           )}
-          {card.facebookPostUrl && (
-            <a
-              href={card.facebookPostUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-lg border border-border/40 bg-muted/30 px-2 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:border-border hover:text-foreground"
-            >
-              <ExternalLink className="w-3 h-3 shrink-0" />
-              <span className="truncate">{facebookLabel}</span>
-            </a>
-          )}
-          {card.instagramPostUrl && card.instagramPostUrl !== card.facebookPostUrl && (
-            <a
-              href={card.instagramPostUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-lg border border-border/40 bg-muted/30 px-2 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:border-border hover:text-foreground"
-            >
-              <ExternalLink className="w-3 h-3 shrink-0" />
-              <span className="truncate">{instagramLabel}</span>
-            </a>
+          {(card.facebookPostUrl || card.instagramPostUrl) && (
+            <div className="flex min-w-0 basis-full flex-col gap-1.5">
+              {card.facebookPostUrl && (
+                <a
+                  href={card.facebookPostUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label={`Facebook: ${facebookLabel}`}
+                  className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-lg border border-border/40 bg-muted/30 px-2 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:border-border hover:text-foreground"
+                >
+                  <ExternalLink className="w-3 h-3 shrink-0" />
+                  <span className="truncate">{facebookLabel}</span>
+                </a>
+              )}
+              {card.instagramPostUrl && card.instagramPostUrl !== card.facebookPostUrl && (
+                <a
+                  href={card.instagramPostUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label={`Instagram: ${instagramLabel}`}
+                  className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-lg border border-border/40 bg-muted/30 px-2 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:border-border hover:text-foreground"
+                >
+                  <ExternalLink className="w-3 h-3 shrink-0" />
+                  <span className="truncate">{instagramLabel}</span>
+                </a>
+              )}
+            </div>
           )}
           {card.sourceMediaUrl && (
             <a
               href={card.sourceMediaUrl}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1 rounded-lg border border-border/40 bg-muted/30 px-2 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:border-border hover:text-foreground"
+              aria-label={card.mediaType === "video" ? "Ver vídeo" : "Ver mídia"}
+              className="inline-flex min-w-0 max-w-full basis-full items-center gap-1 rounded-lg border border-border/40 bg-muted/30 px-2 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:border-border hover:text-foreground"
             >
               <ExternalLink className="w-3 h-3" />
-              Mídia
+              {card.mediaType === "video" ? "Ver vídeo" : "Ver mídia"}
             </a>
           )}
         </div>
@@ -1261,10 +1278,16 @@ function CreativeCard({
           />
           <MetricTile
             label="Reembolsos"
-            value={`${fNum(card.refunds)} · ${fBRL(card.refundValue)}`}
-            detail={card.refundRate != null ? `${fPct(card.refundRate, 1)} das vendas` : undefined}
+            value={fNum(card.refunds)}
+            detail={card.refundRate != null ? `${fPct(card.refundRate, 1)} das vendas` : "Taxa indisponível"}
             accent="amber"
             highlight={card.refunds > 0}
+          />
+          <MetricTile
+            label="Valor reembolsado"
+            value={fBRL(card.refundValue)}
+            accent="amber"
+            highlight={card.refundValue > 0}
           />
           {showAdditionalMetrics && (
             <>
@@ -1393,9 +1416,9 @@ function CreativeCard({
 
               <TabsContent value="summary" className="mt-4 space-y-3">
                 <div className="grid gap-2 sm:grid-cols-3">
-                  <MetricTile label="Hook Score" value={card.scores.hook != null ? `${Math.round(card.scores.hook)}` : "—"} accent="violet" highlight={(card.scores.hook ?? 0) >= 75} />
-                  <MetricTile label="Clareza" value={card.scores.clareza != null ? `${Math.round(card.scores.clareza)}` : "—"} accent="default" />
-                  <MetricTile label="Escala" value={card.scores.potencial_de_escala != null ? `${Math.round(card.scores.potencial_de_escala)}` : "—"} accent="emerald" highlight={(card.scores.potencial_de_escala ?? 0) >= 75} />
+                  <MetricTile label="Hook Score" value={card.scores.hook != null ? `${Math.round(card.scores.hook)}` : "—"} detail="Força dos 3s iniciais" accent="violet" highlight={(card.scores.hook ?? 0) >= 75} />
+                  <MetricTile label="Clareza" value={card.scores.clareza != null ? `${Math.round(card.scores.clareza)}` : "—"} detail="Promessa, oferta e CTA" accent="default" />
+                  <MetricTile label="Escala" value={card.scores.potencial_de_escala != null ? `${Math.round(card.scores.potencial_de_escala)}` : "—"} detail="Apelo amplo e replicável" accent="emerald" highlight={(card.scores.potencial_de_escala ?? 0) >= 75} />
                 </div>
 
                 {/* Analysis Grid */}
@@ -1403,7 +1426,7 @@ function CreativeCard({
                   <AnalysisBlock title="Resumo" text={card.summary} icon={<Sparkles className="w-3 h-3" />} />
                   <AnalysisBlock title="Hook" text={card.hook} icon={<Zap className="w-3 h-3" />} accent="amber" />
                   <AnalysisBlock title="Ângulo" text={card.angle} icon={<TrendingUp className="w-3 h-3" />} />
-                  <AnalysisBlock title="Copy" text={card.copy} icon={<Filter className="w-3 h-3" />} />
+                  <AnalysisBlock title="Legenda" text={card.primaryText ?? card.copy} icon={<Filter className="w-3 h-3" />} />
                 </div>
 
                 {/* CTA & Visual */}
@@ -1762,6 +1785,7 @@ function MediaBadge({ mediaType, href }: { mediaType: CreativeMediaType; href: s
         href={href}
         target="_blank"
         rel="noreferrer"
+        aria-label={mediaType === "video" ? "Abrir vídeo" : `Abrir ${labelForMediaType(mediaType).toLowerCase()}`}
         className="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-black/50 px-2 py-1 text-[10px] font-medium text-white/90 backdrop-blur-md transition-colors hover:bg-black/70"
       >
         {content}
@@ -1877,32 +1901,95 @@ function buildCreativeVturbMetrics(
   cards: CreativeAssetCard[],
   events: Array<{ payload: RawVturbPayload | null }>,
 ) {
-  const metricsByAdId = new Map<string, { pageviews: number; plays: number; pitchReached: number }>();
+  type VturbMetricAccumulator = {
+    pageviews: number;
+    plays: number;
+    pitchReached: number;
+    directPlayRate: number;
+    directPlayRateWeight: number;
+    directPitchRetention: number;
+    directPitchRetentionWeight: number;
+  };
+
+  const metricsByAttribution = new Map<string, VturbMetricAccumulator>();
 
   for (const event of events) {
-    const payload = event.payload ?? {};
-    const attributionKey = String(payload.utm_content ?? payload.grouped_field ?? "").trim();
-    if (!attributionKey) continue;
-    const current = metricsByAdId.get(attributionKey) ?? { pageviews: 0, plays: 0, pitchReached: 0 };
-    current.pageviews += firstPositiveMetric(
+    const payload = (event.payload ?? {}) as RawVturbPayload & Record<string, unknown>;
+    // VTurb has returned both `utm_content` and `grouped_field` over time,
+    // while some accounts expose the same value under a nested UTM object.
+    // Keep every non-empty attribution key so a renamed API field does not
+    // silently make Play Rate/Retenção show as em dashes.
+    const topLevelAttribution = payload.utm_content
+      ?? payload.grouped_field
+      ?? payload.ad_id
+      ?? payload.content;
+    const nestedUtm = asObject(payload.utm);
+    const attributionKeys = [String(
+      topLevelAttribution
+      ?? nestedUtm.content
+      ?? nestedUtm.utm_content
+      ?? "",
+    ).trim()].filter(Boolean);
+    if (attributionKeys.length === 0) continue;
+
+    const pageviews = firstPositiveMetric(
       payload.total_viewed_session_uniq,
       payload.total_viewed_device_uniq,
+      payload.total_viewed,
       payload.pageviews,
       payload.page_views,
+      payload.page_views_count,
       payload.landing_page_views,
+      payload.visits,
+      payload.visitors,
     );
-    current.plays += firstPositiveMetric(
+    const plays = firstPositiveMetric(
       payload.total_started_session_uniq,
       payload.total_started_device_uniq,
+      payload.total_started,
       payload.plays,
       payload.play,
       payload.total_plays,
+      payload.started,
+      payload.video_starts,
+      payload.video_started,
+      // Older traffic-origin responses called starts `views`/`sessions`.
       payload.views,
       payload.sessions,
       payload.unique_views,
     );
-    current.pitchReached += metricNumber(payload.total_over_pitch ?? payload.pitch_reached ?? payload.conversions);
-    metricsByAdId.set(attributionKey, current);
+    const pitchReached = firstPositiveMetric(
+      payload.total_over_pitch,
+      payload.pitch_reached,
+      payload.reached_pitch,
+      payload.sales_page_viewers,
+      payload.pitch,
+      payload.conversions,
+    );
+    const directPlayRate = normalizeRate(
+      payload.play_rate ?? payload.playRate ?? payload.playrate,
+    );
+    const directPitchRetention = normalizeRate(
+      payload.ret_pitch ?? payload.pitch_retention ?? payload.pitchRetention ?? payload.retention_pitch,
+    );
+    const directRateWeight = pageviews || plays || 1;
+    const directPitchWeight = plays || pageviews || 1;
+
+    for (const attributionKey of attributionKeys) {
+      const current = metricsByAttribution.get(attributionKey) ?? createVturbMetricAccumulator();
+      current.pageviews += pageviews;
+      current.plays += plays;
+      current.pitchReached += pitchReached;
+      if (directPlayRate != null) {
+        current.directPlayRate += directPlayRate * directRateWeight;
+        current.directPlayRateWeight += directRateWeight;
+      }
+      if (directPitchRetention != null) {
+        current.directPitchRetention += directPitchRetention * directPitchWeight;
+        current.directPitchRetentionWeight += directPitchWeight;
+      }
+      metricsByAttribution.set(attributionKey, current);
+    }
   }
 
   const result = new Map<string, CreativeVturbMetrics>();
@@ -1913,23 +2000,69 @@ function buildCreativeVturbMetrics(
     let pitchReached = 0;
 
     const attributionTerms = [...card.adIds, ...card.adNames]
-      .map((value) => value.trim().toLowerCase())
+      .map((value) => normalizeAttributionToken(value))
       .filter((value) => value.length >= 3);
-    for (const [content, metrics] of metricsByAdId) {
-      const normalizedContent = content.toLowerCase();
+    let directPlayRate = 0;
+    let directPlayRateWeight = 0;
+    let directPitchRetention = 0;
+    let directPitchRetentionWeight = 0;
+    for (const [content, metrics] of metricsByAttribution) {
+      const normalizedContent = normalizeAttributionToken(content);
       if (!attributionTerms.some((term) => normalizedContent === term || normalizedContent.includes(term))) continue;
       pageviews += metrics.pageviews;
       plays += metrics.plays;
       pitchReached += metrics.pitchReached;
+      directPlayRate += metrics.directPlayRate;
+      directPlayRateWeight += metrics.directPlayRateWeight;
+      directPitchRetention += metrics.directPitchRetention;
+      directPitchRetentionWeight += metrics.directPitchRetentionWeight;
     }
 
     result.set(card.id, {
-      playRate: pageviews > 0 ? (plays / pageviews) * 100 : null,
-      pitchRetention: plays > 0 ? (pitchReached / plays) * 100 : null,
+      playRate: pageviews > 0
+        ? (plays / pageviews) * 100
+        : directPlayRateWeight > 0
+          ? directPlayRate / directPlayRateWeight
+          : null,
+      pitchRetention: plays > 0
+        ? (pitchReached / plays) * 100
+        : directPitchRetentionWeight > 0
+          ? directPitchRetention / directPitchRetentionWeight
+          : null,
     });
   }
 
   return result;
+}
+
+function normalizeAttributionToken(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function createVturbMetricAccumulator() {
+  return {
+    pageviews: 0,
+    plays: 0,
+    pitchReached: 0,
+    directPlayRate: 0,
+    directPlayRateWeight: 0,
+    directPitchRetention: 0,
+    directPitchRetentionWeight: 0,
+  };
+}
+
+function asObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function normalizeRate(value: unknown) {
+  const parsed = metricNumber(value);
+  if (parsed <= 0) return null;
+  // VTurb has used both fractions (0.5) and percentages (50) in exports.
+  const percentage = parsed <= 1 ? parsed * 100 : parsed;
+  return percentage <= 100 ? percentage : null;
 }
 
 function firstPositiveMetric(...values: unknown[]) {
@@ -1941,7 +2074,10 @@ function firstPositiveMetric(...values: unknown[]) {
 }
 
 function metricNumber(value: unknown) {
-  const parsed = Number(value ?? 0);
+  const normalized = typeof value === "string"
+    ? value.trim().replace(/%$/, "").replace(",", ".")
+    : value;
+  const parsed = Number(normalized ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
 }
 

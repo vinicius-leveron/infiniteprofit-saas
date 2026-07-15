@@ -534,7 +534,9 @@ function aggregateMetrics(metrics: CreativeAssetMetricRow[]) {
     const rowPurchases = numberOrZero(row.purchases);
     const rowRevenue = numberOrZero(row.revenue);
     const rowRefunds = numberOrZero(row.refunds);
-    const rowRefundValue = numberOrZero(row.refund_value);
+    // Refund providers differ on sign; cards always display the refunded
+    // amount as a positive loss value.
+    const rowRefundValue = Math.abs(numberOrZero(row.refund_value));
     const rowHookRate = parseNumber(row.hook_rate);
 
     spend += rowSpend;

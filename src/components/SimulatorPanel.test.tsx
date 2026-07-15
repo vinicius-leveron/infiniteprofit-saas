@@ -122,7 +122,7 @@ const rows: DailyRow[] = [
     diaSemana: "quarta-feira",
     investimento: 1000,
     vendasFront: 10,
-    vendasTotais: 12,
+    vendasTotais: 13,
     cpaFront: null,
     fatBruto: 2000,
     fatLiquido: 1800,
@@ -132,8 +132,8 @@ const rows: DailyRow[] = [
     cac: null,
     aov: null,
     fatFront: 1000,
-    fatOrderbump: 200,
-    fatFunil: 1200,
+    fatOrderbump: 500,
+    fatFunil: 1500,
     reembolsos: 0,
     taxaReembolso: null,
     valorReembolsado: 0,
@@ -162,7 +162,10 @@ const rows: DailyRow[] = [
     obs: "",
     convGeralOrderbump: null,
     proporcaoFunilFront: null,
-    bumps: [],
+    bumps: [
+      { name: "Bump", type: "orderbump", count: 2, revenue: 200, rate: 20 },
+      { name: "Upsell", type: "upsell", count: 1, revenue: 300, rate: 10 },
+    ],
   },
 ];
 
@@ -199,6 +202,14 @@ describe("SimulatorPanel", () => {
 
     expect(currentInvestment.value).toBe("3500");
     expect(projectedInvestment.value).toBe("1000");
+  });
+
+  it("infers order bump and upsell tickets from their own product sales", () => {
+    const { numberInputs } = renderSimulator();
+
+    expect(numberInputs()[1].value).toBe("100");
+    expect(numberInputs()[2].value).toBe("300");
+    expect(screen.getByText("ROAS")).toBeInTheDocument();
   });
 
   it("saves current and simulated scenarios in history and restores both", async () => {

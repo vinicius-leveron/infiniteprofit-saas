@@ -83,6 +83,7 @@ describe("traffic metric mapping", () => {
     const totals = computeTotals([
       {
         investimento: 100,
+        fatBruto: 1200,
         fatLiquido: 1000,
         impostoMeta: 12.15,
         lucro: 887.85,
@@ -91,7 +92,20 @@ describe("traffic metric mapping", () => {
 
     expect(totals.impostoMeta).toBeCloseTo(12.15);
     expect(totals.lucro).toBeCloseTo(887.85);
+    expect(totals.roas).toBeCloseTo(12);
     expect(totals.roi).toBeCloseTo(9.8785);
+  });
+
+  it("computes refund rate over approved front sales instead of funnel items", () => {
+    const totals = computeTotals([
+      {
+        vendasFront: 20,
+        vendasTotais: 36,
+        reembolsos: 4,
+      } as DailyRow,
+    ]);
+
+    expect(totals.taxaReembolso).toBeCloseTo(20);
   });
 
   it("computes funnel period rates from summed denominators instead of averaging daily percentages", () => {

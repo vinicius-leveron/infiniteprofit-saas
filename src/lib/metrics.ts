@@ -42,6 +42,7 @@ export interface KpiTotals {
   playsUnicos: number;
   checkouts: number;
   // computed
+  roas: number | null;
   roi: number | null;
   cac: number | null;
   aov: number | null;
@@ -131,6 +132,7 @@ export function computeTotals(rows: DailyRow[]): KpiTotals {
     pageviews,
     playsUnicos,
     checkouts,
+    roas: safeDiv(fatBruto, investimento),
     roi: safeDiv(fatLiquido - impostoMeta, investimento),
     cac: safeDiv(investimento, vendasTotais),
     aov: safeDiv(fatLiquido, vendasTotais),
@@ -141,7 +143,7 @@ export function computeTotals(rows: DailyRow[]): KpiTotals {
     custoIC: safeDiv(investimento, checkouts),
     taxaCarreg: cliques ? (landingPageviews / cliques) * 100 : null,
     passChk: pageviews ? (checkouts / pageviews) * 100 : null,
-    taxaReembolso: vendasTotais ? (reembolsos / vendasTotais) * 100 : null,
+    taxaReembolso: vendasFront ? (reembolsos / vendasFront) * 100 : null,
     avgPlayRate: pageviews ? ((playsUnicos || estimatedPlays) / pageviews) * 100 : avgK(rows, "playRate"),
     avgRetPitch: (playsUnicos || estimatedPlays) ? (chegaramPitch / (playsUnicos || estimatedPlays)) * 100 : avgK(rows, "retPitch"),
     avgPitchChk: chegaramPitch ? (checkouts / chegaramPitch) * 100 : avgK(rows, "pitchChk"),

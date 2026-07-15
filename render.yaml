@@ -36,7 +36,9 @@ services:
       - key: CREATIVE_ANALYSIS_MODEL
         value: claude-sonnet-4-20250514
       - key: CREATIVE_ANALYSIS_PROMPT_VERSION
-        value: creative-sync-v3
+        value: creative-sync-v4
+      - key: CREATIVE_ANALYSIS_PROMPT
+        sync: false
       - key: OPENAI_API_KEY
         sync: false
       - key: ANTHROPIC_API_KEY

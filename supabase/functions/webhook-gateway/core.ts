@@ -214,8 +214,17 @@ export function normalizeHubla(raw: any): NormalizedEvent[] {
     { path: "netCents", cents: true },
     { path: "amount.netCents", cents: true },
   ]);
-  const sellerNet = sellerReceiverTotal(object);
-  const net = explicitNet || sellerNet || total;
+  const receiverBreakdown = hublaReceiverBreakdown(object);
+  // Hubla's platform receiver is the only fee that must be removed from the
+  // consolidated product revenue. The seller receiver can already be net of
+  // coproduction, so using it alone under-reports projects with partners.
+  const receiverNet = receiverBreakdown.accountNet
+    + receiverBreakdown.coproducerAmount
+    + receiverBreakdown.otherReceiverAmount;
+  const netBeforeCoproduction = receiverBreakdown.platformFee > 0 && total > receiverBreakdown.platformFee
+    ? total - receiverBreakdown.platformFee
+    : receiverNet;
+  const net = netBeforeCoproduction || explicitNet || total;
 
   if (type === "purchase.approved" && total <= 0 && !isInvoiceCreated) {
     return [];
@@ -309,6 +318,14 @@ export function normalizeHubla(raw: any): NormalizedEvent[] {
     gross: total,
     subtotal: subtotal || null,
     net,
+    net_before_coproduction: netBeforeCoproduction || null,
+    account_net: receiverBreakdown.accountNet || null,
+    coproducer_amount: receiverBreakdown.coproducerAmount || null,
+    coproduction_rate: receiverBreakdown.coproducerAmount > 0
+      && receiverBreakdown.accountNet + receiverBreakdown.coproducerAmount > 0
+      ? (receiverBreakdown.coproducerAmount / (receiverBreakdown.accountNet + receiverBreakdown.coproducerAmount)) * 100
+      : null,
+    platform_fee: receiverBreakdown.platformFee || null,
     payment_method: firstString([
       object.payment_method,
       object.paymentMethod,
@@ -598,14 +615,14 @@ function sumItemPrices(items: Array<{ price: number }>) {
   return items.reduce((sum, item) => sum + num(item.price), 0);
 }
 
-function sellerReceiverTotal(invoice: Record<string, any>) {
-  const receivers = firstArray([invoice.receivers, getPath(invoice, "payment.receivers")]);
-  return receivers.reduce((sum, receiver) => {
+function hublaReceiverBreakdown(invoice: Record<string, any>) {
+  const receivers = firstNonEmptyArray([invoice.receivers, getPath(invoice, "payment.receivers")]);
+  const sellerId = firstString([invoice.sellerId, getPath(invoice, "seller.id")]);
+  return receivers.reduce((totals, receiver) => {
     const record = asRecord(receiver);
-    const role = firstString([record.role, record.type, record.kind]).toLowerCase();
-    if (role && !["seller", "producer", "merchant"].includes(role)) return sum;
-    if (role === "platform" || role === "affiliate" || role === "coproducer") return sum;
-    return sum + firstMoney(record, [
+    const role = normalizeHublaRole(firstString([record.role, record.type, record.kind]));
+    const receiverId = firstString([record.id, record.userId, record.accountId]);
+    const amount = firstMoney(record, [
       { path: "netCents", cents: true },
       { path: "net_amount", autoCents: true },
       { path: "totalCents", cents: true },
@@ -613,7 +630,26 @@ function sellerReceiverTotal(invoice: Record<string, any>) {
       { path: "amountCents", cents: true },
       { path: "amount", autoCents: true },
     ]);
-  }, 0);
+    if (role === "platform" || receiverId === "platform-identity") totals.platformFee += amount;
+    else if (["partner", "coproducer", "coprodutor", "coproductor", "coproducao"].includes(role)
+      || (sellerId && receiverId && receiverId !== sellerId && ["seller", "producer", "merchant", "produtor", "vendedor"].includes(role))) {
+      totals.coproducerAmount += amount;
+    } else if (!role || ["seller", "producer", "merchant", "produtor", "vendedor"].includes(role)) {
+      totals.accountNet += amount;
+    } else {
+      // Keep other non-platform recipients (for example, an affiliate) in
+      // consolidated net revenue without pretending they are coproducers.
+      totals.otherReceiverAmount += amount;
+    }
+    return totals;
+  }, { accountNet: 0, coproducerAmount: 0, platformFee: 0, otherReceiverAmount: 0 });
+}
+
+function firstNonEmptyArray(values: unknown[]) {
+  for (const value of values) {
+    if (Array.isArray(value) && value.length > 0) return value;
+  }
+  return [];
 }
 
 function firstArray(values: unknown[]) {
@@ -621,6 +657,15 @@ function firstArray(values: unknown[]) {
     if (Array.isArray(value)) return value;
   }
   return [];
+}
+
+function normalizeHublaRole(value: unknown) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "");
 }
 
 function firstRecord(values: unknown[]) {

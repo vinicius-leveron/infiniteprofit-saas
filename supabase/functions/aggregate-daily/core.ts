@@ -45,6 +45,8 @@ export function aggregateOneDay(events: RawEvent[]) {
   let reembolsos = 0;
   let valorReembolsado = 0;
   let valorReembolsadoLiquido = 0;
+  const refundKeys = new Set<string>();
+  let refundFallbackIndex = 0;
   const cardApprovedKeys = new Set<string>();
   const cardAttemptKeys = new Set<string>();
   const pixApprovedKeys = new Set<string>();
@@ -117,6 +119,9 @@ export function aggregateOneDay(events: RawEvent[]) {
     }
 
     if (event.event_type === "purchase.refunded") {
+      const refundKey = transactionKey(event) || `refund-${refundFallbackIndex++}`;
+      if (refundKeys.has(refundKey)) continue;
+      refundKeys.add(refundKey);
       const refundGross = Math.abs(eventGross(event));
       const refundNet = Math.abs(eventNet(event) || refundGross);
       reembolsos++;
@@ -262,14 +267,19 @@ export function aggregateOneDay(events: RawEvent[]) {
   const impostoMeta = investimento * META_TAX_RATE;
   const lucro = adjustedFatLiquido - investimento - impostoMeta;
   const roi = investimento > 0 ? (adjustedFatLiquido - impostoMeta) / investimento : null;
-  const taxaReembolso = vendasTotais > 0 ? (reembolsos / vendasTotais) * 100 : null;
+  const taxaReembolso = vendasFront > 0 ? (reembolsos / vendasFront) * 100 : null;
   const cardApproved = cardApprovedKeys.size;
   const cardTotal = cardAttemptKeys.size;
   const pixApproved = pixApprovedKeys.size;
   const pixTotal = pixAttemptKeys.size;
   const aprovCartao = cardTotal > 0 ? (cardApproved / cardTotal) * 100 : null;
   const aprovPix = pixTotal > 0 ? (pixApproved / pixTotal) * 100 : null;
-  const bumpCount = Array.from(bumpAgg.values()).reduce((sum, bump) => sum + bump.count, 0);
+  // "Conversão geral de order bump" is specifically the share of front
+  // buyers who accepted an order bump. Upsell purchases are tracked in the
+  // same `bumps` array but must not inflate this KPI.
+  const bumpCount = Array.from(bumpAgg.values())
+    .filter((bump) => bump.type === "orderbump")
+    .reduce((sum, bump) => sum + bump.count, 0);
   const convGeralOrderbump = vendasFront > 0 ? (bumpCount / vendasFront) * 100 : null;
   const proporcaoFunilFront = fatFront > 0 ? fatFunil / fatFront : null;
 
@@ -495,7 +505,7 @@ function recomputeDerivedMetrics<T extends Record<string, unknown>>(metrics: T) 
   out.plays_unicos = plays != null && plays !== 0 ? plays : null;
   out.play_rate = pageviews && pageviews > 0 && plays != null ? (plays / pageviews) * 100 : out.play_rate;
   out.ret_pitch = plays && plays > 0 && chegaramPitch != null ? (chegaramPitch / plays) * 100 : out.ret_pitch;
-  out.taxa_reembolso = vendasTotais && vendasTotais > 0 && reembolsos != null ? (reembolsos / vendasTotais) * 100 : null;
+  out.taxa_reembolso = vendasFront && vendasFront > 0 && reembolsos != null ? (reembolsos / vendasFront) * 100 : null;
   out.valor_reembolsado = valorReembolsado ?? null;
 
   const impostoMeta = investimento != null ? investimento * META_TAX_RATE : null;
@@ -716,28 +726,42 @@ function eventGross(event: RawEvent) {
 function eventNet(event: RawEvent) {
   const payloadNet = num(event.payload?.net);
   const payloadTotal = eventGross(event);
-  const sellerNet = sellerReceiverTotal(event.payload?.raw_payload ?? {});
-  if (sellerNet > 0 && (!payloadNet || Math.abs(payloadNet - payloadTotal) < 0.0001)) return sellerNet;
+  const receiverNet = hublaReceiverNetBeforeCoproduction(event.payload?.raw_payload ?? {}, payloadTotal);
+  if (receiverNet > 0) return receiverNet;
   return payloadNet > 0 ? payloadNet : payloadTotal;
 }
 
-function sellerReceiverTotal(rawPayload: Record<string, any>) {
-  const receivers = firstArray([
+function hublaReceiverNetBeforeCoproduction(rawPayload: Record<string, any>, gross: number) {
+  const receivers = firstNonEmptyArray([
     getPath(rawPayload, "event.invoice.receivers"),
     getPath(rawPayload, "data.object.receivers"),
     getPath(rawPayload, "invoice.receivers"),
     rawPayload.receivers,
   ]);
-  return receivers.reduce((sum, receiver) => {
-    if (!receiver || typeof receiver !== "object") return sum;
+  let nonPlatform = 0;
+  let platformFee = 0;
+  for (const receiver of receivers) {
+    if (!receiver || typeof receiver !== "object") continue;
     const record = receiver as Record<string, unknown>;
-    const role = String(record.role ?? record.type ?? record.kind ?? "").toLowerCase();
-    if (role && !["seller", "producer", "merchant"].includes(role)) return sum;
-    if (role === "platform" || role === "affiliate" || role === "coproducer") return sum;
+    const role = normalizeHublaRole(record.role ?? record.type ?? record.kind);
+    const receiverId = String(record.id ?? record.userId ?? record.accountId ?? "");
     const cents = firstNumber(record, ["netCents", "totalCents", "amountCents"]);
-    if (cents > 0) return sum + cents / 100;
-    return sum + firstNumber(record, ["net_amount", "total", "amount"]);
-  }, 0);
+    const amount = cents > 0 ? cents / 100 : firstNumber(record, ["net_amount", "total", "amount"]);
+    if (role === "platform" || receiverId === "platform-identity") platformFee += amount;
+    else nonPlatform += amount;
+  }
+
+  // If Hubla only sends the webhook owner's seller share, gross minus the
+  // platform receiver still recovers the consolidated net before copro.
+  if (platformFee > 0 && gross > platformFee) return gross - platformFee;
+  return nonPlatform;
+}
+
+function firstNonEmptyArray(values: unknown[]) {
+  for (const value of values) {
+    if (Array.isArray(value) && value.length > 0) return value;
+  }
+  return [];
 }
 
 function firstArray(values: unknown[]) {
@@ -745,6 +769,15 @@ function firstArray(values: unknown[]) {
     if (Array.isArray(value)) return value;
   }
   return [];
+}
+
+function normalizeHublaRole(value: unknown) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "");
 }
 
 function purchaseGroupIsFront(group: RawEvent[], frontIdentity: ProductIdentity | null = null) {

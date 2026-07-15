@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { AlertTriangle, AlertCircle, CheckCircle2, TrendingDown, TrendingUp } from "lucide-react";
 import type { DailyRow } from "@/lib/csv";
-import { buildDiagnostics, type DiagnosticAlert } from "@/lib/diagnostics";
+import { buildDiagnostics, buildPositiveHighlights, type DiagnosticAlert, type DiagnosticHighlight } from "@/lib/diagnostics";
 import { cn } from "@/lib/utils";
 import { ComparisonStrip } from "./ComparisonStrip";
 
@@ -26,6 +26,7 @@ const fmtVal = (v: number | null) => {
 
 export const DiagnosticsPanel = ({ current, previous }: Props) => {
   const alerts = useMemo(() => buildDiagnostics(current, previous), [current, previous]);
+  const highlights = useMemo(() => buildPositiveHighlights(current, previous), [current, previous]);
 
   const reds = alerts.filter((a) => a.severity === "red");
   const yellows = alerts.filter((a) => a.severity === "yellow");
@@ -43,7 +44,7 @@ export const DiagnosticsPanel = ({ current, previous }: Props) => {
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Resumo */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         <SummaryCard
           tone="red"
           icon={AlertCircle}
@@ -60,6 +61,13 @@ export const DiagnosticsPanel = ({ current, previous }: Props) => {
         />
         <SummaryCard
           tone="green"
+          icon={TrendingUp}
+          count={highlights.length}
+          label="Maiores Altas"
+          hint="Variações favoráveis ≥ 15%"
+        />
+        <SummaryCard
+          tone="green"
           icon={CheckCircle2}
           count={alerts.length === 0 ? 1 : 0}
           label="Tudo Estável"
@@ -70,6 +78,23 @@ export const DiagnosticsPanel = ({ current, previous }: Props) => {
 
       {/* Comparativo vs período anterior */}
       <ComparisonStrip current={current} previous={previous} />
+
+      {highlights.length > 0 && (
+        <section className="section-card border-kpi-emerald/25 bg-kpi-emerald/[0.03]">
+          <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
+            <span className="w-1 h-4 bg-kpi-emerald rounded-full" />
+            Destaques positivos
+            <span className="text-xs font-normal text-muted-foreground">
+              ({highlights.length} {highlights.length === 1 ? "variação" : "variações"})
+            </span>
+          </h3>
+          <div className="space-y-2">
+            {highlights.map((highlight) => (
+              <HighlightRow key={`${highlight.category}-${highlight.metric}`} highlight={highlight} />
+            ))}
+          </div>
+        </section>
+      )}
 
       {alerts.length === 0 ? (
         <div className="section-card text-center py-12">
@@ -103,6 +128,27 @@ export const DiagnosticsPanel = ({ current, previous }: Props) => {
           );
         })
       )}
+    </div>
+  );
+};
+
+const HighlightRow = ({ highlight }: { highlight: DiagnosticHighlight }) => {
+  const TrendIcon = highlight.direction === "up" ? TrendingUp : TrendingDown;
+  return (
+    <div className="flex items-center gap-3 rounded-lg border border-kpi-emerald/30 bg-kpi-emerald/5 p-3">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-kpi-emerald/15 text-kpi-emerald">
+        <TrendIcon className="h-4 w-4" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium text-foreground">{highlight.metric}</div>
+        <div className="text-xs text-muted-foreground tabular-nums">
+          {fmtVal(highlight.previous)} → {fmtVal(highlight.current)} · {highlight.category}
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-1 text-sm font-bold text-kpi-emerald tabular-nums">
+        <TrendIcon className="h-4 w-4" />
+        {highlight.changePct > 0 ? "+" : ""}{highlight.changePct.toFixed(1)}%
+      </div>
     </div>
   );
 };

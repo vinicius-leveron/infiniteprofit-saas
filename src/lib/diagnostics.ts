@@ -19,6 +19,8 @@ export interface DiagnosticAlert {
   message: string;
 }
 
+export type DiagnosticHighlight = Omit<DiagnosticAlert, "severity">;
+
 interface MetricDef {
   key: string;
   label: string;
@@ -33,6 +35,7 @@ const METRICS: MetricDef[] = [
   { key: "fatLiquido", label: "Faturamento Líquido", category: "Geral", bad: "down", get: (t) => t.fatLiquido },
   { key: "lucro", label: "Lucro", category: "Geral", bad: "down", get: (t) => t.lucro },
   { key: "roi", label: "ROI", category: "Geral", bad: "down", get: (t) => t.roi },
+  { key: "roas", label: "ROAS", category: "Geral", bad: "down", get: (t) => t.roas },
   { key: "vendasTotais", label: "Vendas Totais", category: "Geral", bad: "down", get: (t) => t.vendasTotais },
   { key: "vendasFront", label: "Vendas Front", category: "Geral", bad: "down", get: (t) => t.vendasFront },
   { key: "investimento", label: "Investimento", category: "Geral", bad: "down", get: (t) => t.investimento },
@@ -114,6 +117,38 @@ export function buildDiagnostics(
     return Math.abs(b.changePct) - Math.abs(a.changePct);
   });
   return alerts;
+}
+
+/** Retorna todas as variações favoráveis de pelo menos 15% no período. */
+export function buildPositiveHighlights(
+  current: DailyRow[],
+  previous: DailyRow[],
+  minimumChangePct = 15,
+): DiagnosticHighlight[] {
+  if (!current.length || !previous.length) return [];
+  const cur = computeTotals(current);
+  const prev = computeTotals(previous);
+
+  return METRICS.flatMap((metric) => {
+    const currentValue = metric.get(cur);
+    const previousValue = metric.get(prev);
+    if (currentValue == null || previousValue == null || previousValue === 0) return [];
+
+    const changePct = ((currentValue - previousValue) / Math.abs(previousValue)) * 100;
+    if (Math.abs(changePct) < minimumChangePct) return [];
+    const direction: Direction = changePct > 0 ? "up" : "down";
+    if (direction === metric.bad) return [];
+
+    return [{
+      metric: metric.label,
+      category: metric.category,
+      current: currentValue,
+      previous: previousValue,
+      changePct,
+      direction,
+      message: buildMessage(metric.label, direction, Math.abs(changePct)),
+    }];
+  }).sort((a, b) => Math.abs(b.changePct) - Math.abs(a.changePct));
 }
 
 function buildMessage(label: string, dir: Direction, abs: number): string {

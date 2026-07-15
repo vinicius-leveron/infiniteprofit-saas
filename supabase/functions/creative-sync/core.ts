@@ -27,6 +27,7 @@ export interface RawMetaPayload {
 }
 
 export interface RawGatewayPayload {
+  [key: string]: unknown;
   utm_content?: string;
   transaction_id?: string;
   total?: number | string | null;
@@ -280,7 +281,18 @@ export function buildCreativeDailyMetrics(args: {
     aggregate.set(key, target);
   }
 
+  // Keep attribution for the whole input before aggregating. Refunds often
+  // arrive days after approval (and may no longer carry UTM parameters), so
+  // looking up a transaction only while processing approved rows loses the
+  // refund from the creative card.
   const adIdByTransactionId = new Map<string, string>();
+  for (const row of args.gatewayRows) {
+    if (row.event_type !== "purchase.approved" && row.event_type !== "purchase.refunded") continue;
+    const payload = row.payload ?? {};
+    const transactionId = stringOrNull(payload.transaction_id ?? payload.id);
+    const adId = resolveGatewayAdId(payload, args.assetIdByAdId);
+    if (transactionId && adId) adIdByTransactionId.set(normalizeLookup(transactionId), adId);
+  }
 
   for (const row of args.gatewayRows) {
     if (row.event_type !== "purchase.approved") continue;
@@ -288,7 +300,7 @@ export function buildCreativeDailyMetrics(args: {
     const adId = resolveGatewayAdId(payload, args.assetIdByAdId);
     if (!adId) continue;
     const transactionId = stringOrNull(payload.transaction_id ?? (payload as Record<string, unknown>).id);
-    if (transactionId) adIdByTransactionId.set(transactionId, adId);
+    if (transactionId) adIdByTransactionId.set(normalizeLookup(transactionId), adId);
     const assetId = args.assetIdByAdId.get(adId);
     if (!assetId) continue;
 
@@ -306,19 +318,30 @@ export function buildCreativeDailyMetrics(args: {
     aggregate.set(key, target);
   }
 
+  const processedRefundKeys = new Set<string>();
   for (const row of args.gatewayRows) {
     if (row.event_type !== "purchase.refunded") continue;
     const payload = row.payload ?? {};
     const transactionId = stringOrNull(payload.transaction_id ?? (payload as Record<string, unknown>).id);
-    const adId = resolveGatewayAdId(payload, args.assetIdByAdId) ?? (transactionId ? adIdByTransactionId.get(transactionId) ?? null : null);
+    const adId = resolveGatewayAdId(payload, args.assetIdByAdId)
+      ?? (transactionId ? adIdByTransactionId.get(normalizeLookup(transactionId)) ?? null : null);
     if (!adId) continue;
     const assetId = args.assetIdByAdId.get(adId);
     if (!assetId) continue;
 
+    // Providers can emit an original refund plus offer-suffixed duplicates;
+    // both normalize to the same transaction_id. Keep the card count aligned
+    // with the dashboard's refund aggregation and count a refund once.
+    const refundKey = transactionId
+      ? normalizeLookup(transactionId)
+      : `${assetId}:${row.event_date}:${processedRefundKeys.size}`;
+    if (processedRefundKeys.has(refundKey)) continue;
+    processedRefundKeys.add(refundKey);
+
     const key = `${assetId}:${row.event_date}`;
     const target = aggregate.get(key) ?? createAccumulator(assetId, row.event_date);
     target.refunds += 1;
-    target.refund_value += numberOrZero(payload.total) || numberOrZero(payload.net);
+    target.refund_value += gatewayAmount(payload, "refund");
     target.has_gateway_data = true;
     aggregate.set(key, target);
   }
@@ -375,11 +398,28 @@ function resolveGatewayAdId(payload: RawGatewayPayload, assetIdByAdId: Map<strin
   for (const candidate of candidates) {
     if (!candidate) continue;
     if (assetIdByAdId.has(candidate)) return candidate;
+    const normalizedCandidate = normalizeLookup(candidate);
     for (const adId of assetIdByAdId.keys()) {
-      if (candidate.includes(adId)) return adId;
+      const normalizedAdId = normalizeLookup(adId);
+      if (normalizedCandidate.includes(normalizedAdId)) return adId;
     }
   }
   return null;
+}
+
+function gatewayAmount(payload: RawGatewayPayload, kind: "sale" | "refund") {
+  const candidates = kind === "refund"
+    ? [payload.refund_value, payload.refunded_amount, payload.refund_amount, payload.total, payload.net, payload.amount]
+    : [payload.total, payload.net, payload.amount];
+  for (const value of candidates) {
+    const amount = Math.abs(numberOrZero(value as number | string | null | undefined));
+    if (amount > 0) return amount;
+  }
+  return 0;
+}
+
+function normalizeLookup(value: string) {
+  return value.trim().toLowerCase();
 }
 
 export function normalizeCreativeAnalysisResult(payload: unknown): CreativeAnalysisResult {
@@ -433,9 +473,7 @@ export function buildCreativeAnalysisFallback(args: {
   const transcriptStatus =
     args.transcriptStatus ??
     (args.mediaType === "image" ? "not_applicable" : args.mediaType === "unknown" ? "missing_media" : "pending");
-  const summary =
-    args.summary ??
-    ([args.headline, args.primaryText].filter(Boolean).join(" — ") || "Criativo aguardando processamento.");
+  const summary = args.summary ?? "Criativo aguardando processamento.";
   const status =
     args.analysisStatus ??
     (args.mediaType === "unknown"
@@ -459,9 +497,9 @@ export function buildCreativeAnalysisFallback(args: {
     transcriptModel: args.transcriptModel ?? null,
     transcriptErrorMessage: args.transcriptErrorMessage ?? null,
     summary,
-    hook: args.headline ?? null,
+    hook: null,
     hookTimestamps: [],
-    angle: args.primaryText ?? null,
+    angle: null,
     copy: args.primaryText ?? null,
     cta: args.cta ?? null,
     visual: args.mediaType === "image" ? "Criativo estático" : args.mediaType === "video" ? "Vídeo" : null,

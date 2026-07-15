@@ -20,7 +20,8 @@ const TRANSCRIPTION_PROVIDER = process.env.CREATIVE_TRANSCRIPTION_PROVIDER || "o
 const TRANSCRIPTION_MODEL = process.env.CREATIVE_TRANSCRIPTION_MODEL || "gpt-4o-mini-transcribe";
 const ANALYSIS_PROVIDER = process.env.CREATIVE_ANALYSIS_PROVIDER || "lovable";
 const ANALYSIS_MODEL = process.env.CREATIVE_ANALYSIS_MODEL || "google/gemini-3-flash-preview";
-const PROMPT_VERSION = process.env.CREATIVE_ANALYSIS_PROMPT_VERSION || "creative-sync-v2";
+const PROMPT_VERSION = process.env.CREATIVE_ANALYSIS_PROMPT_VERSION || "creative-sync-v4";
+const CUSTOM_ANALYSIS_INSTRUCTIONS = String(process.env.CREATIVE_ANALYSIS_PROMPT || "").trim();
 const POLL_INTERVAL_MS = Number(process.env.CREATIVE_WORKER_POLL_INTERVAL_MS || "5000");
 const BATCH_SIZE = Number(process.env.CREATIVE_WORKER_BATCH_SIZE || "2");
 const WORKER_ID = process.env.CREATIVE_WORKER_ID || process.env.RENDER_SERVICE_NAME || os.hostname();
@@ -277,7 +278,10 @@ async function processJob(job) {
 }
 
 async function resolveMediaSource(payload, asset) {
-  const candidates = [payload.source_media_url, asset?.source_media_url, payload.thumbnail_url, asset?.thumbnail_url].filter(Boolean);
+  const candidates = (payload.media_type === "video"
+    ? [payload.source_media_url, asset?.source_media_url]
+    : [payload.source_media_url, asset?.source_media_url, payload.thumbnail_url, asset?.thumbnail_url]
+  ).filter(Boolean);
   for (const url of candidates) {
     if (await canFetch(url)) {
       return { url };
@@ -300,7 +304,7 @@ async function resolveMediaSource(payload, asset) {
     }
   }
 
-  return { url: candidates[0] || null };
+  return { url: payload.media_type === "video" ? null : candidates[0] || null };
 }
 
 async function refreshVideoSource(bindingId, videoId) {
@@ -348,12 +352,20 @@ async function analyzeCreative({ mediaType, payload, transcript, transcriptSegme
     : transcript || "—";
 
   const prompt = [
-    "Analise a transcrição do criativo de anúncio e responda somente JSON válido.",
-    "Campos obrigatórios: summary, hook, hook_timestamps, angle, copy, cta, tags, scores, analysis_coverage, errorMessage.",
-    "Use PT-BR, direto e concreto.",
-    "scores deve conter no mínimo hook, clareza e potencial_de_escala com notas de 0 a 100.",
-    "hook_timestamps deve ser um array com { start_ms, end_ms, label, reason } indicando os momentos de gancho.",
-    "analysis_coverage deve ser full se a análise estiver completa.",
+    "Analise este criativo de anúncio usando principalmente a transcrição com timestamps. Responda somente JSON válido.",
+    "Campos obrigatórios: summary, hook, hook_timestamps, angle, copy, cta, visual, visual_evidence, tags, scores, analysis_coverage, errorMessage.",
+    "Use PT-BR, linguagem direta, específica e sem inventar informações que não aparecem nos dados.",
+    "summary: síntese original de 2 a 4 frases sobre problema, promessa, mecanismo, prova e oferta. Não copie a legenda nem repita a transcrição.",
+    "hook: descreva somente o que acontece ou é dito entre 0 e 3 segundos. Use o primeiro trecho falado do vídeo; nunca use o headline/título como substituto. Se não houver evidência confiável, retorne null.",
+    "hook_timestamps: array de { start_ms, end_ms, label, reason }. O primeiro item deve cobrir a abertura real, preferencialmente 0-3000 ms.",
+    "angle: uma frase explicando o ângulo estratégico de persuasão (dor, desejo, crença ou mecanismo). Não copie a legenda.",
+    "copy: reproduza a legenda/texto principal informado, sem transformá-la em resumo ou ângulo.",
+    "cta: identifique a ação pedida. visual e visual_evidence devem deixar claro quando não há evidência visual suficiente no input.",
+    "scores.hook (0-100): poder de interromper, curiosidade e clareza dos primeiros 3 segundos.",
+    "scores.clareza (0-100): compreensão do problema, promessa, mecanismo, oferta e CTA.",
+    "scores.potencial_de_escala (0-100): apelo amplo, replicabilidade, baixa dependência de contexto e risco de saturação/compliance.",
+    "analysis_coverage: full apenas se a transcrição permitir todos os campos; caso contrário partial e explique em errorMessage.",
+    CUSTOM_ANALYSIS_INSTRUCTIONS ? `Instruções personalizadas do workspace:\n${CUSTOM_ANALYSIS_INSTRUCTIONS}` : "",
     "",
     `Tipo: ${mediaType}`,
     `Headline: ${payload.headline ?? "—"}`,
@@ -361,7 +373,7 @@ async function analyzeCreative({ mediaType, payload, transcript, transcriptSegme
     `CTA: ${payload.cta ?? "—"}`,
     `Landing URL: ${payload.landing_url ?? "—"}`,
     "",
-    "Transcrição completa:",
+    "Transcrição com timestamps:",
     transcriptExcerpt,
   ].join("\n");
 

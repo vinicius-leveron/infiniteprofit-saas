@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -154,6 +154,7 @@ export default function Connections() {
   const [metaAccounts, setMetaAccounts] = useState<MetaAccountRow[]>([]);
   const [selectedMetaIds, setSelectedMetaIds] = useState<string[]>([]);
   const [savedMetaIds, setSavedMetaIds] = useState<string[]>([]);
+  const metaSelectionRef = useRef<{ selected: string[]; saved: string[] }>({ selected: [], saved: [] });
   const [vturbPlayers, setVturbPlayers] = useState<VturbPlayerRow[]>([]);
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<string[]>([]);
   const [vturbPlayerQuery, setVturbPlayerQuery] = useState("");
@@ -255,8 +256,19 @@ export default function Connections() {
       setMetaAccounts((metaRows ?? []) as MetaAccountRow[]);
       const nextSelectedMetaIds = ((selectedMetaRows ?? []) as ProjectMetaSelectionRow[])
         .map((row) => row.meta_account_id);
-      setSelectedMetaIds(nextSelectedMetaIds);
-      setSavedMetaIds(nextSelectedMetaIds);
+      // Background reloads can finish after a checkbox click or while the
+      // binding mutation is still settling. In that window, the database may
+      // legitimately still contain the previous selection; do not let that
+      // stale response clear the selection the user is looking at.
+      const localSelection = metaSelectionRef.current;
+      const hasPendingLocalSelection =
+        localSelection.selected.length !== localSelection.saved.length ||
+        localSelection.selected.some((id) => !localSelection.saved.includes(id));
+      if (!hasPendingLocalSelection) {
+        metaSelectionRef.current = { selected: nextSelectedMetaIds, saved: nextSelectedMetaIds };
+        setSelectedMetaIds(nextSelectedMetaIds);
+        setSavedMetaIds(nextSelectedMetaIds);
+      }
       setVturbPlayers((playerRows ?? []) as VturbPlayerRow[]);
       setSelectedPlayerIds(
         ((selectedPlayerRows ?? []) as ProjectVturbSelectionRow[]).map((row) => row.vturb_player_id),
@@ -336,6 +348,7 @@ export default function Connections() {
       if (error) throw error;
     }
 
+    metaSelectionRef.current.saved = nextIds;
     setSavedMetaIds(nextIds);
   }
 
@@ -643,11 +656,13 @@ export default function Connections() {
                         <Checkbox
                           checked={selectedMetaIds.includes(account.id)}
                           onCheckedChange={(checked) => {
-                            setSelectedMetaIds((current) =>
-                              checked
-                                ? [...current, account.id]
-                                : current.filter((id) => id !== account.id),
-                            );
+                            setSelectedMetaIds((current) => {
+                              const next = checked
+                                ? Array.from(new Set([...current, account.id]))
+                                : current.filter((id) => id !== account.id);
+                              metaSelectionRef.current.selected = next;
+                              return next;
+                            });
                           }}
                           disabled={!isWorkspaceAdmin}
                         />

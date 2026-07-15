@@ -66,6 +66,7 @@ interface SimResult {
   fatLiquido: number;
   impostoMeta: number;
   lucro: number;
+  roas: number | null;
   roi: number | null;
   cac: number | null;
   aov: number | null;
@@ -224,6 +225,7 @@ function runSim(i: SimInputs): SimResult {
     cliques, pageviews, plays, pitches, checkouts,
     vendasFront, vendasBump, vendasUpsell, vendasTotais,
     fatFront, fatBump, fatUpsell, fatLiquido, impostoMeta, lucro,
+    roas: i.investimento ? fatLiquido / i.investimento : null,
     roi: i.investimento ? (fatLiquido - impostoMeta) / i.investimento : null,
     cac: vendasTotais ? i.investimento / vendasTotais : null,
     aov: vendasFront ? fatLiquido / vendasFront : null,
@@ -245,18 +247,29 @@ export const SimulatorPanel = ({ rows }: Props) => {
   // Valores inferidos do CSV (médias do período)
   const baselineInputs = useMemo<SimInputs>(() => {
     const ticketFront = totals.vendasFront ? totals.fatFront / totals.vendasFront : 0;
-    const vendasBumpInferred = Math.max(0, totals.vendasTotais - totals.vendasFront);
-    const ticketBump = vendasBumpInferred ? totals.fatOrderbump / vendasBumpInferred : 0;
-    const ticketUpsell = vendasBumpInferred ? (totals.fatFunil - totals.fatFront - totals.fatOrderbump) / vendasBumpInferred : 0;
-    const takeRateBump = totals.vendasFront && totals.fatOrderbump
-      ? Math.min(100, (vendasBumpInferred / totals.vendasFront) * 100)
-      : 0;
+    const funnelProducts = rows.flatMap((row) => row.bumps ?? []);
+    const bumpSales = funnelProducts
+      .filter((product) => product.type === "orderbump")
+      .reduce((sum, product) => sum + (product.count ?? 0), 0);
+    const upsellSales = funnelProducts
+      .filter((product) => product.type === "upsell")
+      .reduce((sum, product) => sum + (product.count ?? 0), 0);
+    const bumpRevenue = funnelProducts
+      .filter((product) => product.type === "orderbump")
+      .reduce((sum, product) => sum + (product.revenue ?? 0), 0);
+    const upsellRevenue = funnelProducts
+      .filter((product) => product.type === "upsell")
+      .reduce((sum, product) => sum + (product.revenue ?? 0), 0);
+    const ticketBump = bumpSales ? bumpRevenue / bumpSales : 0;
+    const ticketUpsell = upsellSales ? upsellRevenue / upsellSales : 0;
+    const takeRateBump = totals.vendasFront ? Math.min(100, (bumpSales / totals.vendasFront) * 100) : 0;
+    const takeRateUpsell = totals.vendasFront ? Math.min(100, (upsellSales / totals.vendasFront) * 100) : 0;
     return {
       ticketFront: Math.round(ticketFront * 100) / 100,
       ticketBump: Math.round(ticketBump * 100) / 100,
       ticketUpsell: Math.max(0, Math.round(ticketUpsell * 100) / 100),
       takeRateBump: Math.round(takeRateBump * 10) / 10,
-      takeRateUpsell: 0,
+      takeRateUpsell: Math.round(takeRateUpsell * 10) / 10,
       impressoes: Math.round(totals.impressoes),
       investimento: Math.round(totals.investimento),
       ctr: num(totals.ctr, 1),
@@ -266,7 +279,7 @@ export const SimulatorPanel = ({ rows }: Props) => {
       pitchChk: num(totals.avgPitchChk, 12),
       chkVenda: num(totals.avgChkVenda, 60),
     };
-  }, [totals]);
+  }, [rows, totals]);
 
   const [inputs, setInputs] = useState<SimInputs>(baselineInputs);
   const [actualInputs, setActualInputs] = useState<SimInputs>(baselineInputs);
@@ -630,6 +643,7 @@ export const SimulatorPanel = ({ rows }: Props) => {
               <ComparisonRow label="Faturamento" base={baseResult.fatLiquido} sim={simResult.fatLiquido} fmt={fBRL} />
               <ComparisonRow label="Imposto Meta" base={baseResult.impostoMeta} sim={simResult.impostoMeta} fmt={fBRL} invert />
               <ComparisonRow label="Lucro" base={baseResult.lucro} sim={simResult.lucro} fmt={fBRL} highlight />
+              <ComparisonRow label="ROAS" base={baseResult.roas} sim={simResult.roas} fmt={(v) => fMult(v ?? null)} />
               <ComparisonRow label="ROI" base={baseResult.roi} sim={simResult.roi} fmt={(v) => fMult(v ?? null)} />
               <ComparisonRow label="CAC" base={baseResult.cac} sim={simResult.cac} fmt={fBRL} invert />
               <ComparisonRow label="AOV" base={baseResult.aov} sim={simResult.aov} fmt={fBRL} />
@@ -758,6 +772,10 @@ export const SimulatorPanel = ({ rows }: Props) => {
                 <span className="font-semibold tabular-nums">{fBRL(simResult.impostoMeta)}</span>
               </div>
               <div className="flex justify-between">
+                <span className="text-muted-foreground">ROAS</span>
+                <span className="font-semibold tabular-nums">{fMult(simResult.roas)}</span>
+              </div>
+              <div className="flex justify-between">
                 <span className="text-muted-foreground">ROI</span>
                 <span className="font-semibold tabular-nums">{fMult(simResult.roi)}</span>
               </div>
@@ -804,6 +822,7 @@ export const SimulatorPanel = ({ rows }: Props) => {
                 {history.map((sim) => {
                   const lucro = Number(sim.result?.lucro ?? 0);
                   const fat = Number(sim.result?.fatLiquido ?? 0);
+                  const roas = sim.result?.roas as number | null | undefined;
                   const roi = sim.result?.roi as number | null | undefined;
                   return (
                     <div
@@ -829,6 +848,9 @@ export const SimulatorPanel = ({ rows }: Props) => {
                             )}>
                               {fBRL(lucro)}
                             </span>
+                          </span>
+                          <span className="text-muted-foreground">
+                            ROAS: <span className="text-foreground font-semibold tabular-nums">{fMult(roas ?? null)}</span>
                           </span>
                           <span className="text-muted-foreground">
                             ROI: <span className="text-foreground font-semibold tabular-nums">{fMult(roi ?? null)}</span>

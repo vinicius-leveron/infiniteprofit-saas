@@ -89,6 +89,80 @@ describe("webhook gateway core", () => {
     expect(event.payload.net).toBeCloseTo(279.7);
   });
 
+  it("keeps coproducer share in net revenue while exposing the receiver split", () => {
+    const [event] = normalizeHubla({
+      type: "invoice.payment_succeeded",
+      event: {
+        invoice: {
+          id: "fat-coproduction",
+          status: "paid",
+          amount: { totalCents: 10000 },
+          receivers: [
+            { role: "seller", totalCents: 4050 },
+            { role: "partner", totalCents: 4950 },
+            { role: "platform", totalCents: 1000 },
+          ],
+          saleDate: "2026-07-15T12:00:00.000Z",
+        },
+      },
+    });
+
+    expect(event.payload.net).toBeCloseTo(90);
+    expect(event.payload.account_net).toBeCloseTo(40.5);
+    expect(event.payload.coproducer_amount).toBeCloseTo(49.5);
+    expect(event.payload.coproduction_rate).toBeCloseTo(55);
+    expect(event.payload.platform_fee).toBeCloseTo(10);
+  });
+
+  it("reconstructs consolidated net when Hubla sends only the seller receiver", () => {
+    const [event] = normalizeHubla({
+      type: "invoice.payment_succeeded",
+      event: {
+        invoice: {
+          id: "fat-coproduction-owner-only",
+          status: "paid",
+          amount: { totalCents: 10000 },
+          receivers: [
+            { role: "platform", totalCents: 1000 },
+            { role: "seller", totalCents: 4050 },
+          ],
+          saleDate: "2026-07-15T12:00:00.000Z",
+        },
+      },
+    });
+
+    expect(event.payload.net).toBeCloseTo(90);
+    expect(event.payload.net_before_coproduction).toBeCloseTo(90);
+    expect(event.payload.account_net).toBeCloseTo(40.5);
+    expect(event.payload.coproduction_rate).toBeNull();
+    expect(event.payload.platform_fee).toBeCloseTo(10);
+  });
+
+  it("derives coproduction rate when Hubla labels every payee as seller", () => {
+    const [event] = normalizeHubla({
+      type: "invoice.payment_succeeded",
+      event: {
+        invoice: {
+          id: "fat-coproduction-seller-roles",
+          sellerId: "owner",
+          status: "paid",
+          amount: { totalCents: 10000 },
+          receivers: [
+            { id: "platform-identity", role: "platform", totalCents: 1000 },
+            { id: "owner", role: "seller", totalCents: 4050 },
+            { id: "partner-account", role: "seller", totalCents: 4950 },
+          ],
+          saleDate: "2026-07-15T12:00:00.000Z",
+        },
+      },
+    });
+
+    expect(event.payload.net).toBeCloseTo(90);
+    expect(event.payload.account_net).toBeCloseTo(40.5);
+    expect(event.payload.coproducer_amount).toBeCloseTo(49.5);
+    expect(event.payload.coproduction_rate).toBeCloseTo(55);
+  });
+
   it("normalizes Hubla v2 invoice.created already paid as checkout and approved purchase", () => {
     const raw = {
       type: "invoice.created",
