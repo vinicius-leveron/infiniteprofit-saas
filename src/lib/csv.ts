@@ -466,7 +466,7 @@ function correctDailyFunnelSales(
 
 function detectBumpAggregateColumns(headers: string[]) {
   return headers.flatMap((raw, index) => {
-    const value = slug(raw);
+    const value = slug(raw).replace(/\s+/g, "_");
     if (!value.includes("orderbump") && !value.includes("upsell")) return [];
     if (/(faturamento|receita|conversao|taxa|percent|porcentagem)/.test(value)) return [];
     if (!/(^|_)(vendas|quantidade|qtd|count|total)(_|$)/.test(value) && value !== "orderbump" && value !== "upsell") {
