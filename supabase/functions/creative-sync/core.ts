@@ -31,6 +31,13 @@ export interface RawGatewayPayload {
   transaction_id?: string;
   total?: number | string | null;
   net?: number | string | null;
+  is_front?: boolean | string | null;
+  is_offer_event?: boolean | string | null;
+  items?: Array<{
+    type?: string | null;
+    is_bump?: boolean | string | null;
+    price?: number | string | null;
+  }>;
 }
 
 export interface MetaAdCreativeRecord {
@@ -68,6 +75,8 @@ export interface DerivedCreativeAsset {
   cta: string | null;
   landingUrl: string | null;
   postUrl: string | null;
+  facebookPostUrl: string | null;
+  instagramPostUrl: string | null;
   videoId: string | null;
 }
 
@@ -95,6 +104,11 @@ export interface CreativeMetricUpsertRow {
   purchases: number;
   revenue: number;
   refunds: number;
+  refund_value: number;
+  order_bump_purchases: number;
+  order_bump_revenue: number;
+  upsell_purchases: number;
+  upsell_revenue: number;
   refund_rate: number | null;
   roas: number | null;
   cpa: number | null;
@@ -180,10 +194,9 @@ export function deriveCreativeAsset(record: MetaAdDetailsRecord): DerivedCreativ
     stringOrNull(creative.effective_object_story_id) ??
     stringOrNull(creative.object_story_id) ??
     null;
-  const postUrl =
-    stringOrNull(creative.instagram_permalink_url) ??
-    stringOrNull(creative.permalink_url) ??
-    buildFacebookPostUrl(storyId);
+  const facebookPostUrl = buildFacebookPostUrl(storyId);
+  const instagramPostUrl = stringOrNull(creative.instagram_permalink_url);
+  const postUrl = facebookPostUrl ?? instagramPostUrl;
   const imageUrl =
     stringOrNull(creative.image_url) ??
     stringOrNull(linkData.picture) ??
@@ -225,6 +238,8 @@ export function deriveCreativeAsset(record: MetaAdDetailsRecord): DerivedCreativ
     cta,
     landingUrl,
     postUrl,
+    facebookPostUrl,
+    instagramPostUrl,
     videoId,
   };
 }
@@ -279,8 +294,14 @@ export function buildCreativeDailyMetrics(args: {
 
     const key = `${assetId}:${row.event_date}`;
     const target = aggregate.get(key) ?? createAccumulator(assetId, row.event_date);
-    target.purchases += 1;
-    target.revenue += numberOrZero(payload.total) || numberOrZero(payload.net);
+    const saleValue = numberOrZero(payload.total) || numberOrZero(payload.net);
+    const funnelBreakdown = classifyGatewayPurchase(payload, saleValue);
+    target.purchases += funnelBreakdown.frontPurchases;
+    target.revenue += saleValue;
+    target.order_bump_purchases += funnelBreakdown.orderBumpPurchases;
+    target.order_bump_revenue += funnelBreakdown.orderBumpRevenue;
+    target.upsell_purchases += funnelBreakdown.upsellPurchases;
+    target.upsell_revenue += funnelBreakdown.upsellRevenue;
     target.has_gateway_data = true;
     aggregate.set(key, target);
   }
@@ -297,11 +318,51 @@ export function buildCreativeDailyMetrics(args: {
     const key = `${assetId}:${row.event_date}`;
     const target = aggregate.get(key) ?? createAccumulator(assetId, row.event_date);
     target.refunds += 1;
+    target.refund_value += numberOrZero(payload.total) || numberOrZero(payload.net);
     target.has_gateway_data = true;
     aggregate.set(key, target);
   }
 
   return [...aggregate.values()].map((row) => finalizeAccumulator(row));
+}
+
+function classifyGatewayPurchase(payload: RawGatewayPayload, saleValue: number) {
+  const isFront = booleanValue(payload.is_front, true);
+  const isOfferEvent = booleanValue(payload.is_offer_event, false);
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  const upsellItems = items.filter((item) => String(item?.type ?? "").toLowerCase().includes("upsell"));
+  const orderBumpItems = items.filter((item) => {
+    const type = String(item?.type ?? "").toLowerCase();
+    return !type.includes("upsell") && (type.includes("bump") || booleanValue(item?.is_bump, false));
+  });
+
+  if (!isFront && !isOfferEvent && upsellItems.length === 0 && orderBumpItems.length === 0) {
+    return {
+      frontPurchases: 0,
+      orderBumpPurchases: 0,
+      orderBumpRevenue: 0,
+      upsellPurchases: 1,
+      upsellRevenue: saleValue,
+    };
+  }
+
+  const orderBumpRevenue = orderBumpItems.reduce((sum, item) => sum + numberOrZero(item?.price), 0);
+  const upsellRevenue = upsellItems.reduce((sum, item) => sum + numberOrZero(item?.price), 0);
+  return {
+    frontPurchases: isFront ? 1 : 0,
+    orderBumpPurchases: isOfferEvent && orderBumpItems.length === 0 ? 1 : orderBumpItems.length,
+    orderBumpRevenue: isOfferEvent && orderBumpRevenue === 0 ? saleValue : orderBumpRevenue,
+    upsellPurchases: upsellItems.length,
+    upsellRevenue,
+  };
+}
+
+function booleanValue(value: unknown, fallback: boolean) {
+  if (typeof value === "boolean") return value;
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (["true", "1", "yes", "sim"].includes(normalized)) return true;
+  if (["false", "0", "no", "nao", "não"].includes(normalized)) return false;
+  return fallback;
 }
 
 function resolveGatewayAdId(payload: RawGatewayPayload, assetIdByAdId: Map<string, string>) {
@@ -498,6 +559,11 @@ function finalizeAccumulator(row: CreativeMetricAccumulator): CreativeMetricUpse
     purchases: row.purchases,
     revenue: row.revenue,
     refunds: row.refunds,
+    refund_value: row.refund_value,
+    order_bump_purchases: row.order_bump_purchases,
+    order_bump_revenue: row.order_bump_revenue,
+    upsell_purchases: row.upsell_purchases,
+    upsell_revenue: row.upsell_revenue,
     refund_rate: refundRate,
     roas,
     cpa,
@@ -518,6 +584,11 @@ function createAccumulator(assetId: string, eventDate: string): CreativeMetricAc
     purchases: 0,
     revenue: 0,
     refunds: 0,
+    refund_value: 0,
+    order_bump_purchases: 0,
+    order_bump_revenue: 0,
+    upsell_purchases: 0,
+    upsell_revenue: 0,
     hook_numerator: 0,
     hook_denominator: 0,
     has_meta_data: false,
@@ -728,6 +799,11 @@ type CreativeMetricAccumulator = {
   purchases: number;
   revenue: number;
   refunds: number;
+  refund_value: number;
+  order_bump_purchases: number;
+  order_bump_revenue: number;
+  upsell_purchases: number;
+  upsell_revenue: number;
   hook_numerator: number;
   hook_denominator: number;
   has_meta_data: boolean;

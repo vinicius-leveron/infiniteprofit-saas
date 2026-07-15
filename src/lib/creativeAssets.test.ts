@@ -25,6 +25,9 @@ const assets: CreativeAssetRow[] = [
     primary_text: "Texto principal do criativo",
     cta: "Saiba mais",
     landing_url: "https://example.com",
+    post_url: "https://www.facebook.com/123/posts/456",
+    facebook_post_url: "https://www.facebook.com/123/posts/456",
+    instagram_post_url: "https://www.instagram.com/p/abc/",
     analysis_status: "ready",
     last_meta_synced_at: "2026-06-03T12:00:00Z",
     source_media_url: "https://example.com/creative-1.mp4",
@@ -47,6 +50,9 @@ const assets: CreativeAssetRow[] = [
     primary_text: "Copy de imagem",
     cta: "Comprar",
     landing_url: null,
+    post_url: null,
+    facebook_post_url: null,
+    instagram_post_url: null,
     analysis_status: "processing",
     last_meta_synced_at: "2026-06-03T12:00:00Z",
     source_media_url: "https://example.com/creative-2.jpg",
@@ -104,6 +110,11 @@ const metrics: CreativeAssetMetricRow[] = [
     purchases: 4,
     revenue: 400,
     refunds: 1,
+    refund_value: 100,
+    order_bump_purchases: 2,
+    order_bump_revenue: 80,
+    upsell_purchases: 1,
+    upsell_revenue: 120,
     refund_rate: 25,
     roas: 4,
     cpa: 25,
@@ -124,6 +135,11 @@ const metrics: CreativeAssetMetricRow[] = [
     purchases: 2,
     revenue: 180,
     refunds: 0,
+    refund_value: 0,
+    order_bump_purchases: 1,
+    order_bump_revenue: 40,
+    upsell_purchases: 0,
+    upsell_revenue: 0,
     refund_rate: 0,
     roas: 3.6,
     cpa: 25,
@@ -144,6 +160,11 @@ const metrics: CreativeAssetMetricRow[] = [
     purchases: 1,
     revenue: 120,
     refunds: 0,
+    refund_value: 0,
+    order_bump_purchases: 0,
+    order_bump_revenue: 0,
+    upsell_purchases: 0,
+    upsell_revenue: 0,
     refund_rate: 0,
     roas: 0.6,
     cpa: 200,
@@ -191,6 +212,13 @@ describe("creative assets view helpers", () => {
     expect(first?.purchases).toBe(6);
     expect(first?.revenue).toBe(580);
     expect(first?.refunds).toBe(1);
+    expect(first?.refundValue).toBe(100);
+    expect(first?.orderBumpPurchases).toBe(3);
+    expect(first?.orderBumpRevenue).toBe(120);
+    expect(first?.upsellPurchases).toBe(1);
+    expect(first?.upsellRevenue).toBe(120);
+    expect(first?.aov).toBeCloseTo(96.66, 1);
+    expect(first?.instagramPostUrl).toBe("https://www.instagram.com/p/abc/");
     expect(first?.refundRate).toBeCloseTo(16.66, 1);
     expect(first?.roas).toBeCloseTo(3.866, 2);
     expect(first?.hookRate).toBeCloseTo(38.33, 1);

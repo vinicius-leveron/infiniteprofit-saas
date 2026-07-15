@@ -28,6 +28,12 @@ export type VturbExecutionOptions = {
   maxPlayers: number;
 };
 
+export type NormalizedVturbTrafficOriginRow = {
+  eventDate: string;
+  externalId: string;
+  payload: Record<string, unknown>;
+};
+
 export type VturbPlayerBatch<T> = {
   players: T[];
   totalPlayers: number;
@@ -249,6 +255,39 @@ export function summarizeVturbPlayerResults(results: Array<Record<string, unknow
   };
 }
 
+export function normalizeVturbTrafficOriginRows(
+  data: unknown,
+  playerId: string,
+): NormalizedVturbTrafficOriginRow[] {
+  const rows = Array.isArray(data)
+    ? data
+    : Array.isArray((data as { data?: unknown[] } | null)?.data)
+      ? (data as { data: unknown[] }).data
+      : Array.isArray((data as { events_by_day?: unknown[] } | null)?.events_by_day)
+        ? (data as { events_by_day: unknown[] }).events_by_day
+        : [];
+
+  return rows.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const row = entry as Record<string, unknown>;
+    const eventDate = String(row.date_key ?? row.day ?? "").slice(0, 10);
+    const queryKey = String(row.query_key ?? "utm_content").trim().toLowerCase();
+    const groupedField = String(row.grouped_field ?? row.utm_content ?? "").trim();
+    if (!eventDate || queryKey !== "utm_content" || !groupedField) return [];
+
+    return [{
+      eventDate,
+      externalId: `${playerId}-traffic-${eventDate}-${stableCompactKey(groupedField)}`,
+      payload: {
+        ...row,
+        player_id: playerId,
+        query_key: "utm_content",
+        utm_content: groupedField,
+      },
+    }];
+  });
+}
+
 export function selectVturbPlayerBatch<T>(
   players: T[],
   options: {
@@ -313,4 +352,13 @@ function firstPositiveNumber(record: Record<string, unknown>, keys: string[]) {
     if (Number.isFinite(parsed) && parsed > 0) return parsed;
   }
   return 0;
+}
+
+function stableCompactKey(value: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
 }

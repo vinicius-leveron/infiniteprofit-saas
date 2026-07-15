@@ -445,8 +445,10 @@ export type Database = {
           created_at: string
           creative_id: string
           cta: string | null
+          facebook_post_url: string | null
           headline: string | null
           id: string
+          instagram_post_url: string | null
           landing_url: string | null
           last_meta_synced_at: string | null
           last_processed_at: string | null
@@ -473,8 +475,10 @@ export type Database = {
           created_at?: string
           creative_id: string
           cta?: string | null
+          facebook_post_url?: string | null
           headline?: string | null
           id?: string
+          instagram_post_url?: string | null
           landing_url?: string | null
           last_meta_synced_at?: string | null
           last_processed_at?: string | null
@@ -501,8 +505,10 @@ export type Database = {
           created_at?: string
           creative_id?: string
           cta?: string | null
+          facebook_post_url?: string | null
           headline?: string | null
           id?: string
+          instagram_post_url?: string | null
           landing_url?: string | null
           last_meta_synced_at?: string | null
           last_processed_at?: string | null
@@ -739,13 +745,18 @@ export type Database = {
           hook_rate: number | null
           impressions: number
           outbound_clicks: number
+          order_bump_purchases: number
+          order_bump_revenue: number
           project_id: string
           purchases: number
           refund_rate: number | null
+          refund_value: number
           refunds: number
           revenue: number
           roas: number | null
           spend: number
+          upsell_purchases: number
+          upsell_revenue: number
           updated_at: string
           user_id: string
           workspace_id: string
@@ -764,13 +775,18 @@ export type Database = {
           hook_rate?: number | null
           impressions?: number
           outbound_clicks?: number
+          order_bump_purchases?: number
+          order_bump_revenue?: number
           project_id: string
           purchases?: number
           refund_rate?: number | null
+          refund_value?: number
           refunds?: number
           revenue?: number
           roas?: number | null
           spend?: number
+          upsell_purchases?: number
+          upsell_revenue?: number
           updated_at?: string
           user_id: string
           workspace_id: string
@@ -789,13 +805,18 @@ export type Database = {
           hook_rate?: number | null
           impressions?: number
           outbound_clicks?: number
+          order_bump_purchases?: number
+          order_bump_revenue?: number
           project_id?: string
           purchases?: number
           refund_rate?: number | null
+          refund_value?: number
           refunds?: number
           revenue?: number
           roas?: number | null
           spend?: number
+          upsell_purchases?: number
+          upsell_revenue?: number
           updated_at?: string
           user_id?: string
           workspace_id?: string

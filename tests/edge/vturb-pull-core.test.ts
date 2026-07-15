@@ -4,6 +4,7 @@ import {
   hasCompleteUsableVturbSessionStats,
   hasUsableVturbSessionStats,
   hasUsableVturbSessionStatsPayload,
+  normalizeVturbTrafficOriginRows,
   orderVturbPlayersForSync,
   parseVturbBatchOptions,
   parseVturbExecutionOptions,
@@ -173,6 +174,31 @@ describe("vturb pull batching", () => {
       { date_key: "2026-06-28", total_viewed_session_uniq: 10 },
       { date_key: "2026-06-29", total_started_session_uniq: "7" },
     ], "2026-06-28", "2026-06-29")).toBe(true);
+  });
+
+  it("normalizes traffic origin rows into UTM-attributed raw events", () => {
+    const rows = normalizeVturbTrafficOriginRows([
+      {
+        date_key: "2026-06-29",
+        query_key: "utm_content",
+        grouped_field: "campanha-ad-123-feed",
+        total_viewed_session_uniq: 20,
+        total_started_session_uniq: 12,
+        total_over_pitch: 5,
+      },
+      { date_key: "2026-06-29", query_key: "utm_source", grouped_field: "facebook" },
+    ], "player-1");
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      eventDate: "2026-06-29",
+      payload: {
+        player_id: "player-1",
+        query_key: "utm_content",
+        utm_content: "campanha-ad-123-feed",
+      },
+    });
+    expect(rows[0].externalId).toMatch(/^player-1-traffic-2026-06-29-/);
   });
 
   it("keeps a project sync succeeded when only some VTurb players fail", () => {

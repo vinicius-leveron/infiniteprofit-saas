@@ -5,6 +5,7 @@ import { buildAutomationHeaders, isAutomationRequest } from "../_shared/automati
 import {
   filterSchedulableVturbProjects,
   hasCompleteUsableVturbSessionStats,
+  normalizeVturbTrafficOriginRows,
   orderVturbPlayersForSync,
   parseVturbBatchOptions,
   parseVturbExecutionOptions,
@@ -57,7 +58,8 @@ type PlayerBinding = {
 
 type VturbPath =
   | "/sessions/stats_by_day"
-  | "/conversions/stats_by_day";
+  | "/conversions/stats_by_day"
+  | "/traffic_origin/stats_by_day";
 
 type PlayerMetadata = {
   name: string | null;
@@ -383,13 +385,25 @@ async function pullOnePlayer(
       timezone: TZ,
     })
     : { data: null, error: null, skipped: "Conversões VTurb puladas porque sessions/stats_by_day cobriu o range com métricas úteis." };
+  const trafficResult = playerMetadata?.duration
+    ? await safeVturbPost(vturbRuntime, apiKey, "/traffic_origin/stats_by_day", {
+      player_id: playerId,
+      start_date: startStr,
+      end_date: endStr,
+      query_keys: ["utm_content"],
+      video_duration: playerMetadata.duration,
+      timezone: TZ,
+      ...(playerMetadata.pitchTime ? { pitch_time: playerMetadata.pitchTime } : {}),
+    })
+    : { data: null, error: null, skipped: "Tráfego por UTM pulado porque a duração do player não está disponível." };
 
   const warnings = [
     sessionStatsResult.error ? `sessions_stats_by_day: ${sessionStatsResult.error}` : null,
     statsResult.error ? `stats_by_day: ${statsResult.error}` : null,
+    trafficResult.error ? `traffic_by_source: ${trafficResult.error}` : null,
   ].filter(Boolean) as string[];
 
-  if (!sessionStatsResult.data && !statsResult.data) {
+  if (!sessionStatsResult.data && !statsResult.data && !trafficResult.data) {
     throw new Error(warnings.join(" | ") || "Nenhum endpoint VTurb retornou dados");
   }
 
@@ -444,6 +458,28 @@ async function pullOnePlayer(
     if (!error) {
       inserted++;
       datesTouched.add(day);
+    }
+  }
+
+  for (const trafficEntry of normalizeVturbTrafficOriginRows(trafficResult.data, playerId)) {
+    const { error } = await sb.from("raw_events").upsert(
+      {
+        project_id: project.id,
+        workspace_id: project.workspace_id,
+        user_id: project.user_id,
+        source: "vturb",
+        event_type: "traffic_by_source",
+        event_date: trafficEntry.eventDate,
+        external_id: trafficEntry.externalId,
+        account_id: playerId,
+        payload: trafficEntry.payload,
+      },
+      { onConflict: "project_id,source,event_type,external_id" },
+    );
+
+    if (!error) {
+      inserted++;
+      datesTouched.add(trafficEntry.eventDate);
     }
   }
 

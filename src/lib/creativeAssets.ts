@@ -49,6 +49,8 @@ export interface CreativeAssetRow {
   cta: string | null;
   landing_url: string | null;
   post_url: string | null;
+  facebook_post_url?: string | null;
+  instagram_post_url?: string | null;
   analysis_status: CreativeAnalysisStatus;
   last_meta_synced_at: string | null;
   source_media_url: string | null;
@@ -85,6 +87,11 @@ export interface CreativeAssetMetricRow {
   purchases: number | null;
   revenue: number | null;
   refunds: number | null;
+  refund_value?: number | null;
+  order_bump_purchases?: number | null;
+  order_bump_revenue?: number | null;
+  upsell_purchases?: number | null;
+  upsell_revenue?: number | null;
   refund_rate: number | null;
   roas: number | null;
   cpa: number | null;
@@ -161,6 +168,8 @@ export interface CreativeAssetCard {
   cta: string | null;
   landingUrl: string | null;
   postUrl: string | null;
+  facebookPostUrl: string | null;
+  instagramPostUrl: string | null;
   analysisStatus: CreativeAnalysisStatus;
   transcriptStatus: CreativeTranscriptStatus;
   analysisCoverage: CreativeAnalysisCoverage;
@@ -196,7 +205,13 @@ export interface CreativeAssetCard {
   purchases: number;
   revenue: number;
   refunds: number;
+  refundValue: number;
   refundRate: number | null;
+  orderBumpPurchases: number;
+  orderBumpRevenue: number;
+  upsellPurchases: number;
+  upsellRevenue: number;
+  aov: number | null;
   ctr: number | null;
   linkCtr: number | null;
   cpm: number | null;
@@ -257,6 +272,8 @@ export function buildCreativeAssetCards(input: {
       asset.cta,
       asset.landing_url,
       asset.post_url,
+      asset.facebook_post_url,
+      asset.instagram_post_url,
       analysis?.summary,
       analysis?.hook,
       analysis?.angle,
@@ -279,6 +296,8 @@ export function buildCreativeAssetCards(input: {
       cta: asset.cta,
       landingUrl: asset.landing_url,
       postUrl: asset.post_url,
+      facebookPostUrl: asset.facebook_post_url ?? facebookUrlFallback(asset.post_url),
+      instagramPostUrl: asset.instagram_post_url ?? instagramUrlFallback(asset.post_url),
       analysisStatus,
       transcriptStatus,
       analysisCoverage,
@@ -496,6 +515,11 @@ function aggregateMetrics(metrics: CreativeAssetMetricRow[]) {
   let purchases = 0;
   let revenue = 0;
   let refunds = 0;
+  let refundValue = 0;
+  let orderBumpPurchases = 0;
+  let orderBumpRevenue = 0;
+  let upsellPurchases = 0;
+  let upsellRevenue = 0;
   let hookWeight = 0;
   let hookWeightedSum = 0;
   let hasMetaData = false;
@@ -510,6 +534,7 @@ function aggregateMetrics(metrics: CreativeAssetMetricRow[]) {
     const rowPurchases = numberOrZero(row.purchases);
     const rowRevenue = numberOrZero(row.revenue);
     const rowRefunds = numberOrZero(row.refunds);
+    const rowRefundValue = numberOrZero(row.refund_value);
     const rowHookRate = parseNumber(row.hook_rate);
 
     spend += rowSpend;
@@ -519,6 +544,11 @@ function aggregateMetrics(metrics: CreativeAssetMetricRow[]) {
     purchases += rowPurchases;
     revenue += rowRevenue;
     refunds += rowRefunds;
+    refundValue += rowRefundValue;
+    orderBumpPurchases += numberOrZero(row.order_bump_purchases);
+    orderBumpRevenue += numberOrZero(row.order_bump_revenue);
+    upsellPurchases += numberOrZero(row.upsell_purchases);
+    upsellRevenue += numberOrZero(row.upsell_revenue);
     hasMetaData ||= Boolean(row.has_meta_data);
     hasGatewayData ||= Boolean(row.has_gateway_data);
 
@@ -535,6 +565,7 @@ function aggregateMetrics(metrics: CreativeAssetMetricRow[]) {
   const roas = spend > 0 && revenue > 0 ? revenue / spend : null;
   const cpa = spend > 0 && purchases > 0 ? spend / purchases : null;
   const refundRate = purchases > 0 ? (refunds / purchases) * 100 : null;
+  const aov = purchases > 0 ? revenue / purchases : null;
   const hookRate = hookWeight > 0 ? hookWeightedSum / hookWeight : null;
 
   return {
@@ -545,7 +576,13 @@ function aggregateMetrics(metrics: CreativeAssetMetricRow[]) {
     purchases,
     revenue,
     refunds,
+    refundValue,
     refundRate,
+    orderBumpPurchases,
+    orderBumpRevenue,
+    upsellPurchases,
+    upsellRevenue,
+    aov,
     ctr,
     linkCtr,
     cpm,
@@ -555,6 +592,14 @@ function aggregateMetrics(metrics: CreativeAssetMetricRow[]) {
     hasMetaData,
     hasGatewayData,
   };
+}
+
+function facebookUrlFallback(value: string | null) {
+  return value && /(?:facebook|fb)\.com/i.test(value) ? value : null;
+}
+
+function instagramUrlFallback(value: string | null) {
+  return value && /instagram\.com/i.test(value) ? value : null;
 }
 
 function valueForCreativeSort(card: CreativeAssetCard, sortKey: CreativeSortKey) {

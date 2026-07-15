@@ -80,6 +80,8 @@ type ExistingAssetRow = {
   cta: string | null;
   landing_url: string | null;
   post_url: string | null;
+  facebook_post_url: string | null;
+  instagram_post_url: string | null;
   analysis_status: CreativeAnalysisStatus;
   source_media_url: string | null;
   source_fetched_at: string | null;
@@ -105,6 +107,8 @@ type AssetUpsertPayload = {
   cta: string | null;
   landing_url: string | null;
   post_url: string | null;
+  facebook_post_url: string | null;
+  instagram_post_url: string | null;
   analysis_status: CreativeAnalysisStatus;
   last_meta_synced_at: string;
   source_media_url: string | null;
@@ -459,6 +463,8 @@ async function requeueExistingAsset(
       "cta",
       "landing_url",
       "post_url",
+      "facebook_post_url",
+      "instagram_post_url",
       "analysis_status",
       "last_meta_synced_at",
       "source_media_url",
@@ -495,6 +501,8 @@ async function requeueExistingAsset(
     cta: asset.cta,
     landing_url: asset.landing_url,
     post_url: asset.post_url,
+    facebook_post_url: asset.facebook_post_url,
+    instagram_post_url: asset.instagram_post_url,
     analysis_status: asset.analysis_status,
     last_meta_synced_at: new Date().toISOString(),
     source_media_url: asset.source_media_url,
@@ -648,6 +656,8 @@ async function buildAssetPayloads(
       cta: candidate.derived.cta ?? current?.cta ?? null,
       landing_url: candidate.derived.landingUrl ?? current?.landing_url ?? null,
       post_url: candidate.derived.postUrl ?? current?.post_url ?? null,
+      facebook_post_url: candidate.derived.facebookPostUrl ?? current?.facebook_post_url ?? null,
+      instagram_post_url: candidate.derived.instagramPostUrl ?? current?.instagram_post_url ?? null,
       analysis_status: analysisStatus,
       last_meta_synced_at: args.latestSync,
       source_media_url: sourceMediaUrl,
@@ -710,7 +720,7 @@ async function fetchAdDetailsBatch(accessToken: string, adIds: string[]) {
   url.searchParams.set("ids", adIds.join(","));
   url.searchParams.set(
     "fields",
-    "id,name,created_time,creative{id,name,body,title,image_url,thumbnail_url,link_url,object_type,call_to_action_type,object_story_id,effective_object_story_id,object_story_spec}",
+    "id,name,created_time,creative{id,name,body,title,image_url,thumbnail_url,link_url,object_type,call_to_action_type,object_story_id,effective_object_story_id,instagram_permalink_url,object_story_spec}",
   );
   url.searchParams.set("access_token", accessToken);
 
@@ -738,7 +748,7 @@ async function fetchAdDetailsOne(accessToken: string, adId: string) {
   const url = new URL(`https://graph.facebook.com/v21.0/${adId}`);
   url.searchParams.set(
     "fields",
-    "id,name,created_time,creative{id,name,body,title,image_url,thumbnail_url,link_url,object_type,call_to_action_type,object_story_id,effective_object_story_id,object_story_spec}",
+    "id,name,created_time,creative{id,name,body,title,image_url,thumbnail_url,link_url,object_type,call_to_action_type,object_story_id,effective_object_story_id,instagram_permalink_url,object_story_spec}",
   );
   url.searchParams.set("access_token", accessToken);
 
@@ -862,6 +872,8 @@ async function upsertCreativeAssets(
       "cta",
       "landing_url",
       "post_url",
+      "facebook_post_url",
+      "instagram_post_url",
       "analysis_status",
       "source_media_url",
       "source_fetched_at",
@@ -1232,7 +1244,7 @@ async function loadRawInputs(
       .select("event_date, event_type, payload")
       .eq("project_id", projectId)
       .eq("source", "gateway")
-      .in("event_type", ["purchase.approved"])
+      .in("event_type", ["purchase.approved", "purchase.refunded"])
       .gte("event_date", sinceStr)
       .limit(10000),
   ]);
@@ -1266,6 +1278,8 @@ async function loadExistingAssetsByKey(
       "cta",
       "landing_url",
       "post_url",
+      "facebook_post_url",
+      "instagram_post_url",
       "analysis_status",
       "source_media_url",
       "source_fetched_at",

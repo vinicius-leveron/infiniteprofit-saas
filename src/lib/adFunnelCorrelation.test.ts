@@ -75,4 +75,31 @@ describe("correlateAdFunnel", () => {
     expect(result.ads[0].play_rate).toBe(20);
     expect(result.ads[0].pitch_retention).toBe(40);
   });
+
+  it("matches current VTurb traffic-origin fields when UTM content contains the ad id", () => {
+    const result = correlateAdFunnel({
+      metaEvents: [{
+        payload: {
+          ad_id: "238500123",
+          spend: 100,
+          impressions: 1000,
+          actions: [{ action_type: "link_click", value: 40 }],
+        },
+      }],
+      vturbEvents: [{
+        payload: {
+          query_key: "utm_content",
+          grouped_field: "denise-238500123-feed",
+          total_viewed_session_uniq: 30,
+          total_started_session_uniq: 18,
+          total_over_pitch: 9,
+        },
+      }],
+      gatewayEvents: [],
+    });
+
+    expect(result.ads[0].play_rate).toBe(60);
+    expect(result.ads[0].pitch_retention).toBe(50);
+    expect(result.ads[0].has_vturb_data).toBe(true);
+  });
 });

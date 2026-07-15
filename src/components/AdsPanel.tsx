@@ -3,6 +3,7 @@ import { format, formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
   AlertTriangle,
+  Activity,
   ChevronDown,
   ChevronUp,
   Clapperboard,
@@ -107,6 +108,7 @@ interface AdsPanelProps {
 }
 
 type CardsViewMode = "cards" | "funnel" | "paths";
+type CreativeActivityFilter = "active" | "all";
 
 type SyncRunRow = {
   source: string;
@@ -199,6 +201,7 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
   const [groupBy, setGroupBy] = useState<CreativeGroupBy>("none");
   const [mediaFilter, setMediaFilter] = useState<CreativeMediaType | "all">("all");
   const [pipelineFilter, setPipelineFilter] = useState<CreativePipelineStatus | "all">("all");
+  const [activityFilter, setActivityFilter] = useState<CreativeActivityFilter>("active");
   const [activeFixedGroup, setActiveFixedGroup] = useState<FixedCreativeGroupKey>("all");
   const [activeCustomGroupId, setActiveCustomGroupId] = useState<string | null>(null);
   const [expandedCardId, setExpandedCardId] = useState<string | null>(null);
@@ -214,7 +217,7 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
     try {
       let metricsQuery = supabase
         .from("creative_asset_daily_metrics" as never)
-        .select("asset_id, event_date, spend, impressions, clicks, outbound_clicks, ctr, link_ctr, cpm, purchases, revenue, refunds, refund_rate, roas, cpa, hook_rate, has_meta_data, has_gateway_data")
+        .select("asset_id, event_date, spend, impressions, clicks, outbound_clicks, ctr, link_ctr, cpm, purchases, revenue, refunds, refund_value, refund_rate, order_bump_purchases, order_bump_revenue, upsell_purchases, upsell_revenue, roas, cpa, hook_rate, has_meta_data, has_gateway_data")
         .eq("project_id", projectId);
 
       if (dateRange?.from) metricsQuery = metricsQuery.gte("event_date", dateRange.from);
@@ -251,7 +254,7 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
           .maybeSingle(),
         supabase
           .from("creative_assets" as never)
-          .select("id, creative_id, asset_key, media_type, thumbnail_url, media_storage_path, headline, primary_text, cta, landing_url, post_url, analysis_status, last_meta_synced_at, source_media_url, source_fetched_at, media_bytes, media_duration_ms, media_fingerprint, poster_storage_path, last_processed_at, processing_version")
+          .select("id, creative_id, asset_key, media_type, thumbnail_url, media_storage_path, headline, primary_text, cta, landing_url, post_url, facebook_post_url, instagram_post_url, analysis_status, last_meta_synced_at, source_media_url, source_fetched_at, media_bytes, media_duration_ms, media_fingerprint, poster_storage_path, last_processed_at, processing_version")
           .eq("project_id", projectId)
           .order("updated_at", { ascending: false }),
         supabase
@@ -311,16 +314,28 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
     if (!projectId) return;
     setSyncing(true);
     try {
-      const { data, error } = await supabase.functions.invoke("creative-sync", {
-        body: {
-          project_id: projectId,
-          days: 30,
-          enqueue_analysis: false,
-        },
-      });
-      if (error) throw error;
-      if ((data as { error?: string } | null)?.error) {
-        throw new Error((data as { error: string }).error);
+      const [creativeResponse, vturbResponse] = await Promise.all([
+        supabase.functions.invoke("creative-sync", {
+          body: {
+            project_id: projectId,
+            days: 30,
+            enqueue_analysis: false,
+          },
+        }),
+        supabase.functions.invoke("vturb-pull", {
+          body: {
+            project_id: projectId,
+            days: 30,
+          },
+        }),
+      ]);
+      if (creativeResponse.error) throw creativeResponse.error;
+      if ((creativeResponse.data as { error?: string } | null)?.error) {
+        throw new Error((creativeResponse.data as { error: string }).error);
+      }
+      if (vturbResponse.error) throw vturbResponse.error;
+      if ((vturbResponse.data as { error?: string } | null)?.error) {
+        throw new Error((vturbResponse.data as { error: string }).error);
       }
       toast.success("Criativos sincronizados");
       await load();
@@ -488,14 +503,17 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
 
   const filteredCards = useMemo(() => {
     const base = applyCreativeFilters(cards, { search, rules: composedRules });
+    const activityScoped = activityFilter === "active"
+      ? base.filter((card) => card.spend > 0 || card.purchases > 0 || card.impressions > 0)
+      : base;
     if (activeFixedGroup === "best-hooks") {
-      return base.filter((card) => (card.hookRate ?? 0) > 0);
+      return activityScoped.filter((card) => (card.hookRate ?? 0) > 0);
     }
     if (activeFixedGroup === "best-roas") {
-      return base.filter((card) => (card.roas ?? 0) > 0);
+      return activityScoped.filter((card) => (card.roas ?? 0) > 0);
     }
-    return base.filter((card) => card.spend > 0 || card.purchases > 0 || card.impressions > 0);
-  }, [activeFixedGroup, cards, composedRules, search]);
+    return activityScoped;
+  }, [activeFixedGroup, activityFilter, cards, composedRules, search]);
 
   const effectiveSortKey = useMemo(
     () => resolveSortKey(activeFixedGroup, sortKey, activeCustomGroup?.sort_key ?? null),
@@ -523,6 +541,8 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
       cpm: Math.max(...sortedCards.map((card) => card.cpm ?? 0), 1),
       playRate: Math.max(...sortedCards.map((card) => vturbMetricsByAsset.get(card.id)?.playRate ?? 0), 1),
       pitchRetention: Math.max(...sortedCards.map((card) => vturbMetricsByAsset.get(card.id)?.pitchRetention ?? 0), 1),
+      hookRate: Math.max(...sortedCards.map((card) => card.hookRate ?? 0), 1),
+      aov: Math.max(...sortedCards.map((card) => card.aov ?? 0), 1),
     };
     return values;
   }, [sortedCards, vturbMetricsByAsset]);
@@ -732,7 +752,7 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
 
           {/* Toolbar de Filtros */}
           <div className="rounded-2xl border border-border/40 bg-gradient-to-br from-muted/30 to-muted/10 p-4">
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-6">
               {/* Search */}
               <div className="relative lg:col-span-1">
                 <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -756,6 +776,16 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
                   { value: "ctr", label: "CTR" },
                   { value: "cpm", label: "CPM" },
                   { value: "spend", label: "Gasto" },
+                ]}
+              />
+              <ToolbarSelect
+                icon={<Activity className="w-3.5 h-3.5" />}
+                label="Atividade"
+                value={activityFilter}
+                onValueChange={(value) => setActivityFilter(value as CreativeActivityFilter)}
+                options={[
+                  { value: "active", label: "Ativos no período" },
+                  { value: "all", label: "Todos" },
                 ]}
               />
               <ToolbarSelect
@@ -1038,16 +1068,18 @@ function CreativeCard({
 }: {
   card: CreativeAssetCard;
   expanded: boolean;
-  metricScale: { ctr: number; cpm: number; playRate: number; pitchRetention: number };
+  metricScale: { ctr: number; cpm: number; playRate: number; pitchRetention: number; hookRate: number; aov: number };
   vturbMetrics: CreativeVturbMetrics | null;
   analyzing: boolean;
   onToggle: () => void;
   onAnalyze: () => void;
 }) {
+  const [showAdditionalMetrics, setShowAdditionalMetrics] = useState(false);
   const title = card.headline || card.adNames[0] || card.assetKey;
   const previewText = card.primaryText || card.summary || "";
   const landingLabel = compactUrlLabel(card.landingUrl);
-  const postLabel = compactUrlLabel(card.postUrl) || "Post";
+  const facebookLabel = compactUrlLabel(card.facebookPostUrl) || "Facebook";
+  const instagramLabel = compactUrlLabel(card.instagramPostUrl) || "Instagram";
   const analyzeLabel =
     card.mediaType === "video" && card.transcriptStatus !== "ready"
       ? "Transcrever"
@@ -1099,7 +1131,7 @@ function CreativeCard({
             <PipelineBadge status={card.pipelineStatus} />
             <CoverageBadge coverage={card.analysisCoverage} />
           </div>
-          <MediaBadge mediaType={card.mediaType} />
+          <MediaBadge mediaType={card.mediaType} href={card.sourceMediaUrl} />
         </div>
 
         {/* Bottom overlay */}
@@ -1163,7 +1195,6 @@ function CreativeCard({
           <InfoPill label="Ads" value={String(card.adsCount)} />
           <InfoPill label="Campanhas" value={String(card.campaignNames.length)} />
           <InfoPill label="Adsets" value={String(card.adsetNames.length)} />
-          <InfoPill label="Hook" value={card.hookRate != null ? fPct(card.hookRate, 1) : "—"} />
           {card.landingUrl && (
             <a
               href={card.landingUrl}
@@ -1175,15 +1206,26 @@ function CreativeCard({
               <span className="truncate">{landingLabel}</span>
             </a>
           )}
-          {card.postUrl && (
+          {card.facebookPostUrl && (
             <a
-              href={card.postUrl}
+              href={card.facebookPostUrl}
               target="_blank"
               rel="noreferrer"
               className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-lg border border-border/40 bg-muted/30 px-2 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:border-border hover:text-foreground"
             >
               <ExternalLink className="w-3 h-3 shrink-0" />
-              <span className="truncate">{postLabel}</span>
+              <span className="truncate">{facebookLabel}</span>
+            </a>
+          )}
+          {card.instagramPostUrl && card.instagramPostUrl !== card.facebookPostUrl && (
+            <a
+              href={card.instagramPostUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-lg border border-border/40 bg-muted/30 px-2 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:border-border hover:text-foreground"
+            >
+              <ExternalLink className="w-3 h-3 shrink-0" />
+              <span className="truncate">{instagramLabel}</span>
             </a>
           )}
           {card.sourceMediaUrl && (
@@ -1219,11 +1261,39 @@ function CreativeCard({
           />
           <MetricTile
             label="Reembolsos"
-            value={`${fNum(card.refunds)} · ${card.refundRate != null ? fPct(card.refundRate, 1) : "—"}`}
+            value={`${fNum(card.refunds)} · ${fBRL(card.refundValue)}`}
+            detail={card.refundRate != null ? `${fPct(card.refundRate, 1)} das vendas` : undefined}
             accent="amber"
             highlight={card.refunds > 0}
           />
+          {showAdditionalMetrics && (
+            <>
+              <MetricTile
+                label="Order bump"
+                value={fNum(card.orderBumpPurchases)}
+                detail={fBRL(card.orderBumpRevenue)}
+                accent="violet"
+                highlight={card.orderBumpPurchases > 0}
+              />
+              <MetricTile
+                label="Upsell"
+                value={fNum(card.upsellPurchases)}
+                detail={fBRL(card.upsellRevenue)}
+                accent="emerald"
+                highlight={card.upsellPurchases > 0}
+              />
+            </>
+          )}
         </div>
+        <button
+          type="button"
+          onClick={() => setShowAdditionalMetrics((current) => !current)}
+          aria-expanded={showAdditionalMetrics}
+          className="-mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
+        >
+          {showAdditionalMetrics ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          {showAdditionalMetrics ? "Ver menos métricas" : "Ver order bump e upsell"}
+        </button>
 
         {/* Secondary Metrics */}
         <div className="grid gap-x-4 gap-y-2 sm:grid-cols-2">
@@ -1250,6 +1320,18 @@ function CreativeCard({
             value={vturbMetrics?.pitchRetention != null ? fPct(vturbMetrics.pitchRetention, 1) : "—"}
             width={vturbMetrics?.pitchRetention != null ? Math.min(100, (vturbMetrics.pitchRetention / metricScale.pitchRetention) * 100) : 0}
             tone="violet"
+          />
+          <MetricBar
+            label="Hook"
+            value={card.hookRate != null ? fPct(card.hookRate, 1) : "—"}
+            width={card.hookRate != null ? Math.min(100, (card.hookRate / metricScale.hookRate) * 100) : 0}
+            tone="amber"
+          />
+          <MetricBar
+            label="AOV"
+            value={card.aov != null ? fBRL(card.aov) : "—"}
+            width={card.aov != null ? Math.min(100, (card.aov / metricScale.aov) * 100) : 0}
+            tone="cyan"
           />
         </div>
 
@@ -1491,11 +1573,13 @@ function ToolbarSelect({
 function MetricTile({
   label,
   value,
+  detail,
   accent = "default",
   highlight = false,
 }: {
   label: string;
   value: string;
+  detail?: string;
   accent?: "default" | "emerald" | "violet" | "amber";
   highlight?: boolean;
 }) {
@@ -1534,6 +1618,7 @@ function MetricTile({
         >
           {value}
         </div>
+        {detail && <div className="mt-0.5 text-[10px] text-muted-foreground">{detail}</div>}
       </div>
     </div>
   );
@@ -1657,9 +1742,9 @@ function CoverageBadge({ coverage }: { coverage: CreativeAnalysisCoverage }) {
   );
 }
 
-function MediaBadge({ mediaType }: { mediaType: CreativeMediaType }) {
-  return (
-    <span className="inline-flex items-center gap-1 rounded-lg bg-black/50 border border-white/10 backdrop-blur-md px-2 py-1 text-[10px] font-medium text-white/90">
+function MediaBadge({ mediaType, href }: { mediaType: CreativeMediaType; href: string | null }) {
+  const content = (
+    <>
       {mediaType === "video" ? (
         <Play className="w-3 h-3" />
       ) : mediaType === "image" ? (
@@ -1667,7 +1752,26 @@ function MediaBadge({ mediaType }: { mediaType: CreativeMediaType }) {
       ) : (
         <Layers className="w-3 h-3" />
       )}
-      {labelForMediaType(mediaType)}
+      {mediaType === "video" ? "Ver vídeo" : labelForMediaType(mediaType)}
+    </>
+  );
+
+  if (href) {
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        className="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-black/50 px-2 py-1 text-[10px] font-medium text-white/90 backdrop-blur-md transition-colors hover:bg-black/70"
+      >
+        {content}
+      </a>
+    );
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-black/50 px-2 py-1 text-[10px] font-medium text-white/90 backdrop-blur-md">
+      {content}
     </span>
   );
 }
@@ -1777,11 +1881,19 @@ function buildCreativeVturbMetrics(
 
   for (const event of events) {
     const payload = event.payload ?? {};
-    const adId = String(payload.utm_content ?? "");
-    if (!adId) continue;
-    const current = metricsByAdId.get(adId) ?? { pageviews: 0, plays: 0, pitchReached: 0 };
-    current.pageviews += firstPositiveMetric(payload.pageviews, payload.page_views, payload.landing_page_views);
+    const attributionKey = String(payload.utm_content ?? payload.grouped_field ?? "").trim();
+    if (!attributionKey) continue;
+    const current = metricsByAdId.get(attributionKey) ?? { pageviews: 0, plays: 0, pitchReached: 0 };
+    current.pageviews += firstPositiveMetric(
+      payload.total_viewed_session_uniq,
+      payload.total_viewed_device_uniq,
+      payload.pageviews,
+      payload.page_views,
+      payload.landing_page_views,
+    );
     current.plays += firstPositiveMetric(
+      payload.total_started_session_uniq,
+      payload.total_started_device_uniq,
       payload.plays,
       payload.play,
       payload.total_plays,
@@ -1789,8 +1901,8 @@ function buildCreativeVturbMetrics(
       payload.sessions,
       payload.unique_views,
     );
-    current.pitchReached += metricNumber(payload.pitch_reached ?? payload.conversions);
-    metricsByAdId.set(adId, current);
+    current.pitchReached += metricNumber(payload.total_over_pitch ?? payload.pitch_reached ?? payload.conversions);
+    metricsByAdId.set(attributionKey, current);
   }
 
   const result = new Map<string, CreativeVturbMetrics>();
@@ -1800,9 +1912,12 @@ function buildCreativeVturbMetrics(
     let plays = 0;
     let pitchReached = 0;
 
-    for (const adId of card.adIds) {
-      const metrics = metricsByAdId.get(adId);
-      if (!metrics) continue;
+    const attributionTerms = [...card.adIds, ...card.adNames]
+      .map((value) => value.trim().toLowerCase())
+      .filter((value) => value.length >= 3);
+    for (const [content, metrics] of metricsByAdId) {
+      const normalizedContent = content.toLowerCase();
+      if (!attributionTerms.some((term) => normalizedContent === term || normalizedContent.includes(term))) continue;
       pageviews += metrics.pageviews;
       plays += metrics.plays;
       pitchReached += metrics.pitchReached;

@@ -42,6 +42,13 @@ export interface RawVturbPayload {
   unique_views?: number;
   pitch_reached?: number;
   conversions?: number;
+  grouped_field?: string;
+  query_key?: string;
+  total_viewed_session_uniq?: number;
+  total_viewed_device_uniq?: number;
+  total_started_session_uniq?: number;
+  total_started_device_uniq?: number;
+  total_over_pitch?: number;
 }
 
 export interface RawGatewayPayload {
@@ -345,16 +352,33 @@ export function correlateAdFunnel(input: CorrelationInput): CorrelationResult {
 
   for (const event of vturbEvents) {
     const payload = event.payload ?? {};
-    const utmContent = payload.utm_content ? String(payload.utm_content) : null;
+    const utmContent = payload.utm_content || payload.grouped_field
+      ? String(payload.utm_content ?? payload.grouped_field)
+      : null;
     if (!utmContent) continue;
 
     const existing = vturbByContent.get(utmContent) ?? { pageviews: 0, plays: 0, views: 0, pitch_reached: 0 };
-    const pageviews = firstPositiveNumber(payload.pageviews, payload.page_views, payload.landing_page_views);
-    const plays = firstPositiveNumber(payload.plays, payload.play, payload.total_plays, payload.views, payload.sessions, payload.unique_views);
+    const pageviews = firstPositiveNumber(
+      payload.total_viewed_session_uniq,
+      payload.total_viewed_device_uniq,
+      payload.pageviews,
+      payload.page_views,
+      payload.landing_page_views,
+    );
+    const plays = firstPositiveNumber(
+      payload.total_started_session_uniq,
+      payload.total_started_device_uniq,
+      payload.plays,
+      payload.play,
+      payload.total_plays,
+      payload.views,
+      payload.sessions,
+      payload.unique_views,
+    );
     existing.pageviews += pageviews;
     existing.plays += plays;
     existing.views += plays || toNumber(payload.sessions ?? payload.views ?? payload.unique_views);
-    existing.pitch_reached += toNumber(payload.pitch_reached ?? payload.conversions);
+    existing.pitch_reached += toNumber(payload.total_over_pitch ?? payload.pitch_reached ?? payload.conversions);
     vturbByContent.set(utmContent, existing);
   }
 
@@ -380,7 +404,7 @@ export function correlateAdFunnel(input: CorrelationInput): CorrelationResult {
 
   // 4. Correlacionar: para cada ad, buscar utm_content = ad_id
   for (const [adId, ad] of adMap) {
-    const vturb = vturbByContent.get(adId);
+    const vturb = findAttributionMetrics(vturbByContent, adId);
     if (vturb) {
       ad.vturb_pageviews = vturb.pageviews;
       ad.vturb_plays = vturb.plays;
@@ -389,7 +413,7 @@ export function correlateAdFunnel(input: CorrelationInput): CorrelationResult {
       ad.has_vturb_data = true;
     }
 
-    const gateway = gatewayByContent.get(adId);
+    const gateway = findAttributionMetrics(gatewayByContent, adId);
     if (gateway) {
       ad.gateway_checkouts = gateway.checkouts;
       ad.gateway_purchases = gateway.purchases;
@@ -467,6 +491,27 @@ export function correlateAdFunnel(input: CorrelationInput): CorrelationResult {
     ads,
     campaigns: [...campaignMap.values()],
   };
+}
+
+function findAttributionMetrics<T extends Record<string, number>>(
+  metricsByContent: Map<string, T>,
+  adId: string,
+): T | null {
+  const exact = metricsByContent.get(adId);
+  if (exact) return exact;
+
+  const normalizedAdId = adId.trim().toLowerCase();
+  let result: T | null = null;
+  for (const [content, metrics] of metricsByContent) {
+    if (!content.trim().toLowerCase().includes(normalizedAdId)) continue;
+    if (!result) {
+      result = Object.fromEntries(Object.keys(metrics).map((key) => [key, 0])) as T;
+    }
+    for (const [key, value] of Object.entries(metrics)) {
+      result[key as keyof T] = (result[key as keyof T] + value) as T[keyof T];
+    }
+  }
+  return result;
 }
 
 // ============================================================================

@@ -13,6 +13,7 @@ const baseAsset: CreativeAssetRow = {
   primary_text: "Copy",
   cta: "Saiba mais",
   landing_url: "https://example.com",
+  post_url: null,
   analysis_status: "ready",
   last_meta_synced_at: "2026-06-18T12:00:00Z",
   source_media_url: "https://public.example.com/video.mp4",

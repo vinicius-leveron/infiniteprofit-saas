@@ -18,9 +18,11 @@ describe("creative sync core", () => {
     });
 
     expect(asset.postUrl).toBe("https://www.facebook.com/123456/posts/987654");
+    expect(asset.facebookPostUrl).toBe("https://www.facebook.com/123456/posts/987654");
+    expect(asset.instagramPostUrl).toBeNull();
   });
 
-  it("prefers Instagram permalink when Meta returns one", () => {
+  it("keeps Facebook and Instagram moderation links separately", () => {
     const asset = deriveCreativeAsset({
       id: "ad-2",
       creative: {
@@ -31,7 +33,9 @@ describe("creative sync core", () => {
       },
     });
 
-    expect(asset.postUrl).toBe("https://www.instagram.com/p/abc123/");
+    expect(asset.postUrl).toBe("https://www.facebook.com/123456/posts/987654");
+    expect(asset.facebookPostUrl).toBe("https://www.facebook.com/123456/posts/987654");
+    expect(asset.instagramPostUrl).toBe("https://www.instagram.com/p/abc123/");
   });
 
   it("derives a shared asset key from video creative data", () => {
@@ -97,6 +101,7 @@ describe("creative sync core", () => {
           event_type: "purchase.refunded",
           payload: {
             transaction_id: "tx-video-1",
+            total: 300,
           },
         },
       ],
@@ -117,9 +122,50 @@ describe("creative sync core", () => {
     expect(videoRow?.purchases).toBe(1);
     expect(videoRow?.revenue).toBe(300);
     expect(videoRow?.refunds).toBe(1);
+    expect(videoRow?.refund_value).toBe(300);
     expect(videoRow?.refund_rate).toBe(100);
     expect(imageRow?.hook_rate).toBeCloseTo(1, 1);
     expect(imageRow?.link_ctr).toBeCloseTo(1, 1);
+  });
+
+  it("separates front, order bump, and upsell volume and revenue", () => {
+    const rows = buildCreativeDailyMetrics({
+      metaRows: [],
+      gatewayRows: [
+        {
+          event_date: "2026-06-01",
+          event_type: "purchase.approved",
+          payload: { utm_content: "ad-1", total: 197, is_front: true },
+        },
+        {
+          event_date: "2026-06-01",
+          event_type: "purchase.approved",
+          payload: {
+            utm_content: "ad-1",
+            total: 47,
+            is_front: false,
+            is_offer_event: true,
+            items: [{ type: "orderbump", is_bump: true, price: 47 }],
+          },
+        },
+        {
+          event_date: "2026-06-01",
+          event_type: "purchase.approved",
+          payload: { utm_content: "ad-1", total: 97, is_front: false, is_offer_event: false },
+        },
+      ],
+      assetIdByAdId: new Map([["ad-1", "asset-1"]]),
+      mediaTypeByAssetId: new Map([["asset-1", "video"]]),
+    });
+
+    expect(rows[0]).toMatchObject({
+      purchases: 1,
+      revenue: 341,
+      order_bump_purchases: 1,
+      order_bump_revenue: 47,
+      upsell_purchases: 1,
+      upsell_revenue: 97,
+    });
   });
 
   it("falls back to inferred transcript when media analysis is unavailable", () => {

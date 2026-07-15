@@ -17,6 +17,9 @@ const tableData: Record<string, unknown> = {
       primary_text: "Copy principal",
       cta: "Saiba mais",
       landing_url: "https://example.com",
+      post_url: "https://www.facebook.com/123/posts/456",
+      facebook_post_url: "https://www.facebook.com/123/posts/456",
+      instagram_post_url: "https://www.instagram.com/p/abc/",
       analysis_status: "ready",
       last_meta_synced_at: "2026-06-03T12:00:00Z",
       source_media_url: "https://example.com/asset.mp4",
@@ -53,6 +56,13 @@ const tableData: Record<string, unknown> = {
       cpm: 100,
       purchases: 4,
       revenue: 320,
+      refunds: 1,
+      refund_value: 80,
+      refund_rate: 25,
+      order_bump_purchases: 2,
+      order_bump_revenue: 60,
+      upsell_purchases: 1,
+      upsell_revenue: 90,
       roas: 3.2,
       cpa: 25,
       hook_rate: 40,
@@ -95,6 +105,17 @@ const tableData: Record<string, unknown> = {
       status: "succeeded",
       error_message: null,
       created_at: "2026-06-03T12:30:00Z",
+    },
+  ],
+  raw_events: [
+    {
+      payload: {
+        query_key: "utm_content",
+        grouped_field: "campaign-ad-1-feed",
+        total_viewed_session_uniq: 20,
+        total_started_session_uniq: 10,
+        total_over_pitch: 5,
+      },
     },
   ],
 };
@@ -167,6 +188,16 @@ describe("AdsPanel", () => {
 
     expect(screen.getByRole("button", { name: "Cards" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Funil" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Ver vídeo" })).toHaveAttribute("href", "https://example.com/asset.mp4");
+    expect(screen.getByRole("link", { name: /facebook\.com/i })).toHaveAttribute("href", "https://www.facebook.com/123/posts/456");
+    expect(screen.getByRole("link", { name: /instagram\.com/i })).toHaveAttribute("href", "https://www.instagram.com/p/abc/");
+    expect(screen.getByText("Play Rate")).toBeInTheDocument();
+    expect(screen.getAllByText("50.0%")).toHaveLength(2);
+    expect(screen.getByText("AOV")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Ver order bump e upsell" }));
+    expect(screen.getByText("Order bump")).toBeInTheDocument();
+    expect(screen.getByText("Upsell")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /Detalhes/i }));
     expect(screen.getByRole("tab", { name: "Resumo" })).toBeInTheDocument();
@@ -194,6 +225,12 @@ describe("AdsPanel", () => {
           project_id: "project-1",
           days: 30,
           enqueue_analysis: false,
+        },
+      });
+      expect(supabase.functions.invoke).toHaveBeenCalledWith("vturb-pull", {
+        body: {
+          project_id: "project-1",
+          days: 30,
         },
       });
     });
