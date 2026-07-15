@@ -439,26 +439,43 @@ function applyDailyMetricsOverride<T extends Record<string, unknown>>(
 ) {
   if (!override) return recomputeDerivedMetrics(metrics);
   const out = { ...metrics };
+  const authoritativeGatewayOverride = isAuthoritativeDailyImport(override);
 
   for (const key of DAILY_METRIC_OVERRIDE_KEYS) {
     if (!(key in override)) continue;
-    if (shouldKeepRawMetric(key, coverage, out)) continue;
+    if (shouldKeepRawMetric(key, coverage, out, authoritativeGatewayOverride)) continue;
     out[key] = overrideNumber(override[key]);
   }
 
-  if (!coverage.gateway && Array.isArray(override.bumps)) {
+  if ((authoritativeGatewayOverride || !coverage.gateway) && Array.isArray(override.bumps)) {
     out.bumps = override.bumps;
   }
 
   return recomputeDerivedMetrics(out);
 }
 
-function shouldKeepRawMetric(key: string, coverage: SourceCoverage, metrics: Record<string, unknown>) {
+function shouldKeepRawMetric(
+  key: string,
+  coverage: SourceCoverage,
+  metrics: Record<string, unknown>,
+  authoritativeGatewayOverride = false,
+) {
   if (!hasMetricValue(metrics[key])) return false;
+  if (
+    authoritativeGatewayOverride
+    && GATEWAY_OWNED_KEYS.has(key)
+    && !(coverage.meta && META_OWNED_KEYS.has(key))
+  ) return false;
   if (coverage.meta && META_OWNED_KEYS.has(key)) return true;
   if (coverage.vturb && VTURB_OWNED_KEYS.has(key)) return true;
   if (coverage.gateway && GATEWAY_OWNED_KEYS.has(key)) return true;
   return false;
+}
+
+function isAuthoritativeDailyImport(override: Record<string, unknown>) {
+  return override.import_authoritative === true
+    || override.import_source === "daily_metrics_sheet"
+    || override.import_source === "denise_tracking_sheet";
 }
 
 function hasMetricValue(value: unknown) {

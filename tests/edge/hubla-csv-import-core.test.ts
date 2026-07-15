@@ -226,6 +226,7 @@ describe("hubla csv import core", () => {
         checkouts: 7,
       },
     });
+    expect(result.overrides[0].payload.import_authoritative).toBe(true);
   });
 
   it("throws a clear error for empty CSV input", () => {

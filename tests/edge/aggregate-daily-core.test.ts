@@ -733,4 +733,45 @@ describe("aggregate daily core", () => {
     expect(metrics.fat_liquido).toBe(90);
     expect(metrics.bumps).toEqual([]);
   });
+
+  it("lets an authoritative daily sheet correct partial gateway coverage", () => {
+    const metrics = aggregateOneDay([
+      {
+        source: "meta",
+        event_type: "insight",
+        payload: { spend: 100, impressions: 1000, actions: [{ action_type: "link_click", value: 100 }] },
+      },
+      {
+        source: "gateway",
+        event_type: "purchase.approved",
+        external_id: "partial-sale",
+        payload: { total: 297, net: 270, is_front: true },
+      },
+      {
+        source: "sheet_override",
+        event_type: "daily_metrics",
+        payload: {
+          import_source: "daily_metrics_sheet",
+          import_authoritative: true,
+          vendas_front: 22,
+          vendas_totais: 33,
+          fat_bruto: 10000,
+          fat_liquido: 9000,
+          fat_front: 7000,
+          fat_orderbump: 3000,
+          fat_funil: 3000,
+          bumps: [{ name: "Acesso", type: "orderbump", count: 11, revenue: 3000, rate: 50 }],
+        },
+      },
+    ]);
+
+    expect(metrics.investimento).toBe(100);
+    expect(metrics.vendas_front).toBe(22);
+    expect(metrics.vendas_totais).toBe(33);
+    expect(metrics.fat_bruto).toBe(10000);
+    expect(metrics.fat_liquido).toBe(9000);
+    expect(metrics.bumps).toEqual([
+      expect.objectContaining({ name: "Acesso", count: 11, revenue: 3000 }),
+    ]);
+  });
 });

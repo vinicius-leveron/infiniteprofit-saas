@@ -107,6 +107,10 @@ export function parseDailyMetricsCsv(csv: string): DailyMetricsCsvParseResult {
     }
 
     payload.import_source = "daily_metrics_sheet";
+    // This file is the operator's daily source of truth. Keep Meta/VTurb
+    // traffic from their live integrations, but let the imported sales and
+    // funnel columns replace partial webhook coverage for the same date.
+    payload.import_authoritative = true;
     overrides.push({ event_date: date, payload, line });
   }
 
