@@ -201,6 +201,34 @@ describe("aggregate daily core", () => {
     expect(metrics.fat_front).toBe(197);
   });
 
+  it("keeps upsells out of the general order-bump conversion", () => {
+    const metrics = aggregateOneDay([
+      {
+        source: "gateway",
+        event_type: "purchase.approved",
+        external_id: "tx-mixed-offers",
+        payload: {
+          transaction_id: "tx-mixed-offers",
+          total: 150,
+          net: 150,
+          is_front: true,
+          items: [
+            { external_id: "front", name: "Front", price: 100, type: "main", is_bump: false },
+            { external_id: "ob", name: "Order Bump", price: 20, type: "orderbump", is_bump: true },
+            { external_id: "up", name: "Upsell", price: 30, type: "upsell", is_bump: true },
+          ],
+        },
+      },
+    ]);
+
+    expect(metrics.vendas_front).toBe(1);
+    expect(metrics.conv_geral_orderbump).toBe(100);
+    expect(metrics.bumps).toEqual([
+      expect.objectContaining({ name: "Order Bump", type: "orderbump", count: 1 }),
+      expect.objectContaining({ name: "Upsell", type: "upsell", count: 1 }),
+    ]);
+  });
+
   it("uses Hubla seller receiver total from raw payload as net revenue", () => {
     const metrics = aggregateOneDay([
       {

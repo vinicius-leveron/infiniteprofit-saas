@@ -516,7 +516,9 @@ function recomputeDerivedMetrics<T extends Record<string, unknown>>(metrics: T) 
     : null;
 
   const bumpCount = Array.isArray(out.bumps)
-    ? out.bumps.reduce((sum, bump: any) => sum + num(bump?.count), 0)
+    ? out.bumps
+      .filter((bump: any) => String(bump?.type ?? "orderbump") === "orderbump")
+      .reduce((sum, bump: any) => sum + num(bump?.count), 0)
     : 0;
   out.conv_geral_orderbump = vendasFront && vendasFront > 0 ? (bumpCount / vendasFront) * 100 : null;
   out.proporcao_funil_front = fatFront && fatFront > 0 && fatFunil != null ? fatFunil / fatFront : null;
