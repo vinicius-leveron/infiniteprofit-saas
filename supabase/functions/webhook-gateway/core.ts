@@ -120,14 +120,22 @@ export function normalizeHubla(raw: any): NormalizedEvent[] {
     root.event,
     root.webhook_event_type,
     data.type,
+    data.event_type,
     eventRecord.type,
+    eventRecord.event_type,
     object.event,
+    object.event_type,
   ]).toLowerCase();
   const status = firstString([
     object.status,
     object.payment_status,
     object.invoice_status,
+    object.paymentStatus,
+    object.invoiceStatus,
+    object.state,
     eventRecord.status,
+    eventRecord.payment_status,
+    eventRecord.state,
     root.status,
   ]).toLowerCase();
   const normalizedStatus = normalizeToken(status);
@@ -149,19 +157,45 @@ export function normalizeHubla(raw: any): NormalizedEvent[] {
     || classifier.includes("failed")
     || classifier.includes("declined")
     || classifier.includes("refused")
+    || classifier.includes("rejected")
+    || classifier.includes("denied")
     || classifier.includes("canceled")
     || classifier.includes("cancelled")
     || classifier.includes("expired")
     || classifier.includes("overdue")
+    || normalizedStatus === "reversed"
+    || normalizedStatus === "voided"
   ) {
     type = "purchase.refused";
   } else if (
     classifier.includes("payment_succeeded")
     || classifier.includes("payment.succeeded")
+    || classifier.includes("payment_success")
+    || classifier.includes("payment.success")
     || classifier.includes("invoice.paid")
+    || classifier.includes("invoice.completed")
+    || classifier.includes("invoice.settled")
     || classifier.includes("approved")
+    || classifier.includes("completed")
+    || classifier.includes("settled")
+    || classifier.includes("confirmed")
+    || classifier.includes("captured")
     || status === "paid"
     || status === "succeeded"
+    || normalizedStatus === "success"
+    || normalizedStatus === "successful"
+    || normalizedStatus === "completed"
+    || normalizedStatus === "complete"
+    || normalizedStatus === "settled"
+    || normalizedStatus === "confirmed"
+    || normalizedStatus === "confirmado"
+    || normalizedStatus === "confirmada"
+    || normalizedStatus === "concluido"
+    || normalizedStatus === "concluida"
+    || normalizedStatus === "capturado"
+    || normalizedStatus === "capturada"
+    || normalizedStatus === "liquidado"
+    || normalizedStatus === "liquidada"
     || normalizedStatus === "paga"
     || normalizedStatus === "pago"
     || normalizedStatus === "aprovada"
@@ -173,6 +207,9 @@ export function normalizeHubla(raw: any): NormalizedEvent[] {
     || classifier.includes("waiting_payment")
     || classifier.includes("payment_pending")
     || classifier.includes("unpaid")
+    || normalizedStatus === "waiting"
+    || normalizedStatus === "created"
+    || normalizedStatus === "processing"
     || classifier.includes("pending")
   ) {
     type = "checkout_created";

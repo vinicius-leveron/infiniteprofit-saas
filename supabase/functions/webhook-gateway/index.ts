@@ -29,36 +29,79 @@ Deno.serve(async (req) => {
     }
 
     const sb = createClient(SUPABASE_URL, SERVICE_KEY);
-    const { data: binding, error: bindingError } = await sb
+    let { data: binding, error: bindingError } = await sb
       .from("project_checkout_bindings")
       .select("project_id, webhook_token, enabled")
       .eq("webhook_token", token)
       .maybeSingle();
 
-    if (bindingError || !binding?.project_id) {
+    // A database timeout used to be returned as a 404 here. Hubla treats a
+    // 404 as a permanent rejection and does not retry the sale, which can
+    // make a transient Supabase incident look like missing revenue. Retry a
+    // lookup once and explicitly ask the provider to retry on query errors.
+    if (bindingError) {
+      console.error("webhook-gateway binding lookup failed", safeLookupError(bindingError, provider));
+      await wait(250);
+      ({ data: binding, error: bindingError } = await sb
+        .from("project_checkout_bindings")
+        .select("project_id, webhook_token, enabled")
+        .eq("webhook_token", token)
+        .maybeSingle());
+    }
+    if (bindingError) {
+      console.error("webhook-gateway binding lookup retry failed", safeLookupError(bindingError, provider));
+      return json({ error: "temporary binding lookup failure", retryable: true }, 503);
+    }
+    if (!binding?.project_id) {
       return json({ error: "binding not found" }, 404);
     }
     if (!binding.enabled) {
       return json({ error: "binding disabled" }, 410);
     }
 
-    const { data: project, error: projectError } = await sb
+    let { data: project, error: projectError } = await sb
       .from("projects")
       .select("id, user_id, workspace_id")
       .eq("id", binding.project_id)
       .maybeSingle();
 
-    if (projectError || !project?.workspace_id) {
+    if (projectError) {
+      console.error("webhook-gateway project lookup failed", safeLookupError(projectError, provider));
+      await wait(250);
+      ({ data: project, error: projectError } = await sb
+        .from("projects")
+        .select("id, user_id, workspace_id")
+        .eq("id", binding.project_id)
+        .maybeSingle());
+    }
+    if (projectError) {
+      console.error("webhook-gateway project lookup retry failed", safeLookupError(projectError, provider));
+      return json({ error: "temporary project lookup failure", retryable: true }, 503);
+    }
+    if (!project?.workspace_id) {
       return json({ error: "project not found" }, 404);
     }
 
-    const { data: integration, error: integrationError } = await sb
+    let { data: integration, error: integrationError } = await sb
       .from("workspace_integrations")
       .select("workspace_id, gateway_provider, gateway_webhook_secret")
       .eq("workspace_id", project.workspace_id)
       .maybeSingle();
 
-    if (integrationError || !integration) {
+    if (integrationError) {
+      console.error("webhook-gateway integration lookup failed", safeLookupError(integrationError, provider));
+      await wait(250);
+      ({ data: integration, error: integrationError } = await sb
+        .from("workspace_integrations")
+        .select("workspace_id, gateway_provider, gateway_webhook_secret")
+        .eq("workspace_id", project.workspace_id)
+        .maybeSingle());
+    }
+    if (integrationError) {
+      console.error("webhook-gateway integration lookup retry failed", safeLookupError(integrationError, provider));
+      return json({ error: "temporary integration lookup failure", retryable: true }, 503);
+    }
+    if (!integration) {
       return json({ error: "workspace integration not found" }, 404);
     }
     if (!integration.gateway_webhook_secret) {
@@ -88,6 +131,11 @@ Deno.serve(async (req) => {
 
     const events = normalizeEvent(provider, payload);
     if (events.length === 0) {
+      console.warn("webhook-gateway ignored event", {
+        provider,
+        event_type: hublaDiagnosticValue(provider, payload, "event_type"),
+        status: hublaDiagnosticValue(provider, payload, "status"),
+      });
       return json({ ok: true, ignored: true });
     }
 
@@ -240,6 +288,32 @@ function parsePath(rawUrl: string) {
       provider && ["hotmart", "hubla", "kiwify"].includes(provider) ? provider : null,
     token,
   };
+}
+
+function wait(milliseconds: number) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function safeLookupError(error: unknown, provider: string) {
+  const record = error && typeof error === "object" ? error as Record<string, unknown> : {};
+  return {
+    provider,
+    code: typeof record.code === "string" ? record.code : null,
+    message: typeof record.message === "string" ? record.message : "query failed",
+  };
+}
+
+function hublaDiagnosticValue(provider: string, payload: unknown, field: "event_type" | "status") {
+  if (provider !== "hubla") return null;
+  const root = payload && typeof payload === "object" ? payload as Record<string, any> : {};
+  const data = root.data && typeof root.data === "object" ? root.data as Record<string, any> : {};
+  const event = root.event && typeof root.event === "object" ? root.event as Record<string, any> : {};
+  const invoice = [data.object, data.invoice, event.invoice, event.object, root.invoice, root.object]
+    .find((value) => value && typeof value === "object" && !Array.isArray(value)) as Record<string, any> | undefined;
+  const values = field === "event_type"
+    ? [root.type, root.event_type, root.webhook_event_type, data.type, event.type, invoice?.event]
+    : [invoice?.status, invoice?.payment_status, invoice?.invoice_status, event.status, root.status];
+  return values.find((value) => typeof value === "string" && value.trim()) ?? null;
 }
 
 async function validateSignature(

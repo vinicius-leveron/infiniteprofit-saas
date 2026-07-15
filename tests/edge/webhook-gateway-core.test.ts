@@ -67,6 +67,36 @@ describe("webhook gateway core", () => {
     expect(event.payload.total).toBeCloseTo(197);
   });
 
+  it("normalizes Hubla status updates with completed/confirmed statuses as approved", () => {
+    const completed = normalizeHubla({
+      type: "invoice.status_updated",
+      event: {
+        invoice: {
+          id: "invoice-completed",
+          state: "completed",
+          amount: { totalCents: 29700 },
+          updatedAt: "2026-07-15T12:00:00.000Z",
+        },
+      },
+    });
+    const confirmed = normalizeHubla({
+      type: "payment.confirmed",
+      data: {
+        object: {
+          id: "invoice-confirmed",
+          status: "confirmado",
+          amount_paid: 19700,
+          updated_at: "2026-07-15T12:00:00.000Z",
+        },
+      },
+    });
+
+    expect(completed[0]?.event_type).toBe("purchase.approved");
+    expect(completed[0]?.payload.total).toBeCloseTo(297);
+    expect(confirmed[0]?.event_type).toBe("purchase.approved");
+    expect(confirmed[0]?.payload.total).toBeCloseTo(197);
+  });
+
   it("uses Hubla seller receiver total as net revenue", () => {
     const [event] = normalizeHubla({
       type: "invoice.payment_succeeded",
