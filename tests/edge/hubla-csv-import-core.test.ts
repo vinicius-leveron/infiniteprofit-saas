@@ -229,6 +229,35 @@ describe("hubla csv import core", () => {
     expect(result.overrides[0].payload.import_authoritative).toBe(true);
   });
 
+  it("reconciles funnel sales with grouped order bump columns", () => {
+    const csv = [
+      "Data;Investimento;Vendas Front;Vendas Totais do Funil;Orderbump - Acesso;Faturamento - Orderbump - Acesso;% Conversão - Orderbump - Acesso;Orderbump - Suporte;Faturamento - Orderbump - Suporte;% Conversão - Orderbump - Suporte;Faturamento Líquido",
+      "15/07/2026;R$ 100,00;22;26;5;R$ 485,00;22,73%;6;R$ 582,00;27,27%;R$ 1.000,00",
+    ].join("\n");
+
+    const result = parseDailyMetricsCsv(csv);
+
+    expect(result.overrides[0].payload.vendas_front).toBe(22);
+    expect(result.overrides[0].payload.vendas_totais).toBe(33);
+    expect(result.warnings).toContain(
+      "Linha 2: vendas totais ajustadas de 26 para 33 (22 front + 11 ofertas agrupadas)",
+    );
+  });
+
+  it("uses an aggregate order bump sales column when product columns are grouped", () => {
+    const csv = [
+      "Data;Investimento;Vendas Front;Vendas Totais do Funil;Vendas Orderbump;Faturamento Líquido",
+      "15/07/2026;R$ 100,00;22;26;11;R$ 1.000,00",
+    ].join("\n");
+
+    const result = parseDailyMetricsCsv(csv);
+
+    expect(result.overrides[0].payload.vendas_totais).toBe(33);
+    expect(result.warnings).toContain(
+      "Linha 2: vendas totais ajustadas de 26 para 33 (22 front + 11 ofertas agrupadas)",
+    );
+  });
+
   it("throws a clear error for empty CSV input", () => {
     expect(() => parseHublaCsv("transacao;status")).toThrow("CSV sem linhas suficientes");
   });

@@ -337,6 +337,7 @@ export function parseCsv(text: string): ParsedCsv {
   });
 
   const bumpDefs = detectBumps(headers);
+  const bumpAggregateCols = detectBumpAggregateColumns(headers);
 
   // Aggregate columns from CSV
   let convGeralOrderbumpCol = -1;
@@ -386,13 +387,21 @@ export function parseCsv(text: string): ParsedCsv {
       rate: parseBR(row[b.rateCol]),
     }));
 
+    const vendasFront = get("vendasFront");
+    const vendasTotais = correctDailyFunnelSales(
+      get("vendasTotais"),
+      vendasFront,
+      bumps,
+      bumpAggregateCols.map((column) => parseBR(row[column])),
+    );
+
     out.push({
       data: dataRaw,
       date,
       diaSemana: getStr("diaSemana"),
       investimento: get("investimento"),
-      vendasFront: get("vendasFront"),
-      vendasTotais: get("vendasTotais"),
+      vendasFront,
+      vendasTotais,
       cpaFront: get("cpaFront"),
       fatBruto: get("fatBruto"),
       fatLiquido: get("fatLiquido"),
@@ -438,4 +447,31 @@ export function parseCsv(text: string): ParsedCsv {
 
   out.sort((a, b) => (a.date?.getTime() ?? 0) - (b.date?.getTime() ?? 0));
   return { rows: out, bumpDefs };
+}
+
+function correctDailyFunnelSales(
+  provided: number | null,
+  front: number | null,
+  bumps: BumpDaily[],
+  aggregateCounts: Array<number | null> = [],
+) {
+  if (front == null) return provided;
+  const groupedOffers = bumps.reduce((sum, bump) => sum + Math.max(0, bump.count ?? 0), 0);
+  const aggregateOffers = aggregateCounts.reduce((max, count) => Math.max(max, count ?? 0), 0);
+  const offers = Math.max(groupedOffers, aggregateOffers);
+  if (offers <= 0) return provided;
+  const corrected = front + offers;
+  return provided == null || provided < corrected ? corrected : provided;
+}
+
+function detectBumpAggregateColumns(headers: string[]) {
+  return headers.flatMap((raw, index) => {
+    const value = slug(raw);
+    if (!value.includes("orderbump") && !value.includes("upsell")) return [];
+    if (/(faturamento|receita|conversao|taxa|percent|porcentagem)/.test(value)) return [];
+    if (!/(^|_)(vendas|quantidade|qtd|count|total)(_|$)/.test(value) && value !== "orderbump" && value !== "upsell") {
+      return [];
+    }
+    return [index];
+  });
 }

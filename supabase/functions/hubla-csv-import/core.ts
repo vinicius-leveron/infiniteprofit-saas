@@ -75,6 +75,7 @@ export function parseDailyMetricsCsv(csv: string): DailyMetricsCsvParseResult {
   const headerKeys = headers.map(dailyMetricKeysForHeader);
   const dataColumn = headers.findIndex((header) => header === "data");
   const bumpDefs = detectDailyBumps(rawHeaders);
+  const bumpAggregateCols = detectDailyBumpAggregateColumns(rawHeaders);
 
   for (const [index, row] of dataRows.entries()) {
     const line = index + 2;
@@ -100,6 +101,19 @@ export function parseDailyMetricsCsv(csv: string): DailyMetricsCsvParseResult {
       rate: parseMetricNumber(row[bump.rateCol] ?? ""),
     }));
     if (bumps.length > 0) payload.bumps = bumps;
+
+    const funnelCorrection = correctDailyFunnelSales(
+      payload,
+      bumps,
+      bumpAggregateCols.map((column) => parseMetricNumber(row[column] ?? "")),
+    );
+    if (funnelCorrection) {
+      warnings.push(
+        `Linha ${line}: vendas totais ajustadas de ${formatMetricNumber(funnelCorrection.provided)} `
+        + `para ${formatMetricNumber(funnelCorrection.corrected)} `
+        + `(${formatMetricNumber(funnelCorrection.front)} front + ${formatMetricNumber(funnelCorrection.offers)} ofertas agrupadas)`,
+      );
+    }
 
     if (!hasDailyMetricSignal(payload)) {
       warnings.push(`Linha ${line}: sem métricas úteis, ignorada`);
@@ -230,6 +244,54 @@ function hasDailyMetricSignal(payload: Record<string, unknown>) {
     const value = payload[key];
     return typeof value === "number" && Math.abs(value) > 0.000001;
   });
+}
+
+function correctDailyFunnelSales(
+  payload: Record<string, unknown>,
+  bumps: Array<{ count: number | null }>,
+  aggregateCounts: Array<number | null> = [],
+) {
+  const front = metricNumber(payload.vendas_front);
+  if (front == null) return null;
+
+  const groupedOffers = bumps.reduce((sum, bump) => sum + Math.max(0, bump.count ?? 0), 0);
+  const aggregateOffers = aggregateCounts.reduce((max, count) => Math.max(max, count ?? 0), 0);
+  const offers = Math.max(groupedOffers, aggregateOffers);
+  if (offers <= 0) return null;
+
+  const provided = metricNumber(payload.vendas_totais);
+  const corrected = front + offers;
+  if (provided != null && provided >= corrected) return null;
+
+  payload.vendas_totais = corrected;
+  return {
+    provided: provided ?? 0,
+    corrected,
+    front,
+    offers,
+  };
+}
+
+function detectDailyBumpAggregateColumns(headers: string[]) {
+  return headers.flatMap((raw, index) => {
+    const slug = normalizeHeader(raw);
+    if (!slug.includes("orderbump") && !slug.includes("upsell")) return [];
+    if (/(faturamento|receita|conversao|taxa|percent|porcentagem)/.test(slug)) return [];
+    if (!/(^|_)(vendas|quantidade|qtd|count|total)(_|$)/.test(slug) && slug !== "orderbump" && slug !== "upsell") {
+      return [];
+    }
+    return [index];
+  });
+}
+
+function metricNumber(value: unknown) {
+  if (value == null || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatMetricNumber(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/\.00$/, "");
 }
 
 function detectDailyBumps(headers: string[]) {
