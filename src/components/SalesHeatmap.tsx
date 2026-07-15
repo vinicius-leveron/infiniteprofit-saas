@@ -94,7 +94,10 @@ export function SalesHeatmap({ projectId, dateRange }: Props) {
     for (const event of events) {
       const timestamp = event.event_occurred_at ?? event.received_at;
       const hour = hourInSaoPaulo(timestamp);
-      const day = weekdayIndex(event.event_date);
+      // The raw event date is the aggregation day and may have been written
+      // in UTC.  Use the same timestamp/timezone as the hour so purchases
+      // close to midnight are shown on the correct local weekday.
+      const day = weekdayIndexInSaoPaulo(timestamp) ?? weekdayIndex(event.event_date);
       if (hour == null || day == null) continue;
 
       const key = `${day}:${hour}`;
@@ -229,6 +232,25 @@ function weekdayIndex(dateKey: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return null;
   const utcDay = new Date(`${dateKey}T12:00:00Z`).getUTCDay();
   return (utcDay + 6) % 7;
+}
+
+function weekdayIndexInSaoPaulo(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const day = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Sao_Paulo",
+    weekday: "short",
+  }).format(date).toLowerCase();
+  const index: Record<string, number> = {
+    mon: 0,
+    tue: 1,
+    wed: 2,
+    thu: 3,
+    fri: 4,
+    sat: 5,
+    sun: 6,
+  };
+  return index[day] ?? null;
 }
 
 function eventRevenue(payload: unknown) {

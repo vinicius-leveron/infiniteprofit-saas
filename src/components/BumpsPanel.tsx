@@ -54,7 +54,9 @@ export const BumpsPanel = ({ rows }: Props) => {
     >();
     rows.forEach((r) => {
       r.bumps?.forEach((b) => {
-        const key = b.name;
+        // A product name is not globally unique: keep an order bump and an
+        // upsell with the same label as separate rows.
+        const key = `${b.type}:${b.name}`;
         const slot =
           bumpMap.get(key) ||
           { name: b.name, type: b.type, count: 0, revenue: 0, days: 0, ratesSum: 0, ratesN: 0 };
@@ -114,8 +116,9 @@ export const BumpsPanel = ({ rows }: Props) => {
         fatFunil: r.fatFunil ?? 0,
         convGeralOrderbump:
           r.convGeralOrderbump ?? dailyOrderbumpConversion(r),
-        proporcaoFunilFront:
+        proporcaoFunilFront: normalizeFunnelProportion(
           r.proporcaoFunilFront ?? dailyFunnelProportion(r),
+        ),
       })),
     [rows],
   );
@@ -127,8 +130,8 @@ export const BumpsPanel = ({ rows }: Props) => {
       rows.map((r) => {
         const o: Record<string, number | string> = { day: fmtDay(r.date) };
         topBumps.forEach((b) => {
-          const found = r.bumps?.find((x) => x.name === b.name);
-          o[b.name] = found?.revenue ?? 0;
+          const found = r.bumps?.find((x) => x.type === b.type && x.name === b.name);
+          o[`${b.type}:${b.name}`] = found?.revenue ?? 0;
         });
         return o;
       }),
@@ -195,7 +198,7 @@ export const BumpsPanel = ({ rows }: Props) => {
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
             {totals.bumpsAgg.map((b, i) => (
-              <div key={b.name} className="kpi-card group">
+              <div key={`${b.type}:${b.name}`} className="kpi-card group">
                 <div className="flex items-start justify-between gap-2 mb-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 mb-1">
@@ -320,7 +323,7 @@ export const BumpsPanel = ({ rows }: Props) => {
                   </thead>
                   <tbody>
                     {totals.bumpsAgg.map((b) => (
-                      <tr key={b.name} className="border-b border-border/40 last:border-0">
+                      <tr key={`${b.type}:${b.name}`} className="border-b border-border/40 last:border-0">
                         <td className="py-2.5 pr-3 font-medium text-foreground">{b.name}</td>
                         <td className="py-2.5 px-3">
                           <span
@@ -387,8 +390,9 @@ export const BumpsPanel = ({ rows }: Props) => {
                 <Tooltip content={<RichTooltip formatter={(v) => fBRL(v)} />} cursor={barCursor} />
                 {topBumps.map((b, i) => (
                   <Bar
-                    key={b.name}
-                    dataKey={b.name}
+                    key={`${b.type}:${b.name}`}
+                    dataKey={`${b.type}:${b.name}`}
+                    name={b.name}
                     stackId="bumps"
                     fill={PALETTE[i % PALETTE.length]}
                     radius={i === topBumps.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]}
@@ -476,4 +480,14 @@ function dailyOrderbumpConversion(row: DailyRow) {
 
 function dailyFunnelProportion(row: DailyRow) {
   return row.fatFront ? ((row.fatFunil ?? 0) / row.fatFront) * 100 : null;
+}
+
+/**
+ * API daily metrics store this ratio as a fraction (e.g. 0.25), while CSV
+ * imports generally contain the already formatted percentage (25). Normalize
+ * both representations before rendering percentage axes/tooltips.
+ */
+function normalizeFunnelProportion(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) return null;
+  return Math.abs(value) <= 1 ? value * 100 : value;
 }

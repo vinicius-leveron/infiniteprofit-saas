@@ -67,6 +67,7 @@ export const OverviewPanel = ({ rows, previous, onDayClick }: Props) => {
           vendas: r.vendasTotais ?? 0,
           vendasFront: r.vendasFront ?? 0,
           roi: r.roi ?? 0,
+          roas: r.investimento ? (r.fatBruto ?? 0) / r.investimento : 0,
           cac: r.cac ?? 0,
           aov: r.aov ?? 0,
           lucro: r.lucro ?? 0,
@@ -84,6 +85,7 @@ export const OverviewPanel = ({ rows, previous, onDayClick }: Props) => {
       fatLiquido: series.map((d) => d.fatLiquido),
       lucro: series.map((d) => d.lucro),
       roi: series.map((d) => d.roi),
+      roas: series.map((d) => d.roas),
       vendas: series.map((d) => d.vendas),
       vendasFront: series.map((d) => d.vendasFront),
       investimento: series.map((d) => d.investimento),
@@ -233,6 +235,15 @@ export const OverviewPanel = ({ rows, previous, onDayClick }: Props) => {
           goodWhenUp={false}
         />
         <KpiCard
+          label="ROAS"
+          value={fMult(t.roas)}
+          hint="Faturamento bruto ÷ investimento"
+          icon={TrendingUp}
+          tone="green"
+          spark={sparks.roas}
+          deltaPct={delta(t.roas, tPrev?.roas)}
+        />
+        <KpiCard
           label="Aprov. Cartão"
           value={fPct(t.avgAprovCartao)}
           hint="Taxa média de aprovação"
@@ -261,7 +272,7 @@ export const OverviewPanel = ({ rows, previous, onDayClick }: Props) => {
         <KpiCard
           label="Taxa de Reembolso"
           value={fPct(t.taxaReembolso)}
-          hint="Reembolsos ÷ vendas totais"
+          hint="Reembolsos ÷ vendas aprovadas"
           icon={Percent}
           tone="red"
           spark={sparks.taxaReembolso}

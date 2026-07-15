@@ -21,6 +21,7 @@ import {
   MousePointerClick,
   FileText,
   ShoppingBag,
+  BadgeDollarSign,
   Play,
   Film,
   Pencil,
@@ -182,7 +183,21 @@ export const DayDrilldownDialog = ({ row, onOpenChange, projectId, editable, onO
       value: fNum(row.reembolsos),
       icon: ShoppingBag,
       tone: "red",
-      hint: `Taxa: ${fPct(row.taxaReembolso)}`,
+      hint: "Quantidade no dia",
+    },
+    {
+      label: "Taxa de Reembolso",
+      value: fPct(row.taxaReembolso),
+      icon: Activity,
+      tone: "red",
+      hint: "Reembolsos ÷ vendas aprovadas",
+    },
+    {
+      label: "Valor Reembolsado",
+      value: fBRL(row.valorReembolsado),
+      icon: BadgeDollarSign,
+      tone: "red",
+      hint: "Impacto financeiro no dia",
     },
   ];
 
