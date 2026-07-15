@@ -456,7 +456,7 @@ describe("aggregate daily core", () => {
     expect(metrics.lucro).toBeCloseTo(-112.15);
   });
 
-  it("does not double count Hubla child invoices already included in the main invoice", () => {
+  it("counts linked Hubla child invoices without double counting their revenue", () => {
     const metrics = aggregateOneDay([
       {
         source: "gateway",
@@ -517,17 +517,18 @@ describe("aggregate daily core", () => {
 
     expect(metrics.checkouts).toBe(1);
     expect(metrics.vendas_front).toBe(1);
-    expect(metrics.vendas_totais).toBe(2);
+    expect(metrics.vendas_totais).toBe(3);
     expect(metrics.fat_bruto).toBeCloseTo(241.42);
-    expect(metrics.fat_front).toBeCloseTo(197);
-    expect(metrics.fat_orderbump).toBeCloseTo(44.42);
-    expect(metrics.fat_funil).toBeCloseTo(44.42);
+    expect(metrics.fat_front).toBeNull();
+    expect(metrics.fat_orderbump).toBeCloseTo(241.42);
+    expect(metrics.fat_funil).toBeCloseTo(241.42);
     expect(metrics.bumps).toEqual([
+      expect.objectContaining({ name: "Produto Front", count: 1, revenue: 197, rate: 100 }),
       expect.objectContaining({ name: "Order bump", count: 1, revenue: 44.42, rate: 100 }),
     ]);
   });
 
-  it("does not count parent invoices with child offers as duplicate product rows", () => {
+  it("counts every explicit Hubla child offer, including one reusing the front product", () => {
     const metrics = aggregateOneDay([
       {
         source: "gateway",
@@ -559,23 +560,20 @@ describe("aggregate daily core", () => {
       {
         source: "gateway",
         event_type: "purchase.approved",
-        external_id: "tx-zero-bump",
+        external_id: "tx-front",
         payload: {
-          transaction_id: "tx-zero-bump",
+          transaction_id: "tx-front",
           total: 197,
           net: 180,
           is_front: true,
-          product_id: "front",
-          items: [
-            { external_id: "front", name: "Produto Front", price: 197, type: "main", is_bump: false },
-            { external_id: "sonecas", name: "Guia das Sonecas", price: 0, type: "orderbump", is_bump: true },
-          ],
+          product_id: "tummy",
+          items: [{ external_id: "tummy", name: "Protocolo Tummy Time", price: 197, type: "main", is_bump: false }],
         },
       },
     ]);
 
-    expect(metrics.vendas_front).toBe(1);
-    expect(metrics.vendas_totais).toBe(2);
+    expect(metrics.vendas_front).toBe(2);
+    expect(metrics.vendas_totais).toBe(3);
     expect(metrics.fat_bruto).toBeCloseTo(785);
     expect(metrics.fat_orderbump).toBeCloseTo(97);
     expect(metrics.bumps).toEqual([

@@ -840,11 +840,15 @@ function isDuplicateMainOffer(event: RawEvent, group: RawEvent[], frontIdentity:
   const offerId = normalizeIdentity(offerItem.external_id);
   const offerName = normalizeIdentity(offerItem.name);
   if (!offerId && !offerName) return false;
+
+  // Hubla explicitly links child invoices from the parent invoice. Every
+  // linked offer is a real funnel sale, even when it reuses the front
+  // product id (a common setup for access/order-bump offers). Only apply the
+  // legacy product-identity de-duplication when that relationship is absent.
+  if (mainInvoiceIncludesOfferChildren(group)) return false;
+
   if (frontIdentity && ((offerId && offerId === frontIdentity.id) || (offerName && offerName === frontIdentity.name))) {
     return true;
-  }
-  if (mainInvoiceIncludesOfferChildren(group)) {
-    return false;
   }
 
   return group
