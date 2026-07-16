@@ -780,7 +780,7 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
                 value={sortKey}
                 onValueChange={(value) => setSortKey(value as CreativeSortKey)}
                 options={[
-                  { value: "purchases", label: "Vendas" },
+                  { value: "purchases", label: "Vendas front" },
                   { value: "roas", label: "ROAS" },
                   { value: "hook_rate", label: "Hook Rate" },
                   { value: "ctr", label: "CTR" },
@@ -905,7 +905,7 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
               <Select value={groupForm.sortKey} onValueChange={(value) => setGroupForm((current) => ({ ...current, sortKey: value as CreativeSortKey }))}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="purchases">Vendas</SelectItem>
+                  <SelectItem value="purchases">Vendas front</SelectItem>
                   <SelectItem value="roas">ROAS</SelectItem>
                   <SelectItem value="hook_rate">Hook Rate</SelectItem>
                   <SelectItem value="ctr">CTR</SelectItem>
@@ -1265,8 +1265,9 @@ function CreativeCard({
             value={fBRL(card.spend)}
           />
           <MetricTile
-            label="Vendas"
+            label="Vendas front"
             value={fNum(card.purchases)}
+            detail="Oferta principal"
             accent="violet"
             highlight={card.purchases > 0}
           />
