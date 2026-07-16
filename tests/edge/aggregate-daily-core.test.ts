@@ -252,6 +252,7 @@ describe("aggregate daily core", () => {
 
     expect(metrics.vendas_front).toBe(1);
     expect(metrics.conv_geral_orderbump).toBe(100);
+    expect(metrics.fat_orderbump).toBeCloseTo(20);
     expect(metrics.bumps).toEqual([
       expect.objectContaining({ name: "Order Bump", type: "orderbump", count: 1 }),
       expect.objectContaining({ name: "Upsell", type: "upsell", count: 1 }),
@@ -853,6 +854,8 @@ describe("aggregate daily core", () => {
 
     expect(metrics.vendas_front).toBe(1);
     expect(metrics.vendas_totais).toBe(4);
+    expect(metrics.fat_orderbump).toBeNull();
+    expect(metrics.fat_funil).toBeCloseTo(780);
     expect(metrics.bumps).toEqual([
       expect.objectContaining({ name: "Bump 1", count: 1, revenue: 0 }),
       expect.objectContaining({ name: "Bump 2", count: 1, revenue: 0 }),

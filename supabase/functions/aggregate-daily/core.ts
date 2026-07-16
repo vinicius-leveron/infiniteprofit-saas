@@ -197,7 +197,9 @@ export function aggregateOneDay(events: RawEvent[]) {
         };
         current.count += 1;
         current.revenue += price;
-        fatOrderbump += price;
+        if (normalizeIdentity(item?.type) !== "upsell") {
+          fatOrderbump += price;
+        }
         groupFunnelSales++;
         bumpAgg.set(key, current);
       }
@@ -212,7 +214,9 @@ export function aggregateOneDay(events: RawEvent[]) {
       };
       current.count += 1;
       current.revenue += item.price;
-      fatOrderbump += item.price;
+      if (item.type === "orderbump") {
+        fatOrderbump += item.price;
+      }
       groupFunnelSales++;
       bumpAgg.set(item.key, current);
     }
@@ -224,15 +228,18 @@ export function aggregateOneDay(events: RawEvent[]) {
       if (key) {
         const price = revenue.mainTotal || revenue.total;
         if (price > 0) {
+          const upsell = eventLooksUpsell(main);
           const current = bumpAgg.get(key) ?? {
             name: String(mainItem?.name ?? main.payload?.product_id ?? key),
-            type: eventLooksUpsell(main) ? "upsell" : "orderbump",
+            type: upsell ? "upsell" : "orderbump",
             count: 0,
             revenue: 0,
           };
           current.count += 1;
           current.revenue += price;
-          fatOrderbump += price;
+          if (!upsell) {
+            fatOrderbump += price;
+          }
           bumpAgg.set(key, current);
         }
       }
