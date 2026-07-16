@@ -803,4 +803,98 @@ describe("aggregate daily core", () => {
       expect.objectContaining({ name: "Acesso", count: 11, revenue: 3000 }),
     ]);
   });
+
+  it("repairs legacy Hubla imports and recognizes upsells from the raw invoice", () => {
+    const metrics = aggregateOneDay([
+      {
+        source: "gateway",
+        event_type: "purchase.approved",
+        external_id: "legacy-hubla-front",
+        payload: {
+          import_source: "hubla_csv",
+          transaction_id: "legacy-hubla-front",
+          total: 197,
+          net: 180,
+          is_front: true,
+          raw_payload: {
+            import_source: "hubla_csv",
+            raw_row: { itens_na_fatura: "3" },
+          },
+          items: [
+            { external_id: "front", name: "Front", price: 197, type: "main", is_bump: false },
+            {
+              external_id: "ob-1, ob-2",
+              name: "Bump 1, Bump 2",
+              price: 0,
+              type: "orderbump",
+              is_bump: true,
+            },
+          ],
+        },
+      },
+      {
+        source: "gateway",
+        event_type: "purchase.approved",
+        external_id: "legacy-hubla-upsell",
+        payload: {
+          import_source: "hubla_csv",
+          transaction_id: "legacy-hubla-upsell",
+          total: 780,
+          net: 700,
+          is_front: true,
+          raw_payload: {
+            import_source: "hubla_csv",
+            data: { object: { is_upsell: true } },
+          },
+          items: [{ external_id: "upsell", name: "Acompanhamento Individual", price: 780, type: "main", is_bump: false }],
+        },
+      },
+    ]);
+
+    expect(metrics.vendas_front).toBe(1);
+    expect(metrics.vendas_totais).toBe(4);
+    expect(metrics.bumps).toEqual([
+      expect.objectContaining({ name: "Bump 1", count: 1, revenue: 0 }),
+      expect.objectContaining({ name: "Bump 2", count: 1, revenue: 0 }),
+      expect.objectContaining({ name: "Acompanhamento Individual", type: "upsell", count: 1, revenue: 780 }),
+    ]);
+  });
+
+  it("does not count a Hubla child invoice that mirrors the front product", () => {
+    const metrics = aggregateOneDay([
+      {
+        source: "gateway",
+        event_type: "purchase.approved",
+        external_id: "hubla-parent",
+        payload: {
+          transaction_id: "hubla-parent",
+          total: 326.9,
+          net: 299.93,
+          is_front: true,
+          product_id: "front",
+          raw_payload: { event: { invoice: { childInvoiceIds: ["hubla-parent-offer-1"] } } },
+          items: [{ external_id: "front", name: "Destrave sua coluna", price: 326.9, type: "main", is_bump: false }],
+        },
+      },
+      {
+        source: "gateway",
+        event_type: "purchase.approved",
+        external_id: "hubla-parent-offer-1",
+        payload: {
+          transaction_id: "hubla-parent",
+          total: 197,
+          net: 180,
+          is_front: false,
+          is_offer_event: true,
+          product_id: "front",
+          raw_payload: { event: { invoice: { parentInvoiceId: "hubla-parent" } } },
+          items: [{ external_id: "front", name: "Destrave sua coluna", price: 197, type: "orderbump", is_bump: true }],
+        },
+      },
+    ]);
+
+    expect(metrics.vendas_front).toBe(1);
+    expect(metrics.vendas_totais).toBe(1);
+    expect(metrics.bumps).toEqual([]);
+  });
 });

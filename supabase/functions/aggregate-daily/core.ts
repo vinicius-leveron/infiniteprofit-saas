@@ -11,6 +11,11 @@ type RawEvent = {
 const META_TAX_RATE = 0.1215;
 
 export function aggregateOneDay(events: RawEvent[]) {
+  // Older Hubla imports stored the raw order-bump columns as one comma
+  // separated item and did not mark zero-value bumps as sales. Normalize
+  // those rows in memory so a re-import is not required to repair history.
+  normalizeLegacyHublaEvents(events);
+
   let dailyMetricsOverride: Record<string, unknown> | null = null;
   const hasSessionStatsByDay = events.some((event) =>
     event.source === "vturb"
@@ -858,6 +863,19 @@ function isDuplicateMainOffer(event: RawEvent, group: RawEvent[], frontIdentity:
   const offerName = normalizeIdentity(offerItem.name);
   if (!offerId && !offerName) return false;
 
+  // Hubla emits a child invoice for the front product itself when one
+  // checkout is split into multiple invoices. That child mirrors the front
+  // sale and must not become a second funnel sale. Restrict this rule to the
+  // real Hubla parent/child marker so legacy providers keep their old
+  // behavior when they intentionally reuse a product id for a bump.
+  if (
+    frontIdentity
+    && isHublaChildEvent(event)
+    && ((offerId && offerId === frontIdentity.id) || (offerName && offerName === frontIdentity.name))
+  ) {
+    return true;
+  }
+
   // Hubla explicitly links child invoices from the parent invoice. Every
   // linked offer is a real funnel sale, even when it reuses the front
   // product id (a common setup for access/order-bump offers). Only apply the
@@ -865,6 +883,26 @@ function isDuplicateMainOffer(event: RawEvent, group: RawEvent[], frontIdentity:
   if (mainInvoiceIncludesOfferChildren(group)) return false;
 
   if (frontIdentity && ((offerId && offerId === frontIdentity.id) || (offerName && offerName === frontIdentity.name))) {
+    return true;
+  }
+
+  // A Hubla CSV row can already contain the selected bump in its `items`
+  // array while the webhook also delivers that same child invoice. Match the
+  // child against the embedded bump identity before counting it again.
+  const embeddedBumps = group
+    .filter((candidate) => !isOfferEvent(candidate))
+    .flatMap((candidate) => {
+      const items: any[] = Array.isArray(candidate.payload?.items) ? candidate.payload.items : [];
+      return items.filter((item) => item?.is_bump);
+    });
+  if (embeddedBumps.some((item) => {
+    const embeddedId = normalizeIdentity(item?.external_id);
+    const embeddedName = normalizeIdentity(item?.name);
+    return Boolean(
+      (offerId && embeddedId && offerId === embeddedId)
+      || (offerName && embeddedName && offerName === embeddedName),
+    );
+  })) {
     return true;
   }
 
@@ -943,7 +981,39 @@ function firstMainOrBumpItem(event: RawEvent | undefined) {
 function eventLooksUpsell(event: RawEvent | undefined) {
   const payload = event?.payload ?? {};
   if (payload.is_upsell || payload.upsell_id) return true;
-  const raw = payload.raw_payload ?? {};
+  const raw = parseObject(payload.raw_payload);
+  if (
+    getPath(raw, "data.object.is_upsell") === true
+    || getPath(raw, "data.object.upsell_id")
+    || getPath(raw, "event.invoice.is_upsell") === true
+    || getPath(raw, "event.invoice.upsell_id")
+  ) {
+    return true;
+  }
+
+  const rawRow = firstRecord([
+    getPath(raw, "data.object.raw_row"),
+    getPath(raw, "event.invoice.raw_row"),
+    raw.raw_row,
+  ]);
+  const offerDescriptor = [
+    rawRow.nome_da_oferta,
+    rawRow.nome_do_produto,
+    rawRow.produto,
+    rawRow.product_name,
+    rawRow.oferta,
+    rawRow.offer,
+    rawRow.tipo_de_fatura,
+    rawRow.detalhamento_da_fatura,
+    getPath(raw, "data.object.offer_name"),
+    getPath(raw, "data.object.offer"),
+    getPath(raw, "event.invoice.offer_name"),
+    getPath(raw, "event.product.name"),
+    getPath(raw, "event.products.0.name"),
+    getPath(raw, "data.object.product.name"),
+  ].filter(Boolean).join(" ").toLowerCase();
+  if (/\bupsell\b/.test(offerDescriptor) || /\bacompanhamento\s+individual\b/.test(offerDescriptor)) return true;
+
   const url = String(
     getPath(raw, "event.invoice.paymentSession.url")
       ?? getPath(raw, "data.object.paymentSession.url")
@@ -951,6 +1021,110 @@ function eventLooksUpsell(event: RawEvent | undefined) {
       ?? "",
   ).toLowerCase();
   return url.includes("/upsell");
+}
+
+function normalizeLegacyHublaEvents(events: RawEvent[]) {
+  for (const event of events) {
+    if (event.source !== "gateway" || !isHublaImport(event)) continue;
+    const payload = event.payload ?? {};
+    const items: any[] = Array.isArray(payload.items) ? payload.items : [];
+    if (items.length === 0) continue;
+
+    const raw = parseObject(payload.raw_payload);
+    const rawRow = firstRecord([
+      getPath(raw, "data.object.raw_row"),
+      getPath(raw, "event.invoice.raw_row"),
+      raw.raw_row,
+    ]);
+    const invoiceItemCount = Math.max(
+      0,
+      Math.round(num(
+        rawRow.itens_na_fatura
+          ?? rawRow.itens_fatura
+          ?? rawRow.item_count
+          ?? rawRow.items_count,
+      )),
+    );
+    const bumpItems = items.filter((item) => item?.is_bump);
+    const expectedBumpCount = invoiceItemCount > 0 ? Math.max(0, invoiceItemCount - 1) : 0;
+    const normalized: any[] = [];
+    let bumpIndex = 0;
+
+    for (const item of items) {
+      if (!item?.is_bump) {
+        normalized.push(item);
+        continue;
+      }
+
+      const ids = splitLegacyHublaList(item.external_id);
+      const names = splitLegacyHublaList(item.name);
+      const splitCount = bumpItems.length === 1
+        ? Math.max(ids.length, names.length, expectedBumpCount, 1)
+        : Math.max(ids.length, names.length, 1);
+      const shouldSplit = splitCount > 1;
+      const itemPrice = num(item.price);
+      const price = shouldSplit ? itemPrice / splitCount : itemPrice;
+
+      for (let index = 0; index < splitCount; index++) {
+        const id = ids[index] || `${String(event.external_id ?? "hubla")}-orderbump-${bumpIndex + 1}`;
+        normalized.push({
+          ...item,
+          external_id: id,
+          name: names[index] || ids[index] || `Order bump ${bumpIndex + 1}`,
+          price,
+          count_as_sale: true,
+        });
+        bumpIndex++;
+      }
+    }
+
+    payload.items = normalized;
+  }
+}
+
+function isHublaImport(event: RawEvent) {
+  const payload = event.payload ?? {};
+  if (String(payload.import_source ?? "").toLowerCase() === "hubla_csv") return true;
+  const raw = parseObject(payload.raw_payload);
+  return String(raw.import_source ?? "").toLowerCase() === "hubla_csv";
+}
+
+function isHublaChildEvent(event: RawEvent) {
+  const raw = parseObject(event.payload?.raw_payload);
+  return Boolean(
+    getPath(raw, "event.invoice.parentInvoiceId")
+      ?? getPath(raw, "event.invoice.parent_invoice_id")
+      ?? getPath(raw, "data.object.parentInvoiceId")
+      ?? getPath(raw, "data.object.parent_invoice_id")
+      ?? getPath(raw, "parentInvoiceId")
+      ?? getPath(raw, "parent_invoice_id"),
+  );
+}
+
+function splitLegacyHublaList(value: unknown) {
+  const text = String(value ?? "").trim();
+  if (!text) return [];
+  return text.split(/[,;\n]+/).map((part) => part.trim()).filter(Boolean);
+}
+
+function parseObject(value: unknown): Record<string, any> {
+  if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, any>;
+  if (typeof value !== "string") return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, any>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function firstRecord(values: unknown[]) {
+  for (const value of values) {
+    if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, any>;
+  }
+  return {};
 }
 
 function normalizeIdentity(value: unknown) {
