@@ -76,7 +76,7 @@ export default function Auth() {
   const emailConfirmationUrl =
     `${window.location.origin}/auth?next=${encodeURIComponent(nextPath)}`;
   const googleAuthEnabled = import.meta.env.VITE_ENABLE_GOOGLE_AUTH === "true";
-  const publicSignupEnabled = import.meta.env.VITE_ENABLE_PUBLIC_SIGNUP === "true";
+  const publicSignupEnabled = import.meta.env.VITE_ENABLE_PUBLIC_SIGNUP !== "false";
   const signupEnabled = publicSignupEnabled || nextPath.startsWith("/accept-invite?");
 
   useEffect(() => {
