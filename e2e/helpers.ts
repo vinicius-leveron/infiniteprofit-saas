@@ -26,7 +26,9 @@ export async function login(page: Page) {
   await page.getByLabel("Email").fill(qaEmail);
   await page.getByLabel("Senha").fill(qaPassword);
   await page.getByRole("button", { name: /^Entrar$/ }).click();
-  await expect(page).toHaveURL(/\/(projects|welcome)(\?.*)?$/);
+  await expect(page).toHaveURL(
+    /\/(dashboard|clients(?:\/[^/]+\/funnels)?|welcome)(\?.*)?$/,
+  );
 }
 
 export async function expectNoConsoleErrors(page: Page, testInfo: TestInfo) {

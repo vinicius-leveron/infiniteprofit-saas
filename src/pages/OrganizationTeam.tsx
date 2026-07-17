@@ -55,7 +55,10 @@ export default function OrganizationTeam() {
     organizations[0] ??
     null;
   const canManage =
-    currentOrganizationRole === "owner" || organization?.role === "owner";
+    currentOrganizationRole === "owner" ||
+    currentOrganizationRole === "admin" ||
+    organization?.role === "owner" ||
+    organization?.role === "admin";
 
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [invites, setInvites] = useState<AdminInvite[]>([]);

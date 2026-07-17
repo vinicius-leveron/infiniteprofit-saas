@@ -1,4 +1,9 @@
-import { useMemo, useState } from "react";
+import {
+  useEffect,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import {
   Navigate,
   Outlet,
@@ -6,13 +11,15 @@ import {
   useNavigate,
   useSearchParams,
 } from "react-router-dom";
-import { Menu } from "lucide-react";
 import { AppSidebar } from "@/components/AppSidebar";
+import { AppTopbar } from "@/components/AppTopbar";
+import { CommandPalette } from "@/components/CommandPalette";
 import {
   createAppNavigation,
+  getNavigationScope,
   type AppNavigationItem,
 } from "@/components/app-navigation";
-import { ContextSwitcher } from "@/components/ContextSwitcher";
+import { MobileContextNav } from "@/components/MobileContextNav";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -20,10 +27,15 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { buildAuthRedirect } from "@/lib/authRedirect";
-import { supabase } from "@/integrations/supabase/client";
+
+export interface AppShellOutletContext {
+  commandPaletteOpen: boolean;
+  setCommandPaletteOpen: Dispatch<SetStateAction<boolean>>;
+}
 
 function getFunnelId(pathname: string, projectId: string | null): string | null {
   const funnelRouteMatch = pathname.match(/^\/funnels\/([^/]+)/);
@@ -33,6 +45,43 @@ function getFunnelId(pathname: string, projectId: string | null): string | null 
 function getClientId(pathname: string, currentClientId: string | null): string | null {
   const clientRouteMatch = pathname.match(/^\/clients\/([^/]+)/);
   return clientRouteMatch ? decodeURIComponent(clientRouteMatch[1]) : currentClientId;
+}
+
+function AppShellSkeleton() {
+  return (
+    <div className="min-h-screen bg-background md:flex md:h-screen" aria-busy="true">
+      <aside className="hidden h-screen w-[248px] shrink-0 border-r border-border/70 p-4 md:flex md:flex-col">
+        <div className="flex items-center gap-3 py-2">
+          <Skeleton className="h-8 w-8" />
+          <Skeleton className="h-5 w-32" />
+        </div>
+        <div className="mt-8 space-y-3">
+          <Skeleton className="h-3 w-20" />
+          {Array.from({ length: 6 }).map((_, index) => (
+            <Skeleton key={index} className="h-11 w-full" />
+          ))}
+        </div>
+        <Skeleton className="mt-auto h-14 w-full" />
+      </aside>
+      <div className="min-w-0 flex-1">
+        <div className="flex h-14 items-center gap-2 border-b border-border/70 px-3 md:px-6">
+          <Skeleton className="h-10 w-10 md:w-[280px]" />
+          <Skeleton className="h-10 w-10 md:w-[240px]" />
+          <Skeleton className="ml-auto h-10 w-11 md:w-[180px]" />
+        </div>
+        <div className="mx-auto max-w-[1200px] space-y-6 px-4 py-8 md:px-6 lg:px-8">
+          <Skeleton className="h-8 w-52" />
+          <Skeleton className="h-4 w-80 max-w-full" />
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <Skeleton className="h-40" />
+            <Skeleton className="h-40" />
+            <Skeleton className="h-40" />
+          </div>
+        </div>
+      </div>
+      <span className="sr-only">Carregando ambiente</span>
+    </div>
+  );
 }
 
 export function AppShell() {
@@ -47,31 +96,53 @@ export function AppShell() {
     organizations,
     currentWorkspaceId,
     needsOnboarding,
-    isWorkspaceAdmin,
-    isOrganizationAdmin,
     refreshAccess,
+    setCurrentWorkspaceId,
   } = useWorkspace();
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
 
+  const scope = getNavigationScope(location.pathname);
   const funnelId = getFunnelId(location.pathname, searchParams.get("project"));
   const clientId = getClientId(location.pathname, currentWorkspaceId);
-  const navigationGroups = useMemo(
-    () =>
-      createAppNavigation({
-        clientId,
-        funnelId,
-        canManageOrganization: isOrganizationAdmin,
-        canManageClient: isWorkspaceAdmin,
-      }),
-    [clientId, funnelId, isOrganizationAdmin, isWorkspaceAdmin],
-  );
+  const client = workspaces.find((workspace) => workspace.id === clientId) ?? null;
+  const organization =
+    organizations.find(
+      (candidate) => candidate.id === client?.organization_id,
+    ) ?? organizations[0] ?? null;
+  const canManageClient =
+    client?.role === "owner" || client?.role === "admin";
+  const canManageOrganization =
+    organization?.role === "owner" || organization?.role === "admin";
+
+  const navigationGroups = createAppNavigation({
+    clientId,
+    funnelId,
+    canManageOrganization,
+    canManageClient,
+    surface: scope,
+  });
+  const navigationGroup = navigationGroups[0] ?? null;
+
+  useEffect(() => {
+    if (client && client.id !== currentWorkspaceId) {
+      setCurrentWorkspaceId(client.id);
+    }
+  }, [client, currentWorkspaceId, setCurrentWorkspaceId]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setCommandPaletteOpen((current) => !current);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   if (authLoading || loading) {
-    return (
-      <main className="flex min-h-screen items-center justify-center">
-        <p className="text-sm text-muted-foreground">Carregando ambiente…</p>
-      </main>
-    );
+    return <AppShellSkeleton />;
   }
 
   if (!user) {
@@ -117,57 +188,56 @@ export function AppShell() {
     setMobileNavigationOpen(false);
   };
 
-  const signOut = async () => {
+  const goHome = () => {
     setMobileNavigationOpen(false);
-    await supabase.auth.signOut();
-    navigate("/auth", { replace: true });
+    navigate("/");
+  };
+
+  const outletContext: AppShellOutletContext = {
+    commandPaletteOpen,
+    setCommandPaletteOpen,
   };
 
   return (
     <div className="min-h-screen bg-background md:flex md:h-screen md:min-h-0">
       <aside className="hidden h-screen w-[248px] shrink-0 border-r border-border/70 md:block">
         <AppSidebar
-          groups={navigationGroups}
+          group={navigationGroup}
           pathname={location.pathname}
           search={location.search}
+          clientId={clientId}
+          clientName={client?.name ?? null}
+          funnelId={funnelId}
+          canManageOrganization={canManageOrganization}
+          canManageClient={canManageClient}
           onNavigate={navigateFromSidebar}
-          onSignOut={() => void signOut()}
+          onHome={goHome}
+          onOpenCommand={() => setCommandPaletteOpen(true)}
         />
       </aside>
 
-      <header className="sticky top-0 z-40 flex h-14 items-center gap-2 border-b border-border/70 bg-background/95 px-3 backdrop-blur md:hidden">
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          onClick={() => setMobileNavigationOpen(true)}
-          className="h-11 w-11 shrink-0"
-          aria-label="Abrir navegação"
-        >
-          <Menu className="h-5 w-5" />
-        </Button>
-        <div className="min-w-0 flex-1">
-          <ContextSwitcher compact />
-        </div>
-      </header>
+      <div className="min-w-0 flex-1 md:h-screen md:overflow-y-auto">
+        <AppTopbar
+          scope={scope}
+          clientId={clientId}
+          clientName={client?.name ?? null}
+          funnelId={funnelId}
+          canManageOrganization={canManageOrganization}
+          canManageClient={canManageClient}
+          onOpenMobileNavigation={() => setMobileNavigationOpen(true)}
+          onOpenCommand={() => setCommandPaletteOpen(true)}
+          onHome={goHome}
+        />
 
-      <Sheet open={mobileNavigationOpen} onOpenChange={setMobileNavigationOpen}>
-        <SheetContent side="left" className="w-[min(320px,88vw)] p-0">
-          <SheetHeader className="sr-only">
-            <SheetTitle>Navegação principal</SheetTitle>
-          </SheetHeader>
-          <AppSidebar
-            groups={navigationGroups}
+        {scope !== "dashboard" && navigationGroup && (
+          <MobileContextNav
+            group={navigationGroup}
             pathname={location.pathname}
             search={location.search}
             onNavigate={navigateFromSidebar}
-            onSignOut={() => void signOut()}
-            onContextSelect={() => setMobileNavigationOpen(false)}
           />
-        </SheetContent>
-      </Sheet>
+        )}
 
-      <main className="min-w-0 flex-1 overflow-x-hidden md:h-screen md:overflow-y-auto">
         {workspaceError && (
           <div className="m-4 flex flex-col gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 text-sm sm:flex-row sm:items-center sm:justify-between" role="alert">
             <span>{workspaceError}</span>
@@ -176,8 +246,41 @@ export function AppShell() {
             </Button>
           </div>
         )}
-        <Outlet />
-      </main>
+
+        <Outlet context={outletContext} />
+      </div>
+
+      <Sheet open={mobileNavigationOpen} onOpenChange={setMobileNavigationOpen}>
+        <SheetContent side="left" className="flex w-[min(320px,88vw)] flex-col p-0">
+          <SheetHeader className="border-b border-border/60 px-5 py-4 text-left">
+            <SheetTitle>{navigationGroup?.label ?? "Navegação"}</SheetTitle>
+          </SheetHeader>
+          <div className="min-h-0 flex-1">
+            <AppSidebar
+              group={navigationGroup}
+              pathname={location.pathname}
+              search={location.search}
+              clientId={clientId}
+              clientName={client?.name ?? null}
+              funnelId={funnelId}
+              canManageOrganization={canManageOrganization}
+              canManageClient={canManageClient}
+              onNavigate={navigateFromSidebar}
+              onHome={goHome}
+              onOpenCommand={() => setCommandPaletteOpen(true)}
+              showBrand={false}
+              showAccount={false}
+            />
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      {scope !== "dashboard" && (
+        <CommandPalette
+          open={commandPaletteOpen}
+          onOpenChange={setCommandPaletteOpen}
+        />
+      )}
     </div>
   );
 }

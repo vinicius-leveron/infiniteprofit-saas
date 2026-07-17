@@ -1,4 +1,4 @@
-export function sanitizeNextPath(next: string | null | undefined, fallback = "/projects") {
+export function sanitizeNextPath(next: string | null | undefined, fallback = "/") {
   if (!next) return fallback;
   if (!next.startsWith("/")) return fallback;
   if (next.startsWith("//")) return fallback;

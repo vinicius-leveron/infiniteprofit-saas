@@ -61,6 +61,7 @@ export function CommandPalette({
         funnelId,
         canManageOrganization: isOrganizationAdmin,
         canManageClient: isWorkspaceAdmin,
+        surface: "command-palette",
       }),
     [funnelId, isOrganizationAdmin, isWorkspaceAdmin, navigationClientId],
   );

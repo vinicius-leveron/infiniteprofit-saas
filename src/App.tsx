@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   BrowserRouter,
@@ -6,6 +6,7 @@ import {
   Route,
   Routes,
   useLocation,
+  useNavigate,
   useSearchParams,
 } from "react-router-dom";
 import { Loader2 } from "lucide-react";
@@ -13,8 +14,9 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppShell } from "@/components/AppShell";
-import { AuthProvider } from "@/hooks/useAuth";
+import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { WorkspaceProvider, useWorkspace } from "@/hooks/useWorkspace";
+import { resolveClientLandingDestination } from "@/lib/lastDashboard";
 
 const Index = lazy(() => import("./pages/Index.tsx"));
 const Auth = lazy(() => import("./pages/Auth.tsx"));
@@ -49,6 +51,44 @@ function RouteLoader() {
     <main className="flex min-h-screen items-center justify-center" aria-busy="true">
       <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
       <span className="sr-only">Carregando página</span>
+    </main>
+  );
+}
+
+function HomeRedirect() {
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const { currentWorkspaceId } = useWorkspace();
+  const [resolving, setResolving] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    if (!user?.id || !currentWorkspaceId) {
+      setResolving(false);
+      return;
+    }
+
+    setResolving(true);
+    void resolveClientLandingDestination(user.id, currentWorkspaceId).then(
+      (destination) => {
+        if (!active) return;
+        navigate(destination, { replace: true });
+      },
+    );
+
+    return () => {
+      active = false;
+    };
+  }, [currentWorkspaceId, navigate, user?.id]);
+
+  if (!currentWorkspaceId && !resolving) {
+    return <Navigate to="/clients" replace />;
+  }
+
+  return (
+    <main className="flex min-h-[50vh] items-center justify-center" aria-busy="true">
+      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      <span className="sr-only">Abrindo seu último Dashboard</span>
     </main>
   );
 }
@@ -112,7 +152,7 @@ const App = () => (
                 <Route path="/share/:token" element={<PublicShare />} />
 
                 <Route element={<AppShell />}>
-                  <Route path="/" element={<Navigate to="/clients" replace />} />
+                  <Route path="/" element={<HomeRedirect />} />
                   <Route path="/welcome" element={<Welcome />} />
 
                   <Route path="/clients" element={<Clients />} />

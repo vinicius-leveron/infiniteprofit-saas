@@ -16,6 +16,8 @@ test.describe("authenticated launch smoke", () => {
     await page.goto("/projects");
     await expect(page.getByRole("heading", { name: "Funis" })).toBeVisible();
     await expect(page.getByRole("button", { name: /Novo funil/i })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Navegação de Cliente" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Abrir menu da conta" })).toBeVisible();
   });
 
   test("diagnostics, dashboard, and connections load for QA project", async ({ page }) => {
@@ -29,6 +31,12 @@ test.describe("authenticated launch smoke", () => {
     await expect(page.getByText("Gateway", { exact: true }).first()).toBeVisible();
 
     await page.goto(`/dashboard?project=${qaProjectId}`);
+    await expect(page.getByRole("navigation", { name: "Navegação de Dashboard" })).toBeVisible();
+    await expect(
+      page
+        .getByRole("navigation", { name: "Navegação de Dashboard" })
+        .getByRole("button"),
+    ).toHaveCount(9);
     await expect(page.getByText(/Visão Geral|Visao Geral/)).toBeVisible();
     await expect(page.getByText(/Anúncios|Anuncios/)).toBeVisible();
     await expect(page.getByText("Funil VSL")).toBeVisible();

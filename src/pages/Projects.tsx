@@ -15,7 +15,6 @@ import {
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
-import { CommandPalette } from "@/components/CommandPalette";
 import { ProjectsSkeleton } from "@/components/DashboardSkeleton";
 import {
   AlertDialog,
@@ -61,7 +60,6 @@ export default function Projects() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [toDelete, setToDelete] = useState<ProjectRow | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [paletteOpen, setPaletteOpen] = useState(false);
 
   const newFunnelPath = client
     ? `/clients/${client.id}/funnels/new`
@@ -117,17 +115,6 @@ export default function Projects() {
       cancelled = true;
     };
   }, [client?.id, userId]);
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        setPaletteOpen((current) => !current);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
 
   const reloadFunnels = () => {
     if (!client?.id) return;
@@ -365,7 +352,6 @@ export default function Projects() {
         </AlertDialogContent>
       </AlertDialog>
 
-      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
     </main>
   );
 }

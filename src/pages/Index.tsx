@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useOutletContext, useSearchParams } from "react-router-dom";
 import { format, formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { CsvUpload } from "@/components/CsvUpload";
@@ -18,11 +18,13 @@ import { DashboardSkeleton } from "@/components/DashboardSkeleton";
 
 import { DayDrilldownDialog } from "@/components/DayDrilldownDialog";
 import { CommandPalette } from "@/components/CommandPalette";
+import type { AppShellOutletContext } from "@/components/AppShell";
 import { SheetSyncDialog } from "@/components/SheetSyncDialog";
 import { parseCsv, type DailyRow } from "@/lib/csv";
 import { dailyMetricsToDailyRows, type DailyMetricsRow } from "@/lib/dailyMetrics";
 import { readStoredDashboardFilters, writeStoredDashboardFilters } from "@/lib/dashboardFilters";
 import { getDashboardPeriodRows, getDashboardSelectedDateRange } from "@/lib/dashboardRows";
+import { writeLastDashboardPreference } from "@/lib/lastDashboard";
 import { applyMetaAccountFilter } from "@/lib/metaAccountFilter";
 import {
   Select,
@@ -48,7 +50,6 @@ import {
   Settings2,
   Save,
   Download,
-  Search,
   Sliders,
   RefreshCw,
   Megaphone,
@@ -74,6 +75,8 @@ const TAB_INFO: Record<Tab, { label: string; description: string; icon: React.El
 const Index = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const { commandPaletteOpen, setCommandPaletteOpen } =
+    useOutletContext<AppShellOutletContext>();
   const projectId = searchParams.get("project");
   const { user, loading: authLoading } = useAuth();
   const userId = user?.id ?? null;
@@ -84,6 +87,7 @@ const Index = () => {
   const [csvText, setCsvText] = useState<string>("");
   const [projectName, setProjectName] = useState<string>("");
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
+  const [projectWorkspaceId, setProjectWorkspaceId] = useState<string | null>(null);
   const [loadingProject, setLoadingProject] = useState(false);
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -109,9 +113,8 @@ const Index = () => {
   const [customTo, setCustomTo] = useState<string>("");
   const [filtersHydratedFor, setFiltersHydratedFor] = useState<string | null>(null);
 
-  // Drill-down + Command palette
+  // Drill-down
   const [drilldownRow, setDrilldownRow] = useState<DailyRow | null>(null);
-  const [paletteOpen, setPaletteOpen] = useState(false);
 
   // Ref para captura PDF
   const dashboardRef = useRef<HTMLDivElement>(null);
@@ -124,6 +127,16 @@ const Index = () => {
   useEffect(() => {
     if (!authLoading && !userId) navigate("/auth", { replace: true });
   }, [authLoading, userId, navigate]);
+
+  useEffect(() => {
+    if (!userId || !projectWorkspaceId || !currentProjectId) return;
+    writeLastDashboardPreference({
+      userId,
+      clientId: projectWorkspaceId,
+      funnelId: currentProjectId,
+      dashboardTab: tab,
+    });
+  }, [currentProjectId, projectWorkspaceId, tab, userId]);
 
   useEffect(() => {
     if (!currentProjectId) {
@@ -168,13 +181,19 @@ const Index = () => {
         if (error || !data) {
           setLoadingProject(false);
           toast.error("Projeto não encontrado");
-          navigate("/projects", { replace: true });
+          navigate(
+            currentWorkspace?.id
+              ? `/clients/${currentWorkspace.id}/funnels`
+              : "/clients",
+            { replace: true },
+          );
           return;
         }
         const src = (data.source ?? "csv") as "csv" | "sheet" | "api";
         setProjectSource(src);
         setProjectName(data.name);
         setCurrentProjectId(data.id);
+        setProjectWorkspaceId(data.workspace_id ?? null);
         if (data.workspace_id && data.workspace_id !== currentWorkspace?.id) {
           setCurrentWorkspaceId(data.workspace_id);
         }
@@ -326,6 +345,7 @@ const Index = () => {
     setCsvText(text);
     setProjectName(name.replace(/\.[^.]+$/, ""));
     setCurrentProjectId(null);
+    setProjectWorkspaceId(null);
   };
 
   const handleSave = async (name: string) => {
@@ -353,6 +373,7 @@ const Index = () => {
           .single();
         if (error) throw error;
         setCurrentProjectId(data.id);
+        setProjectWorkspaceId(currentWorkspace.id);
         toast.success("Projeto salvo");
       }
       setProjectName(name);
@@ -388,13 +409,6 @@ const Index = () => {
           target.tagName === "TEXTAREA" ||
           target.isContentEditable);
 
-      // ⌘K / Ctrl+K abre palette mesmo digitando
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        setPaletteOpen((o) => !o);
-        return;
-      }
-
       if (isTyping) return;
 
       if (e.key >= "1" && e.key <= "9") {
@@ -421,7 +435,10 @@ const Index = () => {
           </Button>
         </div>
         <CsvUpload onFile={handleFile} />
-        <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+        <CommandPalette
+          open={commandPaletteOpen}
+          onOpenChange={setCommandPaletteOpen}
+        />
       </main>
     );
   }
@@ -463,7 +480,7 @@ const Index = () => {
     <main className="min-h-screen">
       {/* Sticky header */}
       {/* Sticky header - Estilo SaaS */}
-      <div className="sticky top-0 z-30 bg-background/95 backdrop-blur-sm border-b border-border/60">
+      <div className="sticky top-14 z-30 bg-background/95 backdrop-blur-sm border-b border-border/60">
         <div className="max-w-[1400px] mx-auto px-4 md:px-6 h-14 flex items-center justify-between">
           {/* Contexto do projeto */}
           <div className="min-w-0">
@@ -482,15 +499,6 @@ const Index = () => {
 
           {/* Acoes */}
           <div className="flex items-center gap-2 shrink-0">
-            {/* Search */}
-            <button
-              onClick={() => setPaletteOpen(true)}
-              className="hidden md:flex items-center gap-2 h-8 px-3 rounded-md border border-border bg-muted/30 hover:bg-muted/50 transition-colors text-sm text-muted-foreground"
-            >
-              <Search className="w-4 h-4" />
-              <span>Buscar...</span>
-            </button>
-
             {/* Acoes secundarias */}
             <div className="flex items-center gap-1">
               {currentProjectId && (
@@ -682,8 +690,8 @@ const Index = () => {
       />
 
       <CommandPalette
-        open={paletteOpen}
-        onOpenChange={setPaletteOpen}
+        open={commandPaletteOpen}
+        onOpenChange={setCommandPaletteOpen}
         onSelectTab={setTab}
         onSelectPeriod={handlePeriodChange}
       />

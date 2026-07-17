@@ -33,7 +33,7 @@ function readPendingConfirmation(): PendingConfirmation | null {
     if (typeof parsed.email !== "string" || typeof parsed.nextPath !== "string") return null;
     return {
       email: parsed.email,
-      nextPath: sanitizeNextPath(parsed.nextPath, "/clients"),
+      nextPath: sanitizeNextPath(parsed.nextPath, "/"),
     };
   } catch {
     sessionStorage.removeItem(CONFIRMATION_STORAGE_KEY);
@@ -70,7 +70,7 @@ export default function Auth() {
   const [feedback, setFeedback] = useState<string | null>(null);
   const nextPath = sanitizeNextPath(
     searchParams.get("next") ?? pendingConfirmation?.nextPath,
-    "/clients",
+    "/",
   );
   const redirectUrl = `${window.location.origin}${nextPath}`;
   const emailConfirmationUrl =

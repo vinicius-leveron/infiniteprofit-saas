@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Building2, Loader2, Save } from "lucide-react";
+import { Loader2, Save } from "lucide-react";
 import { AdminPage } from "@/components/admin/AdminPage";
 import { AsyncState } from "@/components/admin/AsyncState";
 import { Button } from "@/components/ui/button";
@@ -84,16 +84,7 @@ export default function ClientSettings() {
         errorMessage={errorMessage ?? "Cliente não encontrado ou sem acesso."}
         onRetry={() => void loadClient()}
       >
-        <div className="grid gap-6 lg:grid-cols-[220px,minmax(0,800px)]">
-          <nav aria-label="Seções das configurações" className="hidden lg:block">
-            <div className="rounded-lg border bg-card p-2">
-              <div className="flex min-h-11 items-center gap-2 rounded-md bg-muted px-3 text-sm font-medium">
-                <Building2 className="h-4 w-4 text-primary" aria-hidden="true" />
-                Dados gerais
-              </div>
-            </div>
-          </nav>
-
+        <div className="max-w-[800px]">
           <Card>
             <CardHeader className="p-5 md:p-6">
               <CardTitle className="text-lg leading-7">Dados gerais</CardTitle>

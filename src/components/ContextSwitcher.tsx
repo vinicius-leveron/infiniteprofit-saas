@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
-import { Building2, Check, ChevronsUpDown } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Building2, Check, ChevronsUpDown, Loader2 } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
 import { useWorkspace } from "@/hooks/useWorkspace";
+import { resolveClientLandingDestination } from "@/lib/lastDashboard";
 import {
   Popover,
   PopoverContent,
@@ -12,11 +14,16 @@ import { cn } from "@/lib/utils";
 interface ContextSwitcherProps {
   compact?: boolean;
   onSelect?: () => void;
+  className?: string;
 }
 
-export function ContextSwitcher({ compact = false, onSelect }: ContextSwitcherProps) {
+export function ContextSwitcher({
+  compact = false,
+  onSelect,
+  className,
+}: ContextSwitcherProps) {
   const navigate = useNavigate();
-  const location = useLocation();
+  const { user } = useAuth();
   const {
     organizations,
     workspaces,
@@ -26,6 +33,7 @@ export function ContextSwitcher({ compact = false, onSelect }: ContextSwitcherPr
     setCurrentWorkspaceId,
   } = useWorkspace();
   const [open, setOpen] = useState(false);
+  const [selectingClientId, setSelectingClientId] = useState<string | null>(null);
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<string | null>(
     currentOrganization?.id ?? organizations[0]?.id ?? null,
   );
@@ -50,21 +58,27 @@ export function ContextSwitcher({ compact = false, onSelect }: ContextSwitcherPr
     [selectedOrganization, workspaces],
   );
 
-  const selectClient = (clientId: string) => {
+  const selectClient = async (clientId: string) => {
     const changedClient = clientId !== currentWorkspaceId;
+
+    if (!changedClient) {
+      setOpen(false);
+      onSelect?.();
+      return;
+    }
+    if (!user?.id) {
+      setCurrentWorkspaceId(clientId);
+      setOpen(false);
+      onSelect?.();
+      return;
+    }
+    setSelectingClientId(clientId);
+    const destination = await resolveClientLandingDestination(user.id, clientId);
     setCurrentWorkspaceId(clientId);
+    setSelectingClientId(null);
     setOpen(false);
     onSelect?.();
-
-    if (
-      changedClient &&
-      (location.pathname === "/dashboard" ||
-        location.pathname.startsWith("/funnels/") ||
-        location.pathname === "/connections" ||
-        location.pathname === "/diagnostics")
-    ) {
-      navigate(`/clients/${clientId}/funnels`);
-    }
+    navigate(destination);
   };
 
   return (
@@ -75,6 +89,7 @@ export function ContextSwitcher({ compact = false, onSelect }: ContextSwitcherPr
           className={cn(
             "flex w-full min-w-0 items-center gap-2 rounded-lg border border-border/60 bg-muted/30 text-left transition-colors hover:bg-muted/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
             compact ? "h-10 px-2.5" : "h-12 px-3",
+            className,
           )}
           aria-label="Trocar organização ou cliente"
         >
@@ -149,8 +164,9 @@ export function ContextSwitcher({ compact = false, onSelect }: ContextSwitcherPr
                     <button
                       key={client.id}
                       type="button"
-                      onClick={() => selectClient(client.id)}
-                      aria-current={active ? "true" : undefined}
+                      onClick={() => void selectClient(client.id)}
+                      aria-pressed={active}
+                      disabled={selectingClientId !== null}
                       className={cn(
                         "flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm transition-colors",
                         active
@@ -159,7 +175,11 @@ export function ContextSwitcher({ compact = false, onSelect }: ContextSwitcherPr
                       )}
                     >
                       <span className="min-w-0 flex-1 truncate">{client.name}</span>
-                      {active && <Check className="h-4 w-4 shrink-0 text-primary" />}
+                      {selectingClientId === client.id ? (
+                        <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
+                      ) : (
+                        active && <Check className="h-4 w-4 shrink-0 text-primary" />
+                      )}
                     </button>
                   );
                 })
