@@ -1,63 +1,171 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import {
+  ArrowLeft,
+  BarChart3,
+  CircleAlert,
+  Eye,
+  EyeOff,
+  Loader2,
+  MailCheck,
+} from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { BarChart3, Loader2 } from "lucide-react";
-import { toast } from "sonner";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { sanitizeNextPath } from "@/lib/authRedirect";
+
+type AuthMode = "login" | "signup" | "forgot" | "check-email" | "recovery-sent";
+
+interface PendingConfirmation {
+  email: string;
+  nextPath: string;
+}
+
+const CONFIRMATION_STORAGE_KEY = "infiniteprofit.pendingEmailConfirmation";
+
+function readPendingConfirmation(): PendingConfirmation | null {
+  try {
+    const stored = sessionStorage.getItem(CONFIRMATION_STORAGE_KEY);
+    if (!stored) return null;
+    const parsed = JSON.parse(stored) as Partial<PendingConfirmation>;
+    if (typeof parsed.email !== "string" || typeof parsed.nextPath !== "string") return null;
+    return {
+      email: parsed.email,
+      nextPath: sanitizeNextPath(parsed.nextPath, "/clients"),
+    };
+  } catch {
+    sessionStorage.removeItem(CONFIRMATION_STORAGE_KEY);
+    return null;
+  }
+}
+
+function authErrorMessage(error: unknown) {
+  const fallback = "Não foi possível concluir a autenticação. Tente novamente.";
+  if (!(error instanceof Error)) return fallback;
+
+  const message = error.message.toLowerCase();
+  if (message.includes("invalid login credentials")) return "Email ou senha incorretos.";
+  if (message.includes("email not confirmed")) return "Confirme seu email antes de entrar.";
+  if (message.includes("user already registered")) return "Já existe uma conta com este email.";
+  if (message.includes("password should be")) return "Use uma senha com pelo menos 8 caracteres.";
+  if (message.includes("rate limit") || message.includes("security purposes")) {
+    return "Muitas tentativas em pouco tempo. Aguarde alguns minutos e tente novamente.";
+  }
+  return error.message || fallback;
+}
 
 export default function Auth() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const [mode, setMode] = useState<"login" | "signup" | "forgot">("login");
-  const [email, setEmail] = useState("");
+  const pendingConfirmation = readPendingConfirmation();
+  const [mode, setMode] = useState<AuthMode>(
+    pendingConfirmation ? "check-email" : "login",
+  );
+  const [email, setEmail] = useState(pendingConfirmation?.email ?? "");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
-  const nextPath = sanitizeNextPath(searchParams.get("next"), "/projects");
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const nextPath = sanitizeNextPath(
+    searchParams.get("next") ?? pendingConfirmation?.nextPath,
+    "/clients",
+  );
   const redirectUrl = `${window.location.origin}${nextPath}`;
+  const emailConfirmationUrl =
+    `${window.location.origin}/auth?next=${encodeURIComponent(nextPath)}`;
   const googleAuthEnabled = import.meta.env.VITE_ENABLE_GOOGLE_AUTH === "true";
+  const publicSignupEnabled = import.meta.env.VITE_ENABLE_PUBLIC_SIGNUP === "true";
+  const signupEnabled = publicSignupEnabled || nextPath.startsWith("/accept-invite?");
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) navigate(nextPath, { replace: true });
+    let active = true;
+    void supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!active || !session) return;
+      sessionStorage.removeItem(CONFIRMATION_STORAGE_KEY);
+      navigate(nextPath, { replace: true });
     });
+    return () => {
+      active = false;
+    };
   }, [navigate, nextPath]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const changeMode = (nextMode: AuthMode) => {
+    setFeedback(null);
+    setPassword("");
+    setMode(nextMode);
+  };
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setFeedback(null);
     setBusy(true);
+
     try {
       if (mode === "signup") {
+        if (!signupEnabled) {
+          throw new Error("A criação de contas está disponível somente por convite.");
+        }
+
         const { data, error } = await supabase.auth.signUp({
-          email,
+          email: email.trim(),
           password,
-          options: { emailRedirectTo: redirectUrl },
+          options: { emailRedirectTo: emailConfirmationUrl },
         });
         if (error) throw error;
         if (data.session) {
-          toast.success("Conta criada com sucesso!");
+          sessionStorage.removeItem(CONFIRMATION_STORAGE_KEY);
           navigate(nextPath, { replace: true });
-        } else {
-          toast.success("Conta criada! Confirme seu email para continuar.");
+          return;
         }
+
+        const confirmation = { email: email.trim(), nextPath };
+        sessionStorage.setItem(CONFIRMATION_STORAGE_KEY, JSON.stringify(confirmation));
+        setMode("check-email");
       } else if (mode === "forgot") {
-        const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
           redirectTo: `${window.location.origin}/reset-password`,
         });
         if (error) throw error;
-        toast.success("Enviamos um link de recuperação para seu email.");
-        setMode("login");
+        setMode("recovery-sent");
       } else {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        const { error } = await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password,
+        });
         if (error) throw error;
-        toast.success("Bem-vindo!");
+        sessionStorage.removeItem(CONFIRMATION_STORAGE_KEY);
         navigate(nextPath, { replace: true });
       }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Erro ao autenticar";
-      toast.error(msg);
+    } catch (error) {
+      setFeedback(authErrorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleResend = async () => {
+    setBusy(true);
+    setFeedback(null);
+    try {
+      if (mode === "check-email") {
+        const { error } = await supabase.auth.resend({
+          type: "signup",
+          email: email.trim(),
+          options: { emailRedirectTo: emailConfirmationUrl },
+        });
+        if (error) throw error;
+        setFeedback("Novo email de confirmação enviado.");
+      } else {
+        const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+          redirectTo: `${window.location.origin}/reset-password`,
+        });
+        if (error) throw error;
+        setFeedback("Novo link de recuperação enviado.");
+      }
+    } catch (error) {
+      setFeedback(authErrorMessage(error));
     } finally {
       setBusy(false);
     }
@@ -65,147 +173,240 @@ export default function Auth() {
 
   const handleGoogle = async () => {
     setBusy(true);
+    setFeedback(null);
     try {
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: "google",
-        options: {
-          redirectTo: redirectUrl,
-        },
+        options: { redirectTo: redirectUrl },
       });
       if (error) throw error;
-      if (!data.url) {
-        navigate(nextPath, { replace: true });
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Erro ao entrar com Google";
-      toast.error(msg);
+      if (!data.url) navigate(nextPath, { replace: true });
+    } catch (error) {
+      setFeedback(authErrorMessage(error));
       setBusy(false);
     }
   };
 
+  const changeConfirmationEmail = () => {
+    sessionStorage.removeItem(CONFIRMATION_STORAGE_KEY);
+    changeMode(mode === "check-email" && signupEnabled ? "signup" : "forgot");
+  };
+
+  const isEmailState = mode === "check-email" || mode === "recovery-sent";
+  const title =
+    mode === "login"
+      ? "Entrar"
+      : mode === "signup"
+        ? "Criar conta"
+        : mode === "forgot"
+          ? "Recuperar senha"
+          : mode === "check-email"
+            ? "Confirme seu email"
+            : "Confira sua caixa de entrada";
+
   return (
-    <main className="min-h-screen flex items-center justify-center px-4">
+    <main className="min-h-screen flex items-center justify-center px-4 py-10">
       <div className="w-full max-w-md">
         <div className="flex items-center gap-3 justify-center mb-6">
           <div className="w-12 h-12 rounded-xl bg-gradient-brand flex items-center justify-center shadow-glow">
             <BarChart3 className="w-6 h-6 text-primary-foreground" strokeWidth={2.4} />
           </div>
-          <h1 className="text-2xl font-extrabold gradient-text-brand">Infinite Profit</h1>
+          <p className="text-2xl font-extrabold gradient-text-brand">Infinite Profit</p>
         </div>
 
-        <div className="section-card">
-          <h2 className="text-lg font-semibold mb-1">
-            {mode === "login" ? "Entrar" : mode === "signup" ? "Criar conta" : "Recuperar senha"}
-          </h2>
-          <p className="text-sm text-muted-foreground mb-5">
-            {mode === "login"
-              ? "Acesse seus projetos salvos"
-              : mode === "signup"
-                ? "Crie uma conta para salvar seus dashboards"
-                : "Informe seu email para receber o link de redefinição"}
-          </p>
-
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                autoComplete="email"
-                className="mt-1.5"
-              />
+        <section className="section-card" aria-labelledby="auth-title">
+          {isEmailState && (
+            <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mb-5">
+              <MailCheck className="w-6 h-6 text-primary" aria-hidden="true" />
             </div>
-            {mode !== "forgot" && (
-              <div>
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="password">Senha</Label>
-                  {mode === "login" && (
-                    <button
-                      type="button"
-                      onClick={() => setMode("forgot")}
-                      className="text-xs text-primary hover:underline"
-                    >
-                      Esqueci minha senha
-                    </button>
-                  )}
-                </div>
-                <Input
-                  id="password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  minLength={6}
-                  autoComplete={mode === "login" ? "current-password" : "new-password"}
-                  className="mt-1.5"
-                />
-              </div>
-            )}
-            <Button type="submit" className="w-full" disabled={busy}>
-              {busy && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              {mode === "login"
-                ? "Entrar"
-                : mode === "signup"
-                  ? "Criar conta"
-                  : "Enviar link de recuperação"}
-            </Button>
-          </form>
-
-          {mode !== "forgot" && googleAuthEnabled && (
-            <>
-              <div className="relative my-5">
-                <div className="absolute inset-0 flex items-center">
-                  <span className="w-full border-t border-border" />
-                </div>
-                <div className="relative flex justify-center text-xs uppercase">
-                  <span className="bg-card px-2 text-muted-foreground">ou</span>
-                </div>
-              </div>
-
-              <Button
-                type="button"
-                variant="outline"
-                className="w-full"
-                onClick={handleGoogle}
-                disabled={busy}
-              >
-                <svg className="w-4 h-4 mr-2" viewBox="0 0 24 24" aria-hidden="true">
-                  <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-                  <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                  <path fill="#FBBC05" d="M5.84 14.1c-.22-.66-.35-1.36-.35-2.1s.13-1.44.35-2.1V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.83z"/>
-                  <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.83C6.71 7.31 9.14 5.38 12 5.38z"/>
-                </svg>
-                Continuar com Google
-              </Button>
-            </>
           )}
 
-          <div className="mt-4 text-center text-sm text-muted-foreground">
-            {mode === "forgot" ? (
-              <button
+          <h1 id="auth-title" className="text-xl font-semibold mb-1">
+            {title}
+          </h1>
+          <p className="text-sm text-muted-foreground mb-5">
+            {mode === "login"
+              ? "Acesse sua organização, clientes e funis."
+              : mode === "signup"
+                ? "Crie sua conta para configurar seu primeiro cliente."
+                : mode === "forgot"
+                  ? "Informe seu email para receber um link de redefinição."
+                  : mode === "check-email"
+                    ? `Enviamos um link de confirmação para ${email}.`
+                    : `Enviamos um link de recuperação para ${email}.`}
+          </p>
+
+          {feedback && (
+            <Alert
+              variant={
+                feedback.includes("enviado") || feedback.includes("enviada")
+                  ? "default"
+                  : "destructive"
+              }
+              className="mb-4"
+            >
+              <CircleAlert className="w-4 h-4" aria-hidden="true" />
+              <AlertDescription>{feedback}</AlertDescription>
+            </Alert>
+          )}
+
+          {isEmailState ? (
+            <div className="space-y-3">
+              <Button className="w-full min-h-11" onClick={handleResend} disabled={busy}>
+                {busy && <Loader2 className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />}
+                Reenviar email
+              </Button>
+              <Button
                 type="button"
-                onClick={() => setMode("login")}
-                className="text-primary font-medium hover:underline"
+                variant="ghost"
+                className="w-full min-h-11"
+                onClick={changeConfirmationEmail}
+                disabled={busy}
               >
+                Usar outro email
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                className="w-full min-h-11"
+                onClick={() => changeMode("login")}
+                disabled={busy}
+              >
+                <ArrowLeft className="w-4 h-4 mr-2" aria-hidden="true" />
                 Voltar para o login
-              </button>
-            ) : (
-              <>
-                {mode === "login" ? "Não tem conta?" : "Já tem conta?"}{" "}
-                <button
-                  type="button"
-                  onClick={() => setMode(mode === "login" ? "signup" : "login")}
-                  className="text-primary font-medium hover:underline"
-                >
-                  {mode === "login" ? "Criar conta" : "Entrar"}
-                </button>
-              </>
-            )}
-          </div>
-        </div>
+              </Button>
+            </div>
+          ) : (
+            <>
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <div>
+                  <Label htmlFor="email">Email</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    required
+                    autoComplete="email"
+                    className="mt-1.5 min-h-11"
+                  />
+                </div>
+                {mode !== "forgot" && (
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="password">Senha</Label>
+                      {mode === "login" && (
+                        <button
+                          type="button"
+                          onClick={() => changeMode("forgot")}
+                          className="text-xs text-primary hover:underline min-h-11 px-1"
+                        >
+                          Esqueci minha senha
+                        </button>
+                      )}
+                    </div>
+                    <div className="relative">
+                      <Input
+                        id="password"
+                        type={showPassword ? "text" : "password"}
+                        value={password}
+                        onChange={(event) => setPassword(event.target.value)}
+                        required
+                        minLength={mode === "signup" ? 8 : 6}
+                        autoComplete={mode === "login" ? "current-password" : "new-password"}
+                        className="mt-1.5 min-h-11 pr-11"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword((visible) => !visible)}
+                        className="absolute right-0 top-1.5 w-11 h-11 inline-flex items-center justify-center text-muted-foreground hover:text-foreground"
+                        aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
+                      >
+                        {showPassword ? (
+                          <EyeOff className="w-4 h-4" aria-hidden="true" />
+                        ) : (
+                          <Eye className="w-4 h-4" aria-hidden="true" />
+                        )}
+                      </button>
+                    </div>
+                    {mode === "signup" && (
+                      <p className="text-xs text-muted-foreground mt-2">
+                        Use pelo menos 8 caracteres.
+                      </p>
+                    )}
+                  </div>
+                )}
+                <Button type="submit" className="w-full min-h-11" disabled={busy}>
+                  {busy && <Loader2 className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />}
+                  {mode === "login"
+                    ? "Entrar"
+                    : mode === "signup"
+                      ? "Criar conta"
+                      : "Enviar link de recuperação"}
+                </Button>
+              </form>
+
+              {mode !== "forgot" && googleAuthEnabled && (
+                <>
+                  <div className="relative my-5">
+                    <div className="absolute inset-0 flex items-center">
+                      <span className="w-full border-t border-border" />
+                    </div>
+                    <div className="relative flex justify-center text-xs uppercase">
+                      <span className="bg-card px-2 text-muted-foreground">ou</span>
+                    </div>
+                  </div>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full min-h-11"
+                    onClick={handleGoogle}
+                    disabled={busy}
+                  >
+                    Continuar com Google
+                  </Button>
+                </>
+              )}
+
+              <div className="mt-4 text-center text-sm text-muted-foreground">
+                {mode === "forgot" ? (
+                  <button
+                    type="button"
+                    onClick={() => changeMode("login")}
+                    className="text-primary font-medium hover:underline min-h-11 px-2"
+                  >
+                    Voltar para o login
+                  </button>
+                ) : mode === "login" && signupEnabled ? (
+                  <>
+                    Não tem conta?{" "}
+                    <button
+                      type="button"
+                      onClick={() => changeMode("signup")}
+                      className="text-primary font-medium hover:underline min-h-11 px-1"
+                    >
+                      Criar conta
+                    </button>
+                  </>
+                ) : mode === "signup" ? (
+                  <>
+                    Já tem conta?{" "}
+                    <button
+                      type="button"
+                      onClick={() => changeMode("login")}
+                      className="text-primary font-medium hover:underline min-h-11 px-1"
+                    >
+                      Entrar
+                    </button>
+                  </>
+                ) : (
+                  <p>Novas contas são liberadas por convite.</p>
+                )}
+              </div>
+            </>
+          )}
+        </section>
       </div>
     </main>
   );

@@ -35,17 +35,17 @@ test.describe("dashboard data regression", () => {
 
   test("diagnostics and connections expose actionable QA surfaces", async ({ page }) => {
     await page.goto(`/diagnostics?project=${qaProjectId}`);
-    await expect(page.getByRole("heading", { name: /O que precisa de ação|Alertas operacionais/i }).first()).toBeVisible();
+    await expect(page.getByRole("heading", { name: /Precisa de ação/i }).first()).toBeVisible();
+    await page.getByRole("button", { name: /Diagnóstico avançado/i }).click();
     await expect(page.getByText("Eventos", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("Agregado", { exact: true }).first()).toBeVisible();
 
     await page.goto(`/connections?project=${qaProjectId}`);
-    await expect(page.getByRole("heading", { name: /Conexões/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /Fontes de dados/i })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Meta Ads" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "VTurb" })).toBeVisible();
-    await expect(page.getByText("Players vinculados ao projeto")).toBeVisible();
     await expect(page.getByPlaceholder("Filtrar por nome ou ID do player")).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Gateway de Pagamento" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Importar CSV/XLSX Hubla" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Gateway" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Integrações do cliente" })).toBeVisible();
   });
 });

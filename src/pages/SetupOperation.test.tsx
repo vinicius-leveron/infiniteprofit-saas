@@ -1,9 +1,10 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import SetupOperation from "./SetupOperation";
 
-const { invokeMock } = vi.hoisted(() => ({
+const { fromMock, invokeMock } = vi.hoisted(() => ({
+  fromMock: vi.fn(),
   invokeMock: vi.fn(),
 }));
 
@@ -42,12 +43,17 @@ vi.mock("@/hooks/useAuth", () => ({
 }));
 
 vi.mock("@/hooks/useWorkspace", () => ({
-  useWorkspace: () => ({ currentWorkspace: { id: "workspace-1" } }),
+  useWorkspace: () => ({
+    currentWorkspace: { id: "workspace-1", name: "Cliente Alpha" },
+    workspaces: [{ id: "workspace-1", name: "Cliente Alpha" }],
+    loading: false,
+    setCurrentWorkspaceId: vi.fn(),
+  }),
 }));
 
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
-    from: vi.fn(() => createMetaAccountsQuery()),
+    from: fromMock,
     functions: { invoke: invokeMock },
   },
 }));
@@ -64,6 +70,7 @@ describe("SetupOperation Meta step", () => {
   beforeEach(() => {
     window.sessionStorage.clear();
     vi.clearAllMocks();
+    fromMock.mockImplementation(() => createMetaAccountsQuery());
     invokeMock.mockImplementation(async (functionName: string, options?: { body?: Record<string, unknown> }) => {
       if (functionName === "meta-test" && options?.body?.action === "list_accounts") {
         return {
@@ -102,7 +109,10 @@ describe("SetupOperation Meta step", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Meta" }));
+    fireEvent.change(screen.getByLabelText("Nome"), {
+      target: { value: "Funil teste" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fontes opcionais" }));
 
     expect(await screen.findByText("Conta Alpha")).toBeInTheDocument();
     expect(screen.getByText("Conta Beta")).toBeInTheDocument();
@@ -144,6 +154,13 @@ describe("SetupOperation Meta step", () => {
     expect(screen.getByText("1 de 2 selecionada(s)")).toBeInTheDocument();
     expect(screen.getByText(/suas contas continuam marcadas/i)).toBeInTheDocument();
 
+    fireEvent.click(screen.getByRole("button", { name: "Buscar contas" }));
+    await waitFor(() => {
+      expect(screen.queryByText(/suas contas continuam marcadas/i)).not.toBeInTheDocument();
+    });
+    const postponeButtons = screen.getAllByRole("button", { name: "Fazer depois" });
+    fireEvent.click(postponeButtons[1]);
+    fireEvent.click(postponeButtons[2]);
     fireEvent.click(screen.getByRole("button", { name: "Revisão" }));
     expect(screen.getByText("3 conta(s) selecionada(s)")).toBeInTheDocument();
   });
@@ -155,7 +172,7 @@ describe("SetupOperation Meta step", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Meta" }));
+    fireEvent.click(screen.getByRole("button", { name: "Fontes opcionais" }));
     fireEvent.change(screen.getByLabelText("Access token Meta"), { target: { value: "token-unico" } });
     fireEvent.click(screen.getByRole("button", { name: "Buscar contas" }));
     fireEvent.click(await screen.findByText("Conta Gamma"));
@@ -172,16 +189,16 @@ describe("SetupOperation Meta step", () => {
     expect(screen.getByText("1 de 2 selecionada(s)")).toBeInTheDocument();
   });
 
-  it("migrates the previous single-account draft without losing its credentials", async () => {
+  it("migrates a legacy draft without restoring or persisting its secrets", async () => {
     window.sessionStorage.setItem("infiniteprofit.setupOperationDraft.workspace-1", JSON.stringify({
       step: "meta",
       name: "Funil legado",
       metaAccountId: "123456",
       metaToken: "token-legado",
       metaLabel: "Conta legada",
-      vturbKey: "",
+      vturbKey: "vturb-legado",
       playersText: "",
-      hublaSecret: "",
+      hublaSecret: "hubla-legado",
       webhookToken: "webhook-token",
     }));
 
@@ -191,9 +208,114 @@ describe("SetupOperation Meta step", () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByDisplayValue("token-legado")).toBeInTheDocument();
-    expect(screen.getByText("Conta legada")).toBeInTheDocument();
-    expect(screen.getByText("act_123456")).toBeInTheDocument();
-    expect(screen.getByText("1 de 1 selecionada(s)")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Nome/ }));
+    expect(await screen.findByDisplayValue("Funil legado")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Fontes opcionais" }));
+    expect(screen.getByLabelText("Access token Meta")).toHaveValue("");
+    expect(screen.getByLabelText("API key")).toHaveValue("");
+    expect(screen.getByLabelText("Token/secret do webhook")).toHaveValue("");
+
+    await waitFor(() => {
+      const stored = window.sessionStorage.getItem(
+        "infiniteprofit.setupOperationDraft.workspace-1",
+      );
+      expect(stored).not.toContain("token-legado");
+      expect(stored).not.toContain("vturb-legado");
+      expect(stored).not.toContain("hubla-legado");
+      expect(stored).not.toContain("webhook-token");
+      expect(JSON.parse(stored ?? "{}")).toMatchObject({
+        version: 2,
+        step: "fontes",
+        name: "Funil legado",
+      });
+    });
+  });
+
+  it("keeps credentials out of sessionStorage while editing sources", async () => {
+    render(
+      <MemoryRouter initialEntries={["/setup-operation"]}>
+        <SetupOperation />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Fontes opcionais" }));
+    fireEvent.change(screen.getByLabelText("Access token Meta"), {
+      target: { value: "meta-super-secret" },
+    });
+    fireEvent.change(screen.getByLabelText("API key"), {
+      target: { value: "vturb-super-secret" },
+    });
+    fireEvent.change(screen.getByLabelText("Token/secret do webhook"), {
+      target: { value: "gateway-super-secret" },
+    });
+
+    await waitFor(() => {
+      const stored =
+        window.sessionStorage.getItem(
+          "infiniteprofit.setupOperationDraft.workspace-1",
+        ) ?? "";
+      expect(stored).not.toContain("meta-super-secret");
+      expect(stored).not.toContain("vturb-super-secret");
+      expect(stored).not.toContain("gateway-super-secret");
+    });
+  });
+
+  it("opens the neutral activation experience when every source is postponed", async () => {
+    fromMock.mockImplementation((table: string) => {
+      if (table === "projects") {
+        return {
+          insert: vi.fn(() => ({
+            select: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({
+                data: { id: "project-new" },
+                error: null,
+              }),
+            })),
+          })),
+        };
+      }
+      return createMetaAccountsQuery();
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/setup-operation"]}>
+        <Routes>
+          <Route path="/setup-operation" element={<SetupOperation />} />
+          <Route
+            path="/funnels/:funnelId/activation"
+            element={<div>Experiência de ativação</div>}
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByLabelText("Nome"), {
+      target: { value: "Funil sem fontes" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fontes opcionais" }));
+    screen
+      .getAllByRole("button", { name: "Fazer depois" })
+      .forEach((button) => fireEvent.click(button));
+    fireEvent.click(screen.getByRole("button", { name: "Revisão" }));
+    fireEvent.click(screen.getByRole("button", { name: "Criar funil" }));
+
+    expect(await screen.findByText("Experiência de ativação")).toBeInTheDocument();
+    expect(invokeMock).not.toHaveBeenCalledWith(
+      "meta-pull",
+      expect.anything(),
+    );
+
+    const storedPlan = JSON.parse(
+      window.sessionStorage.getItem(
+        "infiniteprofit.funnelActivation.project-new",
+      ) ?? "{}",
+    );
+    expect(storedPlan).toMatchObject({
+      projectId: "project-new",
+      configuredSources: [],
+      skippedSources: ["meta", "vturb", "gateway"],
+      syncSources: [],
+      syncState: "complete",
+    });
   });
 });

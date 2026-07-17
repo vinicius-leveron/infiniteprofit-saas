@@ -11,6 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorkspace } from "@/hooks/useWorkspace";
@@ -20,7 +21,26 @@ function defaultOrgName(email: string | undefined) {
   if (!email) return "Minha organização";
   const prefix = email.split("@")[0]?.replace(/[._-]+/g, " ").trim();
   if (!prefix) return "Minha organização";
-  return `${prefix[0]?.toUpperCase() ?? ""}${prefix.slice(1)} Organization`;
+  return `Organização ${prefix[0]?.toUpperCase() ?? ""}${prefix.slice(1)}`;
+}
+
+interface BootstrapAccountResult {
+  organization_id: string;
+  workspace_id: string;
+}
+
+function bootstrapErrorMessage(error: unknown) {
+  if (!(error instanceof Error)) {
+    return "Não foi possível configurar sua conta. Tente novamente.";
+  }
+  const message = error.message.toLowerCase();
+  if (message.includes("organization access denied")) {
+    return "Você não tem permissão para criar clientes nesta organização.";
+  }
+  if (message.includes("failed to fetch") || message.includes("network")) {
+    return "Não foi possível conectar ao servidor. Verifique sua internet e tente novamente.";
+  }
+  return error.message;
 }
 
 export default function Welcome() {
@@ -37,21 +57,22 @@ export default function Welcome() {
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<string>("");
   const [workspaceName, setWorkspaceName] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const shouldCreateOrganization = organizations.length === 0;
 
   useEffect(() => {
-    if (hasWorkspaces) {
-      navigate("/projects", { replace: true });
+    if (hasWorkspaces && !submitting) {
+      navigate("/clients", { replace: true });
     }
-  }, [hasWorkspaces, navigate]);
+  }, [hasWorkspaces, navigate, submitting]);
 
   useEffect(() => {
     if (!organizationName && shouldCreateOrganization) {
       setOrganizationName(defaultOrgName(user?.email));
     }
     if (!workspaceName) {
-      setWorkspaceName("Minha primeira operação");
+      setWorkspaceName("Meu primeiro cliente");
     }
     if (!selectedOrganizationId && organizations[0]?.id) {
       setSelectedOrganizationId(organizations[0].id);
@@ -66,66 +87,35 @@ export default function Welcome() {
   const handleSubmit = async () => {
     if (!user) return;
     if (!workspaceName.trim()) {
-      toast.error("Informe o nome da operação");
+      setSubmitError("Informe o nome do primeiro cliente.");
       return;
     }
     if (shouldCreateOrganization && !organizationName.trim()) {
-      toast.error("Informe o nome da sua empresa ou agência");
+      setSubmitError("Informe o nome da sua empresa ou agência.");
       return;
     }
 
+    setSubmitError(null);
     setSubmitting(true);
     try {
-      let organizationId = activeOrganizationId;
-      const workspaceId = crypto.randomUUID();
+      const { data, error } = await supabase.rpc("bootstrap_account", {
+        _organization_name: shouldCreateOrganization ? organizationName.trim() : null,
+        _workspace_name: workspaceName.trim(),
+        _organization_id: activeOrganizationId,
+      });
+      if (error) throw error;
 
-      if (shouldCreateOrganization) {
-        organizationId = crypto.randomUUID();
-
-        const { error: orgError } = await supabase
-          .from("organizations")
-          .insert({
-            id: organizationId,
-            name: organizationName.trim(),
-            created_by: user.id,
-          });
-        if (orgError) throw orgError;
-
-        const { error: memberError } = await supabase.from("organization_members").insert({
-          organization_id: organizationId,
-          user_id: user.id,
-          role: "owner",
-        });
-        if (memberError) throw memberError;
+      const result = (Array.isArray(data) ? data[0] : data) as BootstrapAccountResult | null;
+      if (!result?.workspace_id) {
+        throw new Error("A configuração foi concluída sem retornar o cliente criado.");
       }
 
-      if (!organizationId) throw new Error("Organização inválida");
-
-      const { error: workspaceError } = await supabase
-        .from("workspaces")
-        .insert({
-          id: workspaceId,
-          organization_id: organizationId,
-          name: workspaceName.trim(),
-          created_by: user.id,
-        });
-      if (workspaceError) throw workspaceError;
-
-      const { error: workspaceMemberError } = await supabase
-        .from("workspace_members")
-        .insert({
-          workspace_id: workspaceId,
-          user_id: user.id,
-          role: "owner",
-        });
-      if (workspaceMemberError) throw workspaceMemberError;
-
       await refreshAccess();
-      setCurrentWorkspaceId(workspaceId);
-      toast.success("Tudo pronto! Vamos começar.");
-      navigate("/projects", { replace: true });
+      setCurrentWorkspaceId(result.workspace_id);
+      toast.success("Conta configurada. Agora crie seu primeiro funil.");
+      navigate(`/clients/${result.workspace_id}/funnels/new`, { replace: true });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Falha ao configurar conta");
+      setSubmitError(bootstrapErrorMessage(error));
     } finally {
       setSubmitting(false);
     }
@@ -141,7 +131,13 @@ export default function Welcome() {
 
   return (
     <main className="min-h-[calc(100vh-80px)] flex items-center justify-center px-4 py-10">
-      <div className="w-full max-w-xl section-card">
+      <form
+        className="w-full max-w-xl section-card"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void handleSubmit();
+        }}
+      >
         <div className="flex items-center gap-3 mb-6">
           <div className="w-12 h-12 rounded-xl bg-gradient-brand flex items-center justify-center shadow-glow">
             <Building2 className="w-6 h-6 text-primary-foreground" />
@@ -166,7 +162,7 @@ export default function Welcome() {
                 className="mt-1.5"
               />
               <p className="text-xs text-muted-foreground mt-2">
-                A organização agrupa todos os seus workspaces e equipe.
+                A organização agrupa seus clientes, equipe e configurações gerais.
               </p>
             </div>
           ) : (
@@ -188,25 +184,31 @@ export default function Welcome() {
           )}
 
           <div>
-            <Label htmlFor="workspace-name">Nome do primeiro projeto/operação</Label>
+            <Label htmlFor="workspace-name">Nome do primeiro cliente</Label>
             <Input
               id="workspace-name"
               value={workspaceName}
               onChange={(event) => setWorkspaceName(event.target.value)}
-              placeholder="Ex: Lançamento Produto X"
+              placeholder="Ex: Empresa Aurora"
               className="mt-1.5"
             />
             <p className="text-xs text-muted-foreground mt-2">
-              Cada workspace representa uma operação ou cliente diferente. Você pode criar mais depois.
+              Cada cliente concentra seus funis, integrações e equipe. Você poderá criar mais depois.
             </p>
           </div>
 
-          <Button onClick={handleSubmit} className="w-full" disabled={submitting}>
-            {submitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-            Começar agora
+          {submitError && (
+            <Alert variant="destructive">
+              <AlertDescription>{submitError}</AlertDescription>
+            </Alert>
+          )}
+
+          <Button type="submit" className="w-full min-h-11" disabled={submitting}>
+            {submitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />}
+            Criar cliente e continuar
           </Button>
         </div>
-      </div>
+      </form>
     </main>
   );
 }

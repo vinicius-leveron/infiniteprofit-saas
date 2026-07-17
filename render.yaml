@@ -13,6 +13,8 @@ services:
         value: nztnctrkmfrgclrnflfa
       - key: VITE_ENABLE_GOOGLE_AUTH
         value: "false"
+      - key: VITE_ENABLE_PUBLIC_SIGNUP
+        value: "true"
     routes:
       - type: rewrite
         source: /*

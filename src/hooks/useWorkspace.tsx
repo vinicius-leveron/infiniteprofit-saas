@@ -14,33 +14,35 @@ const STORAGE_KEY = "infiniteprofit.currentWorkspaceId";
 
 export type OrganizationRole = "owner" | "admin";
 export type WorkspaceRole = "owner" | "admin" | "moderator" | "member";
+export type EffectiveWorkspaceRole = WorkspaceRole;
+export type WorkspaceAccessOrigin = "workspace" | "organization";
 
 export interface OrganizationAccess {
   id: string;
   name: string;
-  role: OrganizationRole;
+  role: OrganizationRole | null;
 }
 
 export interface WorkspaceAccess {
   id: string;
   name: string;
   organization_id: string;
-  role: WorkspaceRole;
+  role: EffectiveWorkspaceRole;
+  accessOrigin: WorkspaceAccessOrigin;
+}
+
+interface WorkspaceSummary {
+  id: string;
+  name: string;
+  organization_id: string;
+  organizations?: { name: string } | Array<{ name: string }> | null;
 }
 
 interface WorkspaceMemberWithWorkspace {
   role: WorkspaceRole;
   workspaces:
-    | {
-        id: string;
-        name: string;
-        organization_id: string;
-      }
-    | Array<{
-        id: string;
-        name: string;
-        organization_id: string;
-      }>
+    | WorkspaceSummary
+    | WorkspaceSummary[]
     | null;
 }
 
@@ -60,6 +62,7 @@ interface OrganizationMemberWithOrganization {
 
 interface WorkspaceContextValue {
   loading: boolean;
+  error: string | null;
   workspaces: WorkspaceAccess[];
   organizations: OrganizationAccess[];
   currentWorkspace: WorkspaceAccess | null;
@@ -77,10 +80,38 @@ interface WorkspaceContextValue {
 
 const WorkspaceContext = createContext<WorkspaceContextValue | undefined>(undefined);
 
+const ROLE_WEIGHT: Record<EffectiveWorkspaceRole, number> = {
+  owner: 4,
+  admin: 3,
+  moderator: 2,
+  member: 1,
+};
+
+function resolveWorkspaceAccess(
+  directRole: WorkspaceRole | null,
+  organizationRole: OrganizationRole | null,
+): Pick<WorkspaceAccess, "role" | "accessOrigin"> | null {
+  const inheritedRole: EffectiveWorkspaceRole | null = organizationRole;
+
+  if (!directRole && !inheritedRole) return null;
+  if (!inheritedRole || (directRole && ROLE_WEIGHT[directRole] >= ROLE_WEIGHT[inheritedRole])) {
+    return {
+      role: directRole as EffectiveWorkspaceRole,
+      accessOrigin: "workspace",
+    };
+  }
+
+  return {
+    role: inheritedRole,
+    accessOrigin: "organization",
+  };
+}
+
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const { user, loading: authLoading } = useAuth();
   const userId = user?.id ?? null;
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceAccess[]>([]);
   const [organizations, setOrganizations] = useState<OrganizationAccess[]>([]);
   const [currentWorkspaceId, setCurrentWorkspaceIdState] = useState<string | null>(null);
@@ -99,17 +130,19 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setWorkspaces([]);
       setOrganizations([]);
       setCurrentWorkspaceId(null);
+      setError(null);
       setLoading(false);
       return;
     }
 
     setLoading(true);
+    setError(null);
 
     const [{ data: workspaceRows, error: workspaceError }, { data: orgRows, error: orgError }] =
       await Promise.all([
         supabase
           .from("workspace_members")
-          .select("role, workspaces(id, name, organization_id)")
+          .select("role, workspaces(id, name, organization_id, organizations(name))")
           .eq("user_id", userId),
         supabase
           .from("organization_members")
@@ -117,31 +150,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           .eq("user_id", userId),
       ]);
 
-    if (workspaceError) {
-      console.error("workspace access load failed", workspaceError);
-      setWorkspaces([]);
-    } else {
-      const mapped = ((workspaceRows ?? []) as WorkspaceMemberWithWorkspace[])
-        .map((row) => {
-          const workspace = Array.isArray(row.workspaces) ? row.workspaces[0] : row.workspaces;
-          if (!workspace?.id) return null;
-          return {
-            id: workspace.id as string,
-            name: workspace.name as string,
-            organization_id: workspace.organization_id as string,
-            role: row.role as WorkspaceRole,
-          };
-        })
-        .filter(Boolean) as WorkspaceAccess[];
-      mapped.sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
-      setWorkspaces(mapped);
-    }
-
+    let mappedOrganizations: OrganizationAccess[] = [];
     if (orgError) {
       console.error("organization access load failed", orgError);
-      setOrganizations([]);
     } else {
-      const mapped = ((orgRows ?? []) as OrganizationMemberWithOrganization[])
+      mappedOrganizations = ((orgRows ?? []) as OrganizationMemberWithOrganization[])
         .map((row) => {
           const organization = Array.isArray(row.organizations) ? row.organizations[0] : row.organizations;
           if (!organization?.id) return null;
@@ -152,10 +165,108 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           };
         })
         .filter(Boolean) as OrganizationAccess[];
-      mapped.sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
-      setOrganizations(mapped);
     }
 
+    const directMemberships = new Map<
+      string,
+      { workspace: WorkspaceSummary; role: WorkspaceRole }
+    >();
+    if (workspaceError) {
+      console.error("workspace access load failed", workspaceError);
+    } else {
+      for (const row of (workspaceRows ?? []) as WorkspaceMemberWithWorkspace[]) {
+        const workspace = Array.isArray(row.workspaces) ? row.workspaces[0] : row.workspaces;
+        if (!workspace?.id) continue;
+        directMemberships.set(workspace.id, {
+          workspace,
+          role: row.role as WorkspaceRole,
+        });
+      }
+    }
+
+    for (const { workspace } of directMemberships.values()) {
+      if (mappedOrganizations.some((organization) => organization.id === workspace.organization_id)) {
+        continue;
+      }
+      const relation = Array.isArray(workspace.organizations)
+        ? workspace.organizations[0]
+        : workspace.organizations;
+      if (!relation?.name) continue;
+      mappedOrganizations.push({
+        id: workspace.organization_id,
+        name: relation.name,
+        role: null,
+      });
+    }
+    mappedOrganizations.sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+    setOrganizations(mappedOrganizations);
+
+    const organizationRoleById = new Map(
+      mappedOrganizations.map((organization) => [organization.id, organization.role]),
+    );
+    let inheritedWorkspaceRows: Array<{
+      id: string;
+      name: string;
+      organization_id: string;
+    }> = [];
+
+    const administeredOrganizations = mappedOrganizations.filter(
+      (organization): organization is OrganizationAccess & { role: OrganizationRole } =>
+        organization.role !== null,
+    );
+    if (administeredOrganizations.length > 0) {
+      const { data, error: inheritedError } = await supabase
+        .from("workspaces")
+        .select("id, name, organization_id")
+        .in(
+          "organization_id",
+          administeredOrganizations.map((organization) => organization.id),
+        );
+
+      if (inheritedError) {
+        console.error("inherited workspace access load failed", inheritedError);
+        setError("Não foi possível carregar todos os clientes disponíveis.");
+      } else {
+        inheritedWorkspaceRows = (data ?? []) as typeof inheritedWorkspaceRows;
+      }
+    }
+
+    const accessibleWorkspaces = new Map<string, WorkspaceAccess>();
+    for (const { workspace, role } of directMemberships.values()) {
+      const resolved = resolveWorkspaceAccess(
+        role,
+        organizationRoleById.get(workspace.organization_id) ?? null,
+      );
+      if (!resolved) continue;
+      accessibleWorkspaces.set(workspace.id, {
+        id: workspace.id,
+        name: workspace.name,
+        organization_id: workspace.organization_id,
+        ...resolved,
+      });
+    }
+
+    for (const workspace of inheritedWorkspaceRows) {
+      const directRole = directMemberships.get(workspace.id)?.role ?? null;
+      const resolved = resolveWorkspaceAccess(
+        directRole,
+        organizationRoleById.get(workspace.organization_id) ?? null,
+      );
+      if (!resolved) continue;
+      accessibleWorkspaces.set(workspace.id, {
+        ...workspace,
+        ...resolved,
+      });
+    }
+
+    const mappedWorkspaces = Array.from(accessibleWorkspaces.values()).sort((a, b) =>
+      a.name.localeCompare(b.name, "pt-BR"),
+    );
+    setWorkspaces(mappedWorkspaces);
+
+    if (workspaceError || orgError) {
+      setError("Não foi possível carregar todos os seus acessos.");
+    }
     setLoading(false);
   }, [setCurrentWorkspaceId, userId]);
 
@@ -200,6 +311,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
     return {
       loading: authLoading || loading,
+      error,
       workspaces,
       organizations,
       currentWorkspace,
@@ -208,7 +320,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       currentWorkspaceRole,
       currentOrganizationRole,
       hasWorkspaces: workspaces.length > 0,
-      needsOnboarding: !authLoading && !loading && !!userId && workspaces.length === 0,
+      needsOnboarding:
+        !authLoading &&
+        !loading &&
+        !!userId &&
+        organizations.length === 0 &&
+        workspaces.length === 0,
       isWorkspaceAdmin: currentWorkspaceRole === "owner" || currentWorkspaceRole === "admin",
       isOrganizationAdmin:
         currentOrganizationRole === "owner" || currentOrganizationRole === "admin",
@@ -220,6 +337,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     currentOrganization,
     currentWorkspace,
     currentWorkspaceId,
+    error,
     loading,
     organizations,
     refreshAccess,

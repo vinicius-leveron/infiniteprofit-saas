@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type React from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
@@ -8,6 +8,7 @@ import {
   ArchiveX,
   ArrowLeft,
   CheckCircle2,
+  Circle,
   Copy,
   CreditCard,
   Loader2,
@@ -18,9 +19,16 @@ import {
   Settings2,
   Sparkles,
   Zap,
+  XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -50,6 +58,13 @@ import {
   type CreativeJobQueueRow,
 } from "@/lib/creativeJobQueue";
 import { cn } from "@/lib/utils";
+import {
+  deriveSourceHealth,
+  SOURCE_HEALTH_LABELS,
+  type SourceHealthKey,
+  type SourceHealthResult,
+  type SourceHealthStatus,
+} from "@/lib/sourceHealth";
 import {
   Tooltip,
   TooltipContent,
@@ -120,11 +135,19 @@ interface CreativeJobActionState {
 export default function Diagnostics() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const projectId = params.get("project");
+  const { funnelId } = useParams<{ funnelId?: string }>();
+  const projectId = funnelId ?? params.get("project");
   const { user, loading: authLoading } = useAuth();
   const userId = user?.id ?? null;
-  const { currentWorkspace, isOrganizationAdmin, isWorkspaceAdmin, setCurrentWorkspaceId } = useWorkspace();
+  const {
+    currentWorkspace,
+    currentWorkspaceRole,
+    isOrganizationAdmin,
+    isWorkspaceAdmin,
+    setCurrentWorkspaceId,
+  } = useWorkspace();
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [syncing, setSyncing] = useState<"meta" | "vturb" | "creative" | null>(null);
   const [generatingAlerts, setGeneratingAlerts] = useState(false);
   const [jobAction, setJobAction] = useState<CreativeJobActionState | null>(null);
@@ -157,6 +180,7 @@ export default function Diagnostics() {
   const load = useCallback(async () => {
     if (!projectId) return;
     setLoading(true);
+    setLoadError("");
     try {
       const { data: projectData, error: projectError } = await supabase
         .from("projects")
@@ -204,7 +228,7 @@ export default function Diagnostics() {
           .maybeSingle(),
         supabase
           .from("workspace_integrations")
-          .select("gateway_provider, gateway_last_event_at, vturb_last_event_at")
+          .select("gateway_provider")
           .eq("workspace_id", typedProject.workspace_id)
           .maybeSingle(),
         supabase
@@ -239,21 +263,20 @@ export default function Diagnostics() {
         checkoutToken: checkoutRow?.enabled ? checkoutRow.webhook_token : null,
         gatewayProvider: integrationRow?.gateway_provider ?? null,
         lastMetaSync: lastReceivedAt(typedEvents, "meta"),
-        lastVturbSync: integrationRow?.vturb_last_event_at ?? lastReceivedAt(typedEvents, "vturb"),
+        lastVturbSync: lastReceivedAt(typedEvents, "vturb"),
         lastCreativeSync: typedSyncRuns.find((row) => row.source === "creative" && row.status === "succeeded")?.created_at ?? null,
-        lastGatewayEvent: integrationRow?.gateway_last_event_at ?? lastReceivedAt(typedEvents, "gateway"),
+        lastGatewayEvent: lastReceivedAt(typedEvents, "gateway"),
       });
       setOperationalAlerts((alertRows ?? []) as unknown as OperationalAlertRow[]);
       setSyncRuns(typedSyncRuns);
       setCreativeJobs((creativeJobRows ?? []) as unknown as CreativeJobRow[]);
       setLastLoadedAt(new Date());
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Falha ao carregar diagnóstico");
-      navigate("/projects", { replace: true });
+      setLoadError(error instanceof Error ? error.message : "Falha ao carregar a saúde do funil");
     } finally {
       setLoading(false);
     }
-  }, [currentWorkspace?.id, navigate, projectId, setCurrentWorkspaceId]);
+  }, [currentWorkspace?.id, projectId, setCurrentWorkspaceId]);
 
   useEffect(() => {
     if (!userId || !projectId) return;
@@ -364,6 +387,46 @@ export default function Diagnostics() {
       ? `${SUPABASE_URL}/functions/v1/webhook-gateway/${bindings.gatewayProvider}/${bindings.checkoutToken}`
       : "";
   const alerts = buildAlerts(bindings, coverageRows, events, syncRuns, metrics);
+  const sourceHealth = useMemo(() => {
+    const configured: Record<SourceHealthKey, boolean> = {
+      meta: bindings.metaAccounts > 0,
+      vturb: bindings.vturbPlayers > 0,
+      gateway: Boolean(bindings.checkoutToken),
+      creative: bindings.creativeAssets > 0,
+    };
+    const lastEvent: Record<SourceHealthKey, string | null> = {
+      meta: bindings.lastMetaSync,
+      vturb: bindings.lastVturbSync,
+      gateway: bindings.lastGatewayEvent,
+      creative: null,
+    };
+
+    return Object.fromEntries(
+      (["meta", "vturb", "gateway", "creative"] as SourceHealthKey[]).map((source) => {
+        const runs = syncRuns.filter((run) => run.source === source);
+        const latestRun = runs[0] ?? null;
+        const latestSuccess = runs.find((run) => run.status === "succeeded") ?? null;
+        const latestFailure = runs.find((run) => run.status === "failed") ?? null;
+        const sourceAlerts = operationalAlerts.filter((alert) => alert.source === source);
+        return [
+          source,
+          deriveSourceHealth({
+            workspaceId: project?.workspace_id ?? "",
+            projectId: project?.id ?? "",
+            source,
+            configured: configured[source],
+            lastSuccessAt: latestSuccess?.created_at ?? null,
+            lastEventAt: lastEvent[source],
+            lastErrorAt: latestFailure?.created_at ?? null,
+            syncing: latestRun?.status === "queued" || latestRun?.status === "running",
+            warningCount: sourceAlerts.filter((alert) => alert.severity === "warning").length,
+            criticalCount: sourceAlerts.filter((alert) => alert.severity === "critical").length,
+          }),
+        ];
+      }),
+    ) as Record<SourceHealthKey, SourceHealthResult>;
+  }, [bindings, operationalAlerts, project?.id, project?.workspace_id, syncRuns]);
+  const canSeeDetailedHealth = currentWorkspaceRole !== "member";
 
   async function sync(source: "meta" | "vturb" | "creative", options?: { reprocessScope?: "all" | "analysis" | "transcript" | "media" }) {
     if (!project?.id) return;
@@ -398,319 +461,402 @@ export default function Diagnostics() {
     }
   }
 
+  if (!projectId) return <Navigate to="/health" replace />;
+
   if (authLoading || loading) {
     return (
-      <main className="min-h-[calc(100vh-80px)] flex items-center justify-center">
-        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+      <main className="flex min-h-[calc(100vh-80px)] items-center justify-center" aria-busy="true">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        <span className="sr-only">Carregando saúde do funil</span>
       </main>
     );
   }
 
+  if (loadError) {
+    return (
+      <main className="mx-auto max-w-[760px] px-4 py-12 md:px-6 lg:px-8">
+        <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-5" role="alert">
+          <p className="font-medium text-destructive">Falha ao carregar a saúde do funil</p>
+          <p className="mt-1 text-sm text-muted-foreground">{loadError}</p>
+          <Button variant="outline" onClick={() => void load()} className="mt-4 min-h-11">
+            Tentar novamente
+          </Button>
+        </div>
+      </main>
+    );
+  }
+
+  const sortedOperationalAlerts = [...operationalAlerts].sort(
+    (a, b) =>
+      Number(b.severity === "critical") - Number(a.severity === "critical") ||
+      new Date(b.last_seen_at).getTime() - new Date(a.last_seen_at).getTime(),
+  );
+
   return (
-    <main className="max-w-[1180px] mx-auto px-4 md:px-6 py-6 md:py-8">
-      <header className="flex flex-wrap items-center justify-between gap-4 mb-6">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => navigate("/projects")} className="gap-1.5">
-            <ArrowLeft className="w-4 h-4" />
-            Projetos
+    <main className="mx-auto max-w-[1200px] px-4 py-6 md:px-6 md:py-8 lg:px-8">
+      <header className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex items-start gap-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="min-h-11 min-w-11"
+            onClick={() => navigate(`/health?client=${project?.workspace_id ?? "all"}`)}
+          >
+            <ArrowLeft className="h-4 w-4" />
+            <span className="sr-only">Voltar para saúde global</span>
           </Button>
           <div>
-            <h1 className="text-xl font-bold">Diagnóstico — {project?.name}</h1>
-            <p className="text-xs text-muted-foreground">
-              Saúde das fontes, eventos recentes e cobertura dos KPIs do dashboard.
+            <h1 className="text-2xl font-bold leading-8">
+              Saúde do funil <span className="text-muted-foreground">· Diagnóstico</span>
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              {project?.name}
               {lastLoadedAt && (
-                <span className="ml-2">
-                  · Atualizado {formatDistanceToNow(lastLoadedAt, { addSuffix: true, locale: ptBR })}
+                <span>
+                  {" "}· atualizado {formatDistanceToNow(lastLoadedAt, { addSuffix: true, locale: ptBR })}
                 </span>
               )}
             </p>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => navigate(`/connections?project=${projectId}`)} className="gap-2">
-            <Settings2 className="w-4 h-4" />
-            Conexões
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => navigate(`/dashboard?project=${projectId}`)}>
+        <div className="flex flex-wrap gap-2">
+          {isWorkspaceAdmin && (
+            <Button
+              variant="outline"
+              onClick={() => navigate(`/funnels/${projectId}/sources`)}
+              className="min-h-11 gap-2"
+            >
+              <Settings2 className="h-4 w-4" />
+              Fontes de dados
+            </Button>
+          )}
+          <Button
+            variant="outline"
+            onClick={() => navigate(`/dashboard?project=${projectId}`)}
+            className="min-h-11"
+          >
             Dashboard
           </Button>
         </div>
       </header>
 
-      <div className="grid md:grid-cols-5 gap-3 mb-5">
-        <SourceCard icon={<Megaphone className="w-5 h-5" />} label="Meta" connected={bindings.metaAccounts > 0} count={`${bindings.metaAccounts} conta(s)`} last={bindings.lastMetaSync} />
-        <SourceCard icon={<PlayCircle className="w-5 h-5" />} label="VTurb" connected={bindings.vturbPlayers > 0} count={`${bindings.vturbPlayers} player(s)`} last={bindings.lastVturbSync} />
-        <SourceCard icon={<Sparkles className="w-5 h-5" />} label="Criativos" connected={bindings.creativeAssets > 0} count={`${bindings.creativeAssets} asset(s)`} last={bindings.lastCreativeSync} />
-        <SourceCard icon={<CreditCard className="w-5 h-5" />} label="Hubla" connected={!!bindings.checkoutToken} count={bindings.gatewayProvider ?? "sem gateway"} last={bindings.lastGatewayEvent} />
-        <div className="section-card">
-          <div className="text-xs text-muted-foreground mb-2">Cobertura</div>
-          <div className="flex items-center gap-2 text-sm">
-            <StatusPill status="OK" /> {coverageSummary.OK}
-            <StatusPill status="Parcial" /> {coverageSummary.Parcial}
-            <StatusPill status="Faltando" /> {coverageSummary.Faltando}
+      <section className="mb-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Resumo por fonte">
+        <SourceCard
+          icon={<Megaphone className="h-5 w-5" />}
+          label="Meta"
+          count={`${bindings.metaAccounts} conta(s)`}
+          health={sourceHealth.meta}
+          latestRun={syncRuns.find((run) => run.source === "meta") ?? null}
+        />
+        <SourceCard
+          icon={<PlayCircle className="h-5 w-5" />}
+          label="VTurb"
+          count={`${bindings.vturbPlayers} player(s)`}
+          health={sourceHealth.vturb}
+          latestRun={syncRuns.find((run) => run.source === "vturb") ?? null}
+        />
+        <SourceCard
+          icon={<CreditCard className="h-5 w-5" />}
+          label="Gateway"
+          count={bindings.gatewayProvider ?? "sem provedor"}
+          health={sourceHealth.gateway}
+          latestRun={null}
+        />
+        <SourceCard
+          icon={<Sparkles className="h-5 w-5" />}
+          label="Criativos"
+          count={`${bindings.creativeAssets} ativo(s)`}
+          health={sourceHealth.creative}
+          latestRun={syncRuns.find((run) => run.source === "creative") ?? null}
+        />
+      </section>
+
+      {operationalAlerts.length === 0 && alerts.length === 0 && coverageIssues.length === 0 ? (
+        <section className="section-card mb-6 border-green-500/30 p-4 md:p-6">
+          <div className="flex items-center gap-2 text-green-700">
+            <CheckCircle2 className="h-5 w-5" />
+            <h2 className="font-semibold">Nenhuma ação necessária</h2>
           </div>
-          <p className="text-[11px] text-muted-foreground mt-3">
-            {metrics.length} dia(s) com dados. Cada número é um grupo de KPI com fonte utilizável, parcial ou ausente.
+          <p className="mt-1 text-sm text-muted-foreground">
+            As fontes configuradas não possuem alertas ativos neste funil.
           </p>
-        </div>
-      </div>
-
-      <div className="section-card mb-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-sm font-semibold">Ações rápidas</h2>
-            <p className="text-xs text-muted-foreground">Use para validar fonte sem sair do projeto.</p>
+        </section>
+      ) : canSeeDetailedHealth ? (
+        <section className="section-card mb-6 p-4 md:p-6">
+          <div className="mb-4 flex items-center gap-2">
+            <AlertTriangle className="h-5 w-5 text-amber-600" />
+            <h2 className="text-lg font-semibold">Precisa de ação</h2>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="outline" onClick={() => sync("meta")} disabled={syncing === "meta"} className="gap-2">
-              {syncing === "meta" ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-              Sincronizar Meta
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => sync("vturb")} disabled={syncing === "vturb"} className="gap-2">
-              {syncing === "vturb" ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-              Sincronizar VTurb
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => sync("creative")} disabled={syncing === "creative"} className="gap-2">
-              {syncing === "creative" ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-              Sincronizar criativos
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => sync("creative", { reprocessScope: "analysis" })} disabled={syncing === "creative"} className="gap-2">
-              {syncing === "creative" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-              Reprocessar análises
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!webhookUrl}
-              onClick={() => {
-                void navigator.clipboard.writeText(webhookUrl);
-                toast.success("Webhook copiado");
-              }}
-              className="gap-2"
-            >
-              <Copy className="w-4 h-4" />
-              Copiar webhook Hubla
-            </Button>
-            <Button size="sm" variant="outline" onClick={refreshAlerts} disabled={generatingAlerts} className="gap-2">
-              {generatingAlerts ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-              Atualizar alertas
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      <div className="section-card mb-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-sm font-semibold">Fila de criativos</h2>
-            <p className="text-xs text-muted-foreground">Jobs assíncronos do worker para transcript e análise multimodal.</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 text-sm">
-            <StatusPill status="Parcial" /> {creativeJobSummary.queued + creativeJobSummary.running}
-            <StatusPill status="OK" /> {creativeJobSummary.succeeded}
-            <StatusPill status="Faltando" /> {creativeJobSummary.failed + creativeJobSummary.dead_letter}
-          </div>
-        </div>
-        <div className="mt-3 grid gap-3 md:grid-cols-5">
-          <QueueMetric label="Queued" value={creativeJobSummary.queued} tone="amber" />
-          <QueueMetric label="Running" value={creativeJobSummary.running} tone="cyan" />
-          <QueueMetric label="Succeeded" value={creativeJobSummary.succeeded} tone="emerald" />
-          <QueueMetric label="Failed" value={creativeJobSummary.failed} tone="red" />
-          <QueueMetric label="Dead letter" value={creativeJobSummary.dead_letter} tone="slate" />
-        </div>
-        {actionableCreativeJobs.length > 0 && (
-          <div className="mt-4 overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="text-xs text-muted-foreground border-b border-border/50">
-                <tr>
-                  <th className="text-left py-2 pr-3">Status</th>
-                  <th className="text-left py-2 pr-3">Job</th>
-                  <th className="text-right py-2 pr-3">Tentativas</th>
-                  <th className="text-left py-2 pr-3">Atualizado</th>
-                  <th className="text-left py-2 pr-3">Erro</th>
-                  {canAdminCreativeJobs && <th className="text-right py-2">Ações</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {actionableCreativeJobs.map((job) => (
-                  <tr key={job.id} className="border-b border-border/30 last:border-0">
-                    <td className="py-2 pr-3">
-                      <JobStatusPill status={job.status} />
-                    </td>
-                    <td className="py-2 pr-3">
-                      <div className="font-mono text-xs">{job.id.slice(0, 8)}</div>
-                      <div className="text-[10px] text-muted-foreground">asset {job.asset_id.slice(0, 8)}</div>
-                    </td>
-                    <td className="py-2 pr-3 text-right tabular-nums">
-                      {job.attempt_count ?? 0}/{job.max_attempts ?? 0}
-                    </td>
-                    <td className="py-2 pr-3 text-xs text-muted-foreground whitespace-nowrap">
-                      {formatDistanceToNow(new Date(job.updated_at), { addSuffix: true, locale: ptBR })}
-                    </td>
-                    <td className="py-2 pr-3 text-xs text-muted-foreground max-w-[280px]">
-                      <span className="line-clamp-2 break-words">{job.last_error ?? "Sem erro registrado"}</span>
-                    </td>
-                    {canAdminCreativeJobs && (
-                      <td className="py-2 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          {canRequeueCreativeJob(job.status) && (
-                            <JobActionButton
-                              label="Reenfileirar"
-                              onClick={() => openJobAction("requeue", job)}
-                            >
-                              <RotateCcw className="w-4 h-4" />
-                            </JobActionButton>
-                          )}
-                          {canDeadLetterCreativeJob(job.status) && (
-                            <JobActionButton
-                              label="Dead letter"
-                              destructive
-                              onClick={() => openJobAction("dead_letter", job)}
-                            >
-                              <ArchiveX className="w-4 h-4" />
-                            </JobActionButton>
-                          )}
-                        </div>
-                      </td>
+          <div className="grid gap-3 md:grid-cols-2">
+            {sortedOperationalAlerts.map((alert) => (
+              <article
+                key={alert.id}
+                className={cn(
+                  "rounded-lg border p-4",
+                  alert.severity === "critical"
+                    ? "border-red-500/30 bg-red-500/5"
+                    : "border-amber-500/30 bg-amber-500/5",
+                )}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <h3 className="text-sm font-semibold">{alert.title}</h3>
+                  <span
+                    className={cn(
+                      "rounded-full px-2 py-1 text-[10px] font-semibold uppercase",
+                      alert.severity === "critical"
+                        ? "bg-red-500/10 text-red-700"
+                        : "bg-amber-500/10 text-amber-700",
                     )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {operationalAlerts.length === 0 && alerts.length === 0 && (
-        <div className="section-card mb-5 border-green-500/30">
-          <div className="flex items-center gap-2 text-green-600">
-            <CheckCircle2 className="w-4 h-4" />
-            <span className="text-sm font-semibold">Operacao saudavel</span>
-          </div>
-          <p className="text-xs text-muted-foreground mt-1">
-            Nenhum alerta ativo. Todas as fontes estao funcionando corretamente.
-          </p>
-        </div>
-      )}
-
-      {(operationalAlerts.length > 0 || alerts.length > 0) && (
-        <div className="section-card mb-5 border-amber-500/30">
-          <h2 className="text-sm font-semibold mb-3 flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-amber-500" />
-            Alertas operacionais
-          </h2>
-          <div className="grid md:grid-cols-2 gap-2">
-            {operationalAlerts.map((alert) => (
-              <div key={alert.id} className={cn(
-                "rounded-md border px-3 py-2 overflow-hidden",
-                alert.severity === "critical" ? "border-red-500/30 bg-red-500/5" : "border-amber-500/25 bg-amber-500/5",
-              )}>
-                <div className="flex items-center justify-between gap-2 mb-1">
-                  <span className="text-xs font-semibold truncate">{alert.title}</span>
-                  <span className={cn(
-                    "rounded px-1.5 py-0.5 text-[10px] font-semibold shrink-0",
-                    alert.severity === "critical" ? "bg-red-500/10 text-red-600" : "bg-amber-500/10 text-amber-600",
-                  )}>
-                    {alert.severity}
+                  >
+                    {alert.severity === "critical" ? "Crítico" : "Atenção"}
                   </span>
                 </div>
-                <p className="text-xs text-muted-foreground line-clamp-2 break-words">{alert.message}</p>
-                <p className="text-[10px] text-muted-foreground mt-1">
-                  atualizado {formatDistanceToNow(new Date(alert.last_seen_at), { addSuffix: true, locale: ptBR })}
+                <p className="mt-2 text-sm text-muted-foreground">{alert.message}</p>
+                <p className="mt-3 text-xs text-muted-foreground">
+                  {formatDistanceToNow(new Date(alert.last_seen_at), { addSuffix: true, locale: ptBR })}
                 </p>
-              </div>
+              </article>
             ))}
-            {alerts.map((alert) => (
-              <div key={alert} className="rounded-md border border-border/50 px-3 py-2 text-xs text-muted-foreground">
-                {alert}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {coverageIssues.length > 0 && (
-        <div className="section-card mb-5">
-          <div className="flex items-center gap-2 mb-3">
-            <AlertTriangle className="w-4 h-4 text-amber-500" />
-            <h2 className="text-sm font-semibold">O que precisa de ação</h2>
-          </div>
-          <div className="grid md:grid-cols-2 gap-2">
             {coverageIssues.map((row) => (
-              <div key={`${row.group}-${row.kpi}-issue`} className="rounded-md border border-border/50 px-3 py-2">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-semibold truncate">{row.group}</span>
+              <article key={`${row.group}-${row.kpi}-issue`} className="rounded-lg border border-border/60 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <h3 className="text-sm font-semibold">{row.group}</h3>
                   <StatusPill status={row.status} reason={row.reason} />
                 </div>
-                <p className="mt-1 text-xs text-muted-foreground">{row.kpi}</p>
-                <p className="mt-2 text-xs">{row.nextAction}</p>
-                <p className="mt-1 text-[10px] text-muted-foreground">
+                <p className="mt-1 text-sm text-muted-foreground">{row.kpi}</p>
+                <p className="mt-3 text-sm">{row.nextAction}</p>
+                <p className="mt-2 text-xs text-muted-foreground">
                   Eventos {row.rawFound} · Agregado {row.metricFilled}
                 </p>
-              </div>
+              </article>
+            ))}
+            {alerts.map((alert) => (
+              <article key={alert} className="rounded-lg border border-border/60 p-4 text-sm text-muted-foreground">
+                {alert}
+              </article>
             ))}
           </div>
-        </div>
+        </section>
+      ) : (
+        <section className="section-card mb-6 border-amber-500/30 p-4">
+          <div className="flex items-center gap-2 text-amber-700">
+            <AlertTriangle className="h-5 w-5" />
+            <h2 className="font-semibold">Este funil requer atenção</h2>
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Peça a um moderador ou administrador para revisar os detalhes operacionais.
+          </p>
+        </section>
       )}
 
-      <div className="grid lg:grid-cols-[1fr_360px] gap-5">
-        <div className="space-y-5">
-          {[...groupedCoverage.entries()].map(([group, rows]) => (
-            <div key={group} className="section-card">
-              <h2 className="text-sm font-semibold mb-3">{group}</h2>
-              <div className="max-h-[420px] overflow-auto">
-                <table className="w-full text-sm">
-                  <thead className="text-xs text-muted-foreground border-b border-border/50">
-                    <tr>
-                      <th className="text-left py-2 pr-3">KPI</th>
-                      <th className="text-left py-2 pr-3">Fonte</th>
-                      <th className="text-right py-2 pr-3">Eventos</th>
-                      <th className="text-right py-2 pr-3">Agregado</th>
-                      <th className="text-left py-2 pr-3">Status</th>
-                      <th className="text-left py-2 pr-3">Motivo</th>
-                      <th className="text-left py-2">Ação</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((row) => (
-                      <tr key={`${group}-${row.kpi}`} className="border-b border-border/30 last:border-0">
-                        <td className="py-2 pr-3 font-medium">{row.kpi}</td>
-                        <td className="py-2 pr-3 text-muted-foreground">{row.source}</td>
-                        <td className="py-2 pr-3 text-right tabular-nums">{row.rawFound}</td>
-                        <td className="py-2 pr-3 text-right tabular-nums">{row.metricFilled}</td>
-                        <td className="py-2 pr-3"><StatusPill status={row.status} reason={row.reason} /></td>
-                        <td className="py-2 pr-3 text-xs text-muted-foreground min-w-[240px]">{row.reason}</td>
-                        <td className="py-2 text-xs text-muted-foreground min-w-[220px]">{row.nextAction}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+      {isWorkspaceAdmin && (
+        <section className="section-card mb-6 p-4 md:p-6">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h2 className="font-semibold">Ações operacionais</h2>
+              <p className="text-sm text-muted-foreground">Sincronizações manuais são restritas a administradores.</p>
             </div>
-          ))}
-        </div>
+            <div className="flex flex-wrap gap-2">
+              <SyncButton label="Sincronizar Meta" active={syncing === "meta"} onClick={() => sync("meta")} />
+              <SyncButton label="Sincronizar VTurb" active={syncing === "vturb"} onClick={() => sync("vturb")} />
+              <SyncButton label="Sincronizar criativos" active={syncing === "creative"} onClick={() => sync("creative")} />
+              <Button
+                variant="outline"
+                onClick={refreshAlerts}
+                disabled={generatingAlerts}
+                className="min-h-11 gap-2"
+              >
+                {generatingAlerts ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
+                Atualizar alertas
+              </Button>
+            </div>
+          </div>
+        </section>
+      )}
 
-        <div className="section-card h-fit">
-          <h2 className="text-sm font-semibold mb-3">Eventos recentes</h2>
-          {events.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Nenhum raw_event recebido neste projeto.</p>
-          ) : (
-            <div className="space-y-2">
-              {events.slice(0, 20).map((event, index) => (
-                <div key={`${event.source}-${event.event_type}-${event.received_at}-${index}`} className="rounded-md border border-border/50 p-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-medium">{event.source} · {event.event_type}</span>
-                    <span className="text-[10px] text-muted-foreground">{event.event_date}</span>
+      {isWorkspaceAdmin && (
+        <Accordion type="single" collapsible className="section-card px-4 md:px-6">
+          <AccordionItem value="advanced" className="border-0">
+            <AccordionTrigger className="min-h-14 text-left hover:no-underline">
+              <span>
+                <span className="block font-semibold">Diagnóstico avançado</span>
+                <span className="block text-xs font-normal text-muted-foreground">
+                  Cobertura técnica, eventos brutos, execuções, filas e job IDs
+                </span>
+              </span>
+            </AccordionTrigger>
+            <AccordionContent className="space-y-8 pb-6 pt-2">
+              <section>
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="font-semibold">Cobertura técnica</h3>
+                    <p className="text-sm text-muted-foreground">
+                      {metrics.length} dia(s) agregados; fórmulas existentes preservadas.
+                    </p>
                   </div>
-                  <p className="text-[10px] text-muted-foreground mt-1">
-                    recebido {formatDistanceToNow(new Date(event.received_at), { addSuffix: true, locale: ptBR })}
-                  </p>
+                  <div className="flex items-center gap-2 text-sm">
+                    <StatusPill status="OK" /> {coverageSummary.OK}
+                    <StatusPill status="Parcial" /> {coverageSummary.Parcial}
+                    <StatusPill status="Faltando" /> {coverageSummary.Faltando}
+                  </div>
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
+                <div className="space-y-4">
+                  {[...groupedCoverage.entries()].map(([group, rows]) => (
+                    <div key={group} className="overflow-x-auto rounded-lg border border-border/60">
+                      <h4 className="border-b bg-muted/20 px-4 py-3 text-sm font-semibold">{group}</h4>
+                      <table className="w-full min-w-[820px] text-sm">
+                        <thead className="border-b text-xs text-muted-foreground">
+                          <tr>
+                            <th className="p-3 text-left">KPI</th>
+                            <th className="p-3 text-left">Fonte</th>
+                            <th className="p-3 text-right">Eventos</th>
+                            <th className="p-3 text-right">Agregado</th>
+                            <th className="p-3 text-left">Status</th>
+                            <th className="p-3 text-left">Motivo</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {rows.map((row) => (
+                            <tr key={`${group}-${row.kpi}`}>
+                              <td className="p-3 font-medium">{row.kpi}</td>
+                              <td className="p-3 text-muted-foreground">{row.source}</td>
+                              <td className="p-3 text-right tabular-nums">{row.rawFound}</td>
+                              <td className="p-3 text-right tabular-nums">{row.metricFilled}</td>
+                              <td className="p-3"><StatusPill status={row.status} reason={row.reason} /></td>
+                              <td className="min-w-[260px] p-3 text-xs text-muted-foreground">{row.reason}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <section>
+                <h3 className="mb-3 font-semibold">Execuções recentes</h3>
+                {syncRuns.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Nenhuma execução registrada.</p>
+                ) : (
+                  <div className="overflow-x-auto rounded-lg border border-border/60">
+                    <table className="w-full min-w-[640px] text-sm">
+                      <thead className="border-b text-xs text-muted-foreground">
+                        <tr>
+                          <th className="p-3 text-left">Fonte</th>
+                          <th className="p-3 text-left">Status</th>
+                          <th className="p-3 text-left">Executada</th>
+                          <th className="p-3 text-left">Erro</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {syncRuns.map((run, index) => (
+                          <tr key={`${run.source}-${run.created_at}-${index}`}>
+                            <td className="p-3 font-medium">{run.source}</td>
+                            <td className="p-3">{run.status}</td>
+                            <td className="p-3 text-muted-foreground">
+                              {formatDistanceToNow(new Date(run.created_at), { addSuffix: true, locale: ptBR })}
+                            </td>
+                            <td className="max-w-md p-3 text-xs text-muted-foreground">{run.error_message ?? "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+
+              <section>
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                  <h3 className="font-semibold">Fila de criativos</h3>
+                  <div className="flex gap-2 text-xs">
+                    <span>{creativeJobSummary.queued + creativeJobSummary.running} pendente(s)</span>
+                    <span>{creativeJobSummary.failed + creativeJobSummary.dead_letter} falha(s)</span>
+                  </div>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                  <QueueMetric label="Queued" value={creativeJobSummary.queued} tone="amber" />
+                  <QueueMetric label="Running" value={creativeJobSummary.running} tone="cyan" />
+                  <QueueMetric label="Succeeded" value={creativeJobSummary.succeeded} tone="emerald" />
+                  <QueueMetric label="Failed" value={creativeJobSummary.failed} tone="red" />
+                  <QueueMetric label="Dead letter" value={creativeJobSummary.dead_letter} tone="slate" />
+                </div>
+                {actionableCreativeJobs.length > 0 && (
+                  <div className="mt-4 overflow-x-auto rounded-lg border border-border/60">
+                    <table className="w-full min-w-[720px] text-sm">
+                      <thead className="border-b text-xs text-muted-foreground">
+                        <tr>
+                          <th className="p-3 text-left">Status</th>
+                          <th className="p-3 text-left">Job</th>
+                          <th className="p-3 text-right">Tentativas</th>
+                          <th className="p-3 text-left">Erro</th>
+                          <th className="p-3 text-right">Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {actionableCreativeJobs.map((job) => (
+                          <tr key={job.id}>
+                            <td className="p-3"><JobStatusPill status={job.status} /></td>
+                            <td className="p-3 font-mono text-xs">{job.id}</td>
+                            <td className="p-3 text-right">{job.attempt_count ?? 0}/{job.max_attempts ?? 0}</td>
+                            <td className="max-w-sm p-3 text-xs text-muted-foreground">{job.last_error ?? "—"}</td>
+                            <td className="p-3">
+                              <div className="flex justify-end gap-1">
+                                {canAdminCreativeJobs && canRequeueCreativeJob(job.status) && (
+                                  <JobActionButton label="Reenfileirar" onClick={() => openJobAction("requeue", job)}>
+                                    <RotateCcw className="h-4 w-4" />
+                                  </JobActionButton>
+                                )}
+                                {canAdminCreativeJobs && canDeadLetterCreativeJob(job.status) && (
+                                  <JobActionButton label="Dead letter" destructive onClick={() => openJobAction("dead_letter", job)}>
+                                    <ArchiveX className="h-4 w-4" />
+                                  </JobActionButton>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+
+              <section>
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                  <h3 className="font-semibold">Eventos brutos recentes</h3>
+                  {webhookUrl && (
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        void navigator.clipboard.writeText(webhookUrl);
+                        toast.success("Webhook copiado");
+                      }}
+                      className="min-h-11 gap-2"
+                    >
+                      <Copy className="h-4 w-4" />
+                      Copiar webhook
+                    </Button>
+                  )}
+                </div>
+                {events.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Nenhum raw event recebido neste funil.</p>
+                ) : (
+                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {events.slice(0, 30).map((event, index) => (
+                      <div key={`${event.source}-${event.event_type}-${event.received_at}-${index}`} className="rounded-lg border border-border/60 p-3">
+                        <p className="text-xs font-medium">{event.source} · {event.event_type}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {formatDistanceToNow(new Date(event.received_at), { addSuffix: true, locale: ptBR })}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
+      )}
 
       <Dialog
         open={!!jobAction}
@@ -728,7 +874,7 @@ export default function Diagnostics() {
             </DialogDescription>
           </DialogHeader>
           {jobAction?.action === "requeue" && (
-            <label className="flex items-center gap-2 rounded-md border border-border/60 px-3 py-2 text-sm">
+            <label className="flex min-h-11 items-center gap-2 rounded-md border border-border/60 px-3 py-2 text-sm">
               <Checkbox
                 checked={jobActionResetAttempts}
                 onCheckedChange={(checked) => setJobActionResetAttempts(checked === true)}
@@ -744,12 +890,7 @@ export default function Diagnostics() {
             rows={4}
           />
           <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={jobActionSubmitting}
-              onClick={() => setJobAction(null)}
-            >
+            <Button type="button" variant="outline" disabled={jobActionSubmitting} onClick={() => setJobAction(null)}>
               Cancelar
             </Button>
             <Button
@@ -758,7 +899,7 @@ export default function Diagnostics() {
               disabled={jobActionSubmitting}
               onClick={confirmJobAction}
             >
-              {jobActionSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
+              {jobActionSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
               Confirmar
             </Button>
           </DialogFooter>
@@ -768,25 +909,120 @@ export default function Diagnostics() {
   );
 }
 
-function SourceCard({ icon, label, connected, count, last }: { icon: React.ReactNode; label: string; connected: boolean; count: string; last: string | null }) {
+function SourceCard({
+  icon,
+  label,
+  count,
+  health,
+  latestRun,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  count: string;
+  health: SourceHealthResult;
+  latestRun: SyncRunRow | null;
+}) {
+  const recommendedAction =
+    health.status === "not_configured"
+      ? "Configure a fonte"
+      : health.status === "error"
+        ? "Revise o erro e tente novamente"
+        : health.status === "warning"
+          ? "Verifique a última atividade"
+          : health.status === "syncing"
+            ? "Aguarde a execução"
+            : "Nenhuma ação necessária";
+
   return (
-    <div className="section-card">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <div className={cn("w-9 h-9 rounded-lg flex items-center justify-center", connected ? "bg-green-500/10 text-green-600" : "bg-secondary text-muted-foreground")}>
+    <article className="section-card p-4 md:p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className={cn(
+            "flex h-10 w-10 shrink-0 items-center justify-center rounded-lg",
+            health.status === "healthy" ? "bg-green-500/10 text-green-700" : "bg-secondary text-muted-foreground",
+          )}>
             {icon}
           </div>
           <div>
-            <div className="text-sm font-semibold">{label}</div>
-            <div className="text-[11px] text-muted-foreground">{count}</div>
+            <h2 className="text-sm font-semibold">{label}</h2>
+            <p className="text-xs text-muted-foreground">{count}</p>
           </div>
         </div>
-        {connected ? <CheckCircle2 className="w-4 h-4 text-green-600" /> : <AlertTriangle className="w-4 h-4 text-amber-500" />}
+        <HealthStatusPill status={health.status} />
       </div>
-      <p className="text-[11px] text-muted-foreground mt-3">
-        {last ? `Último evento ${formatDistanceToNow(new Date(last), { addSuffix: true, locale: ptBR })}` : "Sem evento recente"}
+      <dl className="mt-4 space-y-2 text-xs">
+        <div className="flex justify-between gap-3">
+          <dt className="text-muted-foreground">Última execução</dt>
+          <dd className="text-right">
+            {latestRun
+              ? formatDistanceToNow(new Date(latestRun.created_at), { addSuffix: true, locale: ptBR })
+              : "Sem execução"}
+          </dd>
+        </div>
+        <div className="flex justify-between gap-3">
+          <dt className="text-muted-foreground">Último evento</dt>
+          <dd className="text-right">
+            {health.lastEventAt
+              ? formatDistanceToNow(new Date(health.lastEventAt), { addSuffix: true, locale: ptBR })
+              : "Sem evento"}
+          </dd>
+        </div>
+        {latestRun?.error_message && (
+          <div>
+            <dt className="text-muted-foreground">Erro</dt>
+            <dd className="mt-1 line-clamp-2 text-red-700">{latestRun.error_message}</dd>
+          </div>
+        )}
+      </dl>
+      <p className="mt-4 border-t border-border/50 pt-3 text-xs font-medium">
+        {recommendedAction}
       </p>
-    </div>
+    </article>
+  );
+}
+
+function HealthStatusPill({ status }: { status: SourceHealthStatus }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2 py-1 text-[10px] font-semibold",
+        status === "not_configured" && "bg-muted text-muted-foreground",
+        status === "syncing" && "bg-blue-500/10 text-blue-700",
+        status === "healthy" && "bg-green-500/10 text-green-700",
+        status === "warning" && "bg-amber-500/10 text-amber-700",
+        status === "error" && "bg-red-500/10 text-red-700",
+      )}
+    >
+      {status === "healthy" ? (
+        <CheckCircle2 className="h-3 w-3" />
+      ) : status === "syncing" ? (
+        <RefreshCw className="h-3 w-3 animate-spin" />
+      ) : status === "not_configured" ? (
+        <Circle className="h-3 w-3" />
+      ) : status === "error" ? (
+        <XCircle className="h-3 w-3" />
+      ) : (
+        <AlertTriangle className="h-3 w-3" />
+      )}
+      {SOURCE_HEALTH_LABELS[status]}
+    </span>
+  );
+}
+
+function SyncButton({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Button variant="outline" onClick={onClick} disabled={active} className="min-h-11 gap-2">
+      {active ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+      {label}
+    </Button>
   );
 }
 

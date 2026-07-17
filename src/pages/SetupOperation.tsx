@@ -1,7 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
 import type React from "react";
-import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Check, Copy, Loader2, Plug, Search, Zap } from "lucide-react";
+import { useNavigate, useParams } from "react-router-dom";
+import {
+  ArrowLeft,
+  Check,
+  Circle,
+  CircleAlert,
+  CircleCheck,
+  Clock3,
+  Database,
+  Loader2,
+  Plug,
+  Radio,
+  Search,
+  Waypoints,
+  Zap,
+} from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -11,27 +25,21 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorkspace } from "@/hooks/useWorkspace";
+import {
+  saveFunnelActivationPlan,
+  type ActivationSource,
+  type ActivationSyncSource,
+} from "@/lib/funnelActivation";
+import type {
+  SetupDraftV2,
+  SetupSource,
+  SetupStepId as StepId,
+} from "@/lib/setupDraft";
 import { cn } from "@/lib/utils";
-import { syncVturbUntilDone } from "@/lib/vturbSync";
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SETUP_DRAFT_STORAGE_KEY = "infiniteprofit.setupOperationDraft";
 
-type StepId = "nome" | "meta" | "vturb" | "hubla" | "final";
-type SyncSource = "meta" | "vturb";
-
-type SetupDraft = {
-  step: StepId;
-  name: string;
-  selectedExistingMetaIds: string[];
-  metaToken: string;
-  discoveredMetaAccounts: DiscoveredMetaAccount[];
-  selectedDiscoveredMetaIds: string[];
-  vturbKey: string;
-  playersText: string;
-  hublaSecret: string;
-  webhookToken: string;
-};
+type SourceSetupStatus = "not_started" | "configured" | "skipped" | "error";
 
 type DiscoveredMetaAccount = {
   accountId: string;
@@ -60,23 +68,31 @@ type VturbDetectedPlayer = {
 };
 
 const STEPS: Array<{ id: StepId; label: string }> = [
-  { id: "nome", label: "Funil" },
-  { id: "meta", label: "Meta" },
-  { id: "vturb", label: "VTurb" },
-  { id: "hubla", label: "Hubla" },
-  { id: "final", label: "Revisão" },
+  { id: "nome", label: "Nome" },
+  { id: "fontes", label: "Fontes opcionais" },
+  { id: "revisao", label: "Revisão" },
 ];
 
 export default function SetupOperation() {
   const navigate = useNavigate();
+  const { clientId: routeClientId } = useParams<{ clientId: string }>();
   const { user, loading: authLoading } = useAuth();
   const userId = user?.id ?? null;
-  const { currentWorkspace } = useWorkspace();
+  const {
+    currentWorkspace,
+    workspaces,
+    loading: workspaceLoading,
+    setCurrentWorkspaceId,
+  } = useWorkspace();
+  const client =
+    workspaces.find((workspace) => workspace.id === routeClientId) ??
+    currentWorkspace;
   const [step, setStep] = useState<StepId>("nome");
   const [saving, setSaving] = useState(false);
-  const [savingLabel, setSavingLabel] = useState("Criar operação");
+  const [savingLabel, setSavingLabel] = useState("Criar funil");
   const [hydratedDraftKey, setHydratedDraftKey] = useState<string | null>(null);
   const [name, setName] = useState("");
+  const [skippedSources, setSkippedSources] = useState<SetupSource[]>([]);
   const [existingMetaAccounts, setExistingMetaAccounts] = useState<WorkspaceMetaAccount[]>([]);
   const [selectedExistingMetaIds, setSelectedExistingMetaIds] = useState<string[]>([]);
   const [metaToken, setMetaToken] = useState("");
@@ -88,7 +104,6 @@ export default function SetupOperation() {
   const [vturbKey, setVturbKey] = useState("");
   const [playersText, setPlayersText] = useState("");
   const [hublaSecret, setHublaSecret] = useState("");
-  const [webhookToken, setWebhookToken] = useState(() => randomHex(24));
 
   // Test states
   const [testingMetaKey, setTestingMetaKey] = useState<string | null>(null);
@@ -100,9 +115,24 @@ export default function SetupOperation() {
     if (!authLoading && !userId) navigate("/auth", { replace: true });
   }, [authLoading, navigate, userId]);
 
+  useEffect(() => {
+    if (
+      routeClientId &&
+      client?.id === routeClientId &&
+      currentWorkspace?.id !== routeClientId
+    ) {
+      setCurrentWorkspaceId(routeClientId);
+    }
+  }, [
+    client?.id,
+    currentWorkspace?.id,
+    routeClientId,
+    setCurrentWorkspaceId,
+  ]);
+
   const draftStorageKey = useMemo(
-    () => `${SETUP_DRAFT_STORAGE_KEY}.${currentWorkspace?.id ?? "global"}`,
-    [currentWorkspace?.id],
+    () => `${SETUP_DRAFT_STORAGE_KEY}.${client?.id ?? "global"}`,
+    [client?.id],
   );
   const currentStepIndex = STEPS.findIndex((item) => item.id === step);
   const canSubmit = name.trim().length >= 2;
@@ -129,12 +159,67 @@ export default function SetupOperation() {
   const selectedPlayerIdSet = useMemo(() => new Set(playerIds), [playerIds]);
   const detectedPlayers = vturbTestResult?.ok ? vturbTestResult.players ?? [] : [];
   const selectedDetectedPlayers = detectedPlayers.filter((player) => selectedPlayerIdSet.has(player.id));
-  const webhookUrl = useMemo(
-    () => `${SUPABASE_URL}/functions/v1/webhook-gateway/hubla/${webhookToken}`,
-    [webhookToken],
+  const metaStatus: SourceSetupStatus = skippedSources.includes("meta")
+    ? "skipped"
+    : hasMetaTestError || metaDiscoveryIsStale
+      ? "error"
+      : metaAccountCount > 0
+        ? "configured"
+        : "not_started";
+  const vturbStatus: SourceSetupStatus = skippedSources.includes("vturb")
+    ? "skipped"
+    : vturbTestResult?.ok === false
+      ? "error"
+      : vturbKey.trim() && playerIds.length > 0
+        ? "configured"
+        : "not_started";
+  const gatewayStatus: SourceSetupStatus = skippedSources.includes("gateway")
+    ? "skipped"
+    : hublaSecret.trim()
+      ? "configured"
+      : "not_started";
+  const sourceStatuses: Record<SetupSource, SourceSetupStatus> = {
+    meta: metaStatus,
+    vturb: vturbStatus,
+    gateway: gatewayStatus,
+  };
+  const allSourcesConfigured = Object.values(sourceStatuses).every(
+    (status) => status === "configured",
   );
+  const sourcesDecided = Object.values(sourceStatuses).every(
+    (status) => status === "configured" || status === "skipped",
+  );
+  const stepCompletion: Record<StepId, boolean> = {
+    nome: canSubmit,
+    fontes: allSourcesConfigured,
+    revisao: false,
+  };
+
+  function resumeSource(source: SetupSource) {
+    setSkippedSources((current) => current.filter((item) => item !== source));
+  }
+
+  function skipSource(source: SetupSource) {
+    setSkippedSources((current) => [...new Set([...current, source])]);
+    if (source === "meta") {
+      setSelectedExistingMetaIds([]);
+      setMetaToken("");
+      setDiscoveredMetaAccounts([]);
+      setSelectedDiscoveredMetaIds([]);
+      setDiscoveredMetaToken("");
+      setMetaDiscoveryError(null);
+      setMetaTestResults({});
+    } else if (source === "vturb") {
+      setVturbKey("");
+      setPlayersText("");
+      setVturbTestResult(null);
+    } else {
+      setHublaSecret("");
+    }
+  }
 
   function setPlayerIds(nextIds: string[]) {
+    resumeSource("vturb");
     setPlayersText([...new Set(nextIds.map((id) => id.trim()).filter(Boolean))].join("\n"));
   }
 
@@ -162,6 +247,7 @@ export default function SetupOperation() {
   }
 
   function toggleExistingMetaAccount(accountId: string, checked: boolean) {
+    resumeSource("meta");
     setSelectedExistingMetaIds((current) =>
       checked
         ? [...new Set([...current, accountId])]
@@ -170,12 +256,14 @@ export default function SetupOperation() {
   }
 
   function updateMetaToken(value: string) {
+    resumeSource("meta");
     setMetaToken(value);
     if (value.trim() !== discoveredMetaToken) setDiscoveredMetaToken("");
     setMetaDiscoveryError(null);
   }
 
   function toggleDiscoveredMetaAccount(accountId: string, checked: boolean) {
+    resumeSource("meta");
     setSelectedDiscoveredMetaIds((current) =>
       checked
         ? [...new Set([...current, accountId])]
@@ -204,14 +292,14 @@ export default function SetupOperation() {
 
   async function discoverMetaAccounts() {
     const token = metaToken.trim();
-    if (!currentWorkspace?.id || !token) return;
+    if (!client?.id || !token) return;
     setDiscoveringMetaAccounts(true);
     setMetaDiscoveryError(null);
     try {
       const { data, error } = await supabase.functions.invoke("meta-test", {
         body: {
           action: "list_accounts",
-          workspace_id: currentWorkspace.id,
+          workspace_id: client.id,
           access_token: token,
         },
       });
@@ -238,7 +326,7 @@ export default function SetupOperation() {
   }
 
   useEffect(() => {
-    if (!currentWorkspace?.id) {
+    if (!client?.id) {
       setExistingMetaAccounts([]);
       return;
     }
@@ -247,12 +335,12 @@ export default function SetupOperation() {
     void supabase
       .from("workspace_meta_accounts")
       .select("id, account_id, label, last_synced_at")
-      .eq("workspace_id", currentWorkspace.id)
+      .eq("workspace_id", client.id)
       .order("created_at", { ascending: true })
       .then(({ data, error }) => {
         if (cancelled) return;
         if (error) {
-          toast.error("Falha ao carregar contas Meta do workspace");
+          toast.error("Falha ao carregar contas Meta do cliente");
           return;
         }
         const accounts = (data ?? []) as WorkspaceMetaAccount[];
@@ -264,21 +352,21 @@ export default function SetupOperation() {
     return () => {
       cancelled = true;
     };
-  }, [currentWorkspace?.id]);
+  }, [client?.id]);
 
   useEffect(() => {
     const draft = readSetupDraft(draftStorageKey) ?? emptySetupDraft();
     setStep(draft.step);
     setName(draft.name);
     setSelectedExistingMetaIds(draft.selectedExistingMetaIds);
-    setMetaToken(draft.metaToken);
-    setDiscoveredMetaAccounts(draft.discoveredMetaAccounts);
-    setSelectedDiscoveredMetaIds(draft.selectedDiscoveredMetaIds);
-    setDiscoveredMetaToken(draft.discoveredMetaAccounts.length > 0 ? draft.metaToken.trim() : "");
-    setVturbKey(draft.vturbKey);
+    setMetaToken("");
+    setDiscoveredMetaAccounts([]);
+    setSelectedDiscoveredMetaIds([]);
+    setDiscoveredMetaToken("");
+    setVturbKey("");
     setPlayersText(draft.playersText);
-    setHublaSecret(draft.hublaSecret);
-    setWebhookToken(draft.webhookToken);
+    setHublaSecret("");
+    setSkippedSources(draft.skippedSources);
     setMetaTestResults({});
     setVturbTestResult(null);
     setHydratedDraftKey(draftStorageKey);
@@ -287,17 +375,13 @@ export default function SetupOperation() {
   useEffect(() => {
     if (hydratedDraftKey !== draftStorageKey) return;
 
-    const draft: SetupDraft = {
+    const draft: SetupDraftV2 = {
+      version: 2,
       step,
       name,
       selectedExistingMetaIds,
-      metaToken,
-      discoveredMetaAccounts,
-      selectedDiscoveredMetaIds,
-      vturbKey,
       playersText,
-      hublaSecret,
-      webhookToken,
+      skippedSources,
     };
 
     if (isSetupDraftEmpty(draft)) {
@@ -308,40 +392,37 @@ export default function SetupOperation() {
     sessionStorage.setItem(draftStorageKey, JSON.stringify(draft));
   }, [
     draftStorageKey,
-    discoveredMetaAccounts,
     hydratedDraftKey,
-    hublaSecret,
-    metaToken,
     name,
     playersText,
     selectedExistingMetaIds,
-    selectedDiscoveredMetaIds,
+    skippedSources,
     step,
-    vturbKey,
-    webhookToken,
   ]);
 
   async function createOperation() {
-    if (!user || !currentWorkspace?.id || !canSubmit) return;
+    if (!user || !client?.id || !canSubmit) return;
     if (selectedDiscoveredMetaAccounts.length > 0 && !metaToken.trim()) {
-      setStep("meta");
+      setStep("fontes");
       toast.error("Informe o token Meta para salvar as contas selecionadas.");
       return;
     }
     if (selectedDiscoveredMetaAccounts.length > 0 && metaDiscoveryIsStale) {
-      setStep("meta");
+      setStep("fontes");
       toast.error("Busque as contas novamente após alterar o token Meta.");
       return;
     }
 
+    let createdProjectId: string | null = null;
+    const configuredSources: ActivationSource[] = [];
     setSaving(true);
-    setSavingLabel("Criando operação");
+    setSavingLabel("Criando a estrutura do funil");
     try {
       const { data: project, error: projectError } = await supabase
         .from("projects")
         .insert({
           user_id: user.id,
-          workspace_id: currentWorkspace.id,
+          workspace_id: client.id,
           name: name.trim(),
           source: "api",
           csv_content: null,
@@ -349,13 +430,15 @@ export default function SetupOperation() {
         .select("id")
         .single();
       if (projectError || !project) throw projectError ?? new Error("Falha ao criar projeto");
+      createdProjectId = project.id;
+      setSavingLabel("Vinculando suas fontes");
 
       const metaRowIds = new Set(selectedExistingMetaIds);
       for (const account of selectedDiscoveredMetaAccounts) {
         const { data: metaData, error: metaError } = await supabase.functions.invoke("workspace-credentials", {
           body: {
             action: "upsert_meta_account",
-            workspace_id: currentWorkspace.id,
+            workspace_id: client.id,
             account_id: account.accountId,
             access_token: metaToken.trim(),
             label: account.name || account.accountId,
@@ -375,12 +458,13 @@ export default function SetupOperation() {
           { onConflict: "project_id,meta_account_id" },
         );
         if (error) throw error;
+        configuredSources.push("meta");
       }
 
       if (vturbKey.trim() || hublaSecret.trim()) {
         const integrationBody: Record<string, unknown> = {
           action: "upsert_workspace_integration",
-          workspace_id: currentWorkspace.id,
+          workspace_id: client.id,
           vturb_api_key: vturbKey.trim() || undefined,
           gateway_webhook_secret: hublaSecret.trim() || undefined,
         };
@@ -404,7 +488,7 @@ export default function SetupOperation() {
           const { data: player, error: playerError } = await supabase
             .from("workspace_vturb_players")
             .upsert({
-              workspace_id: currentWorkspace.id,
+              workspace_id: client.id,
               player_id: playerId,
               label: playerLabel,
               created_by: user.id,
@@ -418,54 +502,71 @@ export default function SetupOperation() {
           });
           if (error) throw error;
         }
+        configuredSources.push("vturb");
       }
 
-      const { error: checkoutError } = await supabase.from("project_checkout_bindings").upsert({
-        project_id: project.id,
-        webhook_token: webhookToken,
-        enabled: true,
-      });
-      if (checkoutError) throw checkoutError;
-
-      const provider = hublaSecret.trim() ? "hubla" : "hubla";
-      const finalWebhookUrl = `${SUPABASE_URL}/functions/v1/webhook-gateway/${provider}/${webhookToken}`;
-
-      const syncSources: SyncSource[] = [];
-      if (metaRowIds.size > 0) syncSources.push("meta");
-      if (vturbKey.trim() && playerIds.length > 0) syncSources.push("vturb");
-
-      let syncFailures: string[] = [];
-      if (syncSources.length > 0) {
-        setSavingLabel("Sincronizando dados iniciais");
-        const syncResults = await Promise.all(
-          syncSources.map((source) => runInitialSync(project.id, source)),
-        );
-        syncFailures = syncResults
-          .filter((result) => result.errors.length > 0)
-          .map((result) => `${labelForSource(result.source)}: ${result.errors.join(" | ")}`);
+      if (hublaSecret.trim()) {
+        const { error: checkoutError } = await supabase
+          .from("project_checkout_bindings")
+          .insert({
+            project_id: project.id,
+            enabled: true,
+          });
+        if (checkoutError) throw checkoutError;
+        configuredSources.push("gateway");
       }
 
+      const syncSources = configuredSources.filter(
+        (source): source is ActivationSyncSource =>
+          source === "meta" || source === "vturb",
+      );
+
+      setSavingLabel("Preparando seu primeiro resultado");
       sessionStorage.removeItem(draftStorageKey);
-
-      if (syncFailures.length > 0) {
-        toast.warning("Operação criada, mas a primeira sincronização precisa de atenção.");
-      } else if (syncSources.length > 0) {
-        toast.success("Operação criada e sincronização inicial concluída.");
-      } else {
-        toast.success("Operação criada");
-      }
-      void navigator.clipboard.writeText(finalWebhookUrl).catch(() => undefined);
-
-      navigate(`/dashboard?project=${project.id}`);
+      saveFunnelActivationPlan({
+        version: 1,
+        projectId: project.id,
+        workspaceId: client.id,
+        configuredSources,
+        skippedSources,
+        syncSources,
+        syncState: syncSources.length > 0 ? "pending" : "complete",
+        createdAt: new Date().toISOString(),
+      });
+      navigate(`/funnels/${project.id}/activation`, { replace: true });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Falha ao criar operação");
+      if (createdProjectId) {
+        sessionStorage.removeItem(draftStorageKey);
+        const syncSources = configuredSources.filter(
+          (source): source is ActivationSyncSource =>
+            source === "meta" || source === "vturb",
+        );
+        saveFunnelActivationPlan({
+          version: 1,
+          projectId: createdProjectId,
+          workspaceId: client.id,
+          configuredSources,
+          skippedSources,
+          syncSources,
+          syncState: syncSources.length > 0 ? "pending" : "error",
+          createdAt: new Date().toISOString(),
+          setupError:
+            error instanceof Error
+              ? error.message
+              : "Uma fonte não pôde ser concluída.",
+        });
+        toast.warning("O funil foi criado. Vamos concluir a ativação.");
+        navigate(`/funnels/${createdProjectId}/activation`, { replace: true });
+      } else {
+        toast.error(error instanceof Error ? error.message : "Falha ao criar funil");
+      }
     } finally {
       setSaving(false);
-      setSavingLabel("Criar operação");
+      setSavingLabel("Criar funil");
     }
   }
 
-  if (authLoading) {
+  if (authLoading || workspaceLoading) {
     return (
       <main className="min-h-[calc(100vh-80px)] flex items-center justify-center">
         <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
@@ -473,37 +574,71 @@ export default function SetupOperation() {
     );
   }
 
+  if (!client) {
+    return (
+      <main className="mx-auto max-w-[900px] px-4 py-8 md:px-6">
+        <div className="section-card py-12 text-center">
+          <h1 className="text-xl font-semibold">Selecione um cliente</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Um funil precisa pertencer a um cliente.
+          </p>
+          <Button className="mt-5" onClick={() => navigate("/clients")}>
+            Ver clientes
+          </Button>
+        </div>
+      </main>
+    );
+  }
+
+  if (saving) {
+    return <SetupCreatingState label={savingLabel} />;
+  }
+
   return (
-    <main className="max-w-[900px] mx-auto px-4 md:px-6 py-6 md:py-8">
-      <header className="flex items-center justify-between gap-4 mb-6">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => navigate("/projects")} className="gap-1.5">
-            <ArrowLeft className="w-4 h-4" />
-            Projetos
+    <main className="mx-auto max-w-[900px] px-4 py-6 md:px-6 md:py-8">
+      <header className="mb-6 flex items-start gap-3">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() =>
+              navigate(client ? `/clients/${client.id}/funnels` : "/projects")
+            }
+            className="min-h-11 shrink-0 gap-1.5"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Funis
           </Button>
           <div>
-            <h1 className="text-xl font-bold">Nova operação</h1>
-            <p className="text-xs text-muted-foreground">
-              Configure suas fontes de dados em poucos passos. O rascunho fica salvo automaticamente nesta aba.
+            <h1 className="text-2xl font-bold leading-8">Novo funil</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Dê um nome ao funil e conecte somente as fontes que quiser usar agora.
+              O rascunho salva apenas dados não sensíveis.
             </p>
           </div>
-        </div>
       </header>
 
       <div className="section-card">
-        <div className="grid grid-cols-5 gap-2 mb-6">
-          {STEPS.map((item, index) => (
+        <div className="mb-6 grid grid-cols-3 gap-2" aria-label="Etapas de criação do funil">
+          {STEPS.map((item) => (
             <button
               key={item.id}
               type="button"
               onClick={() => setStep(item.id)}
+              disabled={
+                item.id === "revisao" && (!canSubmit || !sourcesDecided)
+              }
+              aria-current={step === item.id ? "step" : undefined}
               className={cn(
-                "h-9 rounded-md border text-xs font-medium",
-                step === item.id ? "border-primary bg-primary/10 text-primary" : "border-border/60 text-muted-foreground",
-                index < currentStepIndex && "text-green-600",
+                "min-h-11 rounded-lg border px-2 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                step === item.id
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border/60 text-muted-foreground hover:bg-muted/50",
+                stepCompletion[item.id] && step !== item.id && "text-green-600",
               )}
             >
-              {index < currentStepIndex ? <Check className="w-3.5 h-3.5 inline mr-1" /> : null}
+              {stepCompletion[item.id] && (
+                <Check className="mr-1 inline h-3.5 w-3.5" />
+              )}
               {item.label}
             </button>
           ))}
@@ -511,18 +646,32 @@ export default function SetupOperation() {
 
         {step === "nome" && (
           <StepSection title="Nome do funil">
-            <Label htmlFor="operation-name">Nome</Label>
-            <Input id="operation-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Perpétuo Denise" />
+            <Label htmlFor="funnel-name">Nome</Label>
+            <Input
+              id="funnel-name"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="Ex.: Perpétuo Denise"
+              autoFocus
+            />
+            <p className="text-xs text-muted-foreground">
+              Use um nome que sua equipe reconheça facilmente.
+            </p>
           </StepSection>
         )}
 
-        {step === "meta" && (
+        {step === "fontes" && (
           <StepSection title="Meta Ads">
+            <SourceSetupHeader
+              status={metaStatus}
+              onSkip={() => skipSource("meta")}
+              onResume={() => resumeSource("meta")}
+            />
             {existingMetaAccounts.length > 0 && (
               <div className="rounded-lg border border-border/50 bg-muted/10 p-3 space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <div className="text-sm font-medium">Contas já cadastradas no workspace</div>
+                    <div className="text-sm font-medium">Contas já cadastradas no cliente</div>
                     <div className="text-xs text-muted-foreground">
                       {selectedExistingMetaAccounts.length} de {existingMetaAccounts.length} selecionada(s)
                     </div>
@@ -532,7 +681,10 @@ export default function SetupOperation() {
                       type="button"
                       variant="outline"
                       size="sm"
-                      onClick={() => setSelectedExistingMetaIds(existingMetaAccounts.map((account) => account.id))}
+                      onClick={() => {
+                        resumeSource("meta");
+                        setSelectedExistingMetaIds(existingMetaAccounts.map((account) => account.id));
+                      }}
                     >
                       Selecionar todas
                     </Button>
@@ -683,10 +835,25 @@ export default function SetupOperation() {
           </StepSection>
         )}
 
-        {step === "vturb" && (
+        {step === "fontes" && (
           <StepSection title="VTurb">
-            <Field label="API key">
-              <Input value={vturbKey} onChange={(e) => setVturbKey(e.target.value)} type="password" placeholder="Cole a API key da VTurb" />
+            <SourceSetupHeader
+              status={vturbStatus}
+              onSkip={() => skipSource("vturb")}
+              onResume={() => resumeSource("vturb")}
+            />
+            <Field label="API key" htmlFor="vturb-api-key">
+              <Input
+                id="vturb-api-key"
+                value={vturbKey}
+                onChange={(event) => {
+                  resumeSource("vturb");
+                  setVturbKey(event.target.value);
+                }}
+                type="password"
+                placeholder="Cole a API key da VTurb"
+                autoComplete="off"
+              />
             </Field>
             <div className="flex items-center gap-3 mt-2">
               <Button
@@ -727,7 +894,7 @@ export default function SetupOperation() {
               <div className="rounded-lg border border-border/50 bg-muted/10 p-3 space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <div className="text-sm font-medium">Selecione os vídeos deste projeto</div>
+                    <div className="text-sm font-medium">Selecione os vídeos deste funil</div>
                     <div className="text-xs text-muted-foreground">
                       {selectedDetectedPlayers.length} de {detectedPlayers.length} player(s) selecionados
                     </div>
@@ -760,10 +927,14 @@ export default function SetupOperation() {
                 </div>
               </div>
             )}
-            <Field label="Players selecionados ou IDs manuais">
+            <Field label="Players selecionados ou IDs manuais" htmlFor="vturb-player-ids">
               <Textarea
+                id="vturb-player-ids"
                 value={playersText}
-                onChange={(e) => setPlayersText(e.target.value)}
+                onChange={(event) => {
+                  resumeSource("vturb");
+                  setPlayersText(event.target.value);
+                }}
                 placeholder="Selecione acima ou cole um player ID por linha"
                 rows={5}
               />
@@ -771,40 +942,81 @@ export default function SetupOperation() {
           </StepSection>
         )}
 
-        {step === "hubla" && (
-          <StepSection title="Hubla">
-            <Field label="Token/secret do webhook">
-              <Input value={hublaSecret} onChange={(e) => setHublaSecret(e.target.value)} type="password" placeholder="Cole o token da Hubla" />
+        {step === "fontes" && (
+          <StepSection title="Gateway de pagamento">
+            <SourceSetupHeader
+              status={gatewayStatus}
+              onSkip={() => skipSource("gateway")}
+              onResume={() => resumeSource("gateway")}
+            />
+            <Field label="Token/secret do webhook" htmlFor="gateway-secret">
+              <Input
+                id="gateway-secret"
+                value={hublaSecret}
+                onChange={(event) => {
+                  resumeSource("gateway");
+                  setHublaSecret(event.target.value);
+                }}
+                type="password"
+                placeholder="Cole o secret da Hubla"
+                autoComplete="off"
+              />
             </Field>
             <p className="text-xs text-muted-foreground">
-              Configure esta URL na Hubla para receber eventos de checkout desta operação.
+              O webhook será criado e poderá ser copiado somente depois que o funil
+              estiver persistido.
             </p>
-            <WebhookCopyButton url={webhookUrl} />
           </StepSection>
         )}
 
-        {step === "final" && (
+        {step === "fontes" && !sourcesDecided && (
+          <p className="mt-6 text-xs text-muted-foreground">
+            Configure cada fonte ou escolha “Fazer depois” para avançar.
+          </p>
+        )}
+
+        {step === "revisao" && (
           <StepSection title="Revisão">
-            <div className="grid sm:grid-cols-2 gap-3 text-sm">
-              <Review label="Funil" value={name || "Pendente"} ok={!!name.trim()} />
+            <div className="grid gap-3 text-sm sm:grid-cols-2">
+              <Review
+                label="Funil"
+                value={name || "Nome pendente"}
+                status={canSubmit ? "configured" : "not_started"}
+              />
               <Review
                 label="Meta"
-                value={metaAccountCount > 0 ? `${metaAccountCount} conta(s) selecionada(s)` : "Pendente"}
-                ok={metaAccountCount > 0}
-                testStatus={allSelectedMetaAccountsTested ? "success" : hasMetaTestError ? "error" : undefined}
+                value={
+                  metaAccountCount > 0
+                    ? `${metaAccountCount} conta(s) selecionada(s)`
+                    : sourceStatusDescription(metaStatus)
+                }
+                status={metaStatus}
+                detail={allSelectedMetaAccountsTested ? "Contas selecionadas testadas" : undefined}
               />
               <Review
                 label="VTurb"
-                value={`${playerIds.length} player(s)`}
-                ok={!!vturbKey.trim() && playerIds.length > 0}
-                testStatus={vturbTestResult?.ok ? "success" : vturbTestResult?.error ? "error" : undefined}
+                value={
+                  playerIds.length > 0
+                    ? `${playerIds.length} player(s) selecionado(s)`
+                    : sourceStatusDescription(vturbStatus)
+                }
+                status={vturbStatus}
+                detail={vturbTestResult?.ok ? "API validada" : undefined}
               />
-              <Review label="Hubla" value={hublaSecret ? "Secret configurado" : "Pendente"} ok={!!hublaSecret.trim()} />
+              <Review
+                label="Gateway"
+                value={
+                  hublaSecret.trim()
+                    ? "Secret configurado"
+                    : sourceStatusDescription(gatewayStatus)
+                }
+                status={gatewayStatus}
+              />
             </div>
             <p className="text-xs text-muted-foreground">
-              A primeira sincronização da Meta e da VTurb roda automaticamente ao criar a operação. Na primeira vez, pode levar alguns minutos.
+              Depois de criar, você acompanhará a ativação do funil e verá o primeiro
+              sinal real encontrado. Fontes adiadas continuam como uma escolha neutra.
             </p>
-            <WebhookCopyButton url={webhookUrl} />
           </StepSection>
         )}
 
@@ -817,13 +1029,23 @@ export default function SetupOperation() {
           >
             Voltar
           </Button>
-          {step === "final" ? (
+          {step === "revisao" ? (
             <Button type="button" disabled={!canSubmit || saving} onClick={createOperation} className="gap-2">
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plug className="w-4 h-4" />}
-              {saving ? savingLabel : "Criar operação"}
+              {saving ? savingLabel : "Criar funil"}
             </Button>
           ) : (
-            <Button type="button" onClick={() => setStep(STEPS[Math.min(STEPS.length - 1, currentStepIndex + 1)].id)}>
+            <Button
+              type="button"
+              disabled={
+                (step === "nome" && !canSubmit) ||
+                (step === "fontes" && !sourcesDecided) ||
+                saving
+              }
+              onClick={() =>
+                setStep(STEPS[Math.min(STEPS.length - 1, currentStepIndex + 1)].id)
+              }
+            >
               Próximo
             </Button>
           )}
@@ -833,12 +1055,159 @@ export default function SetupOperation() {
   );
 }
 
+function SetupCreatingState({ label }: { label: string }) {
+  const stages = [
+    { label: "Criar estrutura", icon: Waypoints },
+    { label: "Vincular fontes", icon: Plug },
+    { label: "Preparar sinais", icon: Database },
+  ];
+  const activeIndex = label.includes("estrutura")
+    ? 0
+    : label.includes("Vinculando")
+      ? 1
+      : 2;
+
+  return (
+    <main
+      className="page-shell flex min-h-[calc(100vh-56px)] items-center justify-center"
+      aria-busy="true"
+      aria-labelledby="setup-creating-title"
+    >
+      <section className="relative w-full max-w-2xl overflow-hidden rounded-3xl border border-primary/20 bg-card/90 p-6 text-center shadow-[0_24px_80px_-40px_hsl(var(--primary)/0.55)] md:p-10">
+        <div
+          className="pointer-events-none absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-primary/10 to-transparent"
+          aria-hidden="true"
+        />
+        <div className="relative">
+          <div className="relative mx-auto flex h-36 w-36 items-center justify-center" aria-hidden="true">
+            <span className="absolute inset-0 animate-[spin_8s_linear_infinite] rounded-full border border-primary/20 border-r-primary/80 motion-reduce:animate-none" />
+            <span className="absolute inset-5 animate-[spin_5s_linear_infinite_reverse] rounded-full border border-accent/20 border-l-accent/70 motion-reduce:animate-none" />
+            <span className="absolute inset-10 rounded-full bg-primary/10 shadow-[0_0_44px_-14px_hsl(var(--primary))]" />
+            <Radio className="relative h-9 w-9 animate-pulse text-primary motion-reduce:animate-none" />
+          </div>
+          <p className="mt-6 text-xs font-semibold uppercase tracking-[0.16em] text-primary">
+            Tudo certo até aqui
+          </p>
+          <h1 id="setup-creating-title" className="mt-3 text-2xl font-bold tracking-tight md:text-3xl">
+            {label}
+          </h1>
+          <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-muted-foreground">
+            Estamos salvando o funil com segurança. Em seguida você verá o primeiro
+            resultado ou o próximo passo mais útil.
+          </p>
+
+          <ol className="mx-auto mt-8 grid max-w-lg gap-3 text-left sm:grid-cols-3">
+            {stages.map((stage, index) => {
+              const Icon = stage.icon;
+              const done = index < activeIndex;
+              const active = index === activeIndex;
+              return (
+                <li
+                  key={stage.label}
+                  className={cn(
+                    "flex min-h-20 items-center gap-3 rounded-xl border p-3 sm:flex-col sm:items-start",
+                    active
+                      ? "border-primary/35 bg-primary/10"
+                      : done
+                        ? "border-primary/20 bg-primary/5"
+                        : "border-border/60 bg-background/25",
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "flex h-8 w-8 items-center justify-center rounded-lg",
+                      done || active
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-secondary text-muted-foreground",
+                    )}
+                  >
+                    {done ? (
+                      <Check className="h-4 w-4" />
+                    ) : active ? (
+                      <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
+                    ) : (
+                      <Icon className="h-4 w-4" />
+                    )}
+                  </span>
+                  <span className="text-xs font-medium">{stage.label}</span>
+                </li>
+              );
+            })}
+          </ol>
+        </div>
+      </section>
+    </main>
+  );
+}
+
 function StepSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="space-y-4">
-      <h2 className="text-base font-semibold">{title}</h2>
+    <section className="space-y-4 [&+&]:mt-8 [&+&]:border-t [&+&]:border-border/50 [&+&]:pt-8">
+      <h2 className="text-lg font-semibold leading-7">{title}</h2>
       {children}
+    </section>
+  );
+}
+
+function SourceSetupHeader({
+  status,
+  onSkip,
+  onResume,
+}: {
+  status: SourceSetupStatus;
+  onSkip: () => void;
+  onResume: () => void;
+}) {
+  const skipped = status === "skipped";
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-border/60 bg-muted/15 p-3 sm:flex-row sm:items-center sm:justify-between">
+      <SourceStatus status={status} />
+      <Button
+        type="button"
+        variant={skipped ? "outline" : "ghost"}
+        size="sm"
+        onClick={skipped ? onResume : onSkip}
+      >
+        {skipped ? "Configurar agora" : "Fazer depois"}
+      </Button>
     </div>
+  );
+}
+
+function SourceStatus({ status }: { status: SourceSetupStatus }) {
+  const config = {
+    not_started: {
+      label: "Ainda não configurado",
+      icon: Circle,
+      className: "text-muted-foreground",
+    },
+    configured: {
+      label: "Configurado",
+      icon: CircleCheck,
+      className: "text-green-600",
+    },
+    skipped: {
+      label: "Adiado para depois",
+      icon: Clock3,
+      className: "text-muted-foreground",
+    },
+    error: {
+      label: "Precisa de atenção",
+      icon: CircleAlert,
+      className: "text-red-600",
+    },
+  } satisfies Record<
+    SourceSetupStatus,
+    { label: string; icon: typeof Circle; className: string }
+  >;
+  const current = config[status];
+  const Icon = current.icon;
+
+  return (
+    <span className={cn("mt-1 flex items-center gap-1.5 text-xs", current.className)}>
+      <Icon className="h-3.5 w-3.5" />
+      {current.label}
+    </span>
   );
 }
 
@@ -851,49 +1220,27 @@ function Field({ label, htmlFor, children }: { label: string; htmlFor?: string; 
   );
 }
 
-function Review({ label, value, ok, testStatus }: {
+function Review({ label, value, status, detail }: {
   label: string;
   value: string;
-  ok: boolean;
-  testStatus?: "success" | "error" | "pending";
+  status: SourceSetupStatus;
+  detail?: string;
 }) {
   return (
     <div className="rounded-lg border border-border/50 p-3">
       <div className="text-[11px] text-muted-foreground">{label}</div>
       <div className="font-medium mt-1">{value}</div>
-      <div className={cn("text-[11px] mt-1",
-        testStatus === "success" ? "text-green-600" :
-        testStatus === "error" ? "text-red-600" :
-        ok ? "text-green-600" : "text-amber-600"
-      )}>
-        {testStatus === "success" ? "Configurado e testado" :
-         testStatus === "error" ? "Erro no teste" :
-         ok ? "Configurado" : "Pendente"}
-      </div>
+      <SourceStatus status={status} />
+      {detail && <p className="mt-1 text-[11px] text-muted-foreground">{detail}</p>}
     </div>
   );
 }
 
-function WebhookCopyButton({ url }: { url: string }) {
-  return (
-    <div className="rounded-lg border border-border/50 bg-muted/20 p-3">
-      <div className="text-[11px] text-muted-foreground">Webhook Hubla</div>
-      <div className="mt-1 break-all font-mono text-xs">{url}</div>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        onClick={() => {
-          void navigator.clipboard.writeText(url);
-          toast.success("Webhook copiado");
-        }}
-        className="mt-3 gap-2"
-      >
-        <Copy className="w-4 h-4" />
-        Copiar webhook
-      </Button>
-    </div>
-  );
+function sourceStatusDescription(status: SourceSetupStatus) {
+  if (status === "skipped") return "Fazer depois";
+  if (status === "error") return "Precisa de atenção";
+  if (status === "configured") return "Configurado";
+  return "Ainda não configurado";
 }
 
 function normalizeAccountId(value: string) {
@@ -944,104 +1291,19 @@ function readSetupDraft(storageKey: string) {
   if (!raw) return null;
 
   try {
-    const parsed = JSON.parse(raw) as Partial<SetupDraft> & {
-      metaAccountId?: unknown;
-      metaToken?: unknown;
-      metaLabel?: unknown;
-      metaAccounts?: unknown;
-    };
-    const metaDraft = readMetaDiscoveryDraft(parsed);
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
     return {
-      step: isStepId(parsed.step) ? parsed.step : "nome",
+      version: 2,
+      step: readStepId(parsed.step),
       name: typeof parsed.name === "string" ? parsed.name : "",
-      selectedExistingMetaIds: Array.isArray(parsed.selectedExistingMetaIds)
-        ? [...new Set(parsed.selectedExistingMetaIds.filter((id): id is string => typeof id === "string" && Boolean(id)))]
-        : [],
-      metaToken: metaDraft.metaToken,
-      discoveredMetaAccounts: metaDraft.discoveredMetaAccounts,
-      selectedDiscoveredMetaIds: metaDraft.selectedDiscoveredMetaIds,
-      vturbKey: typeof parsed.vturbKey === "string" ? parsed.vturbKey : "",
+      selectedExistingMetaIds: readStringArray(parsed.selectedExistingMetaIds),
       playersText: typeof parsed.playersText === "string" ? parsed.playersText : "",
-      hublaSecret: typeof parsed.hublaSecret === "string" ? parsed.hublaSecret : "",
-      webhookToken: typeof parsed.webhookToken === "string" && parsed.webhookToken.trim() ? parsed.webhookToken : randomHex(24),
-    } satisfies SetupDraft;
+      skippedSources: readStringArray(parsed.skippedSources).filter(isSetupSource),
+    } satisfies SetupDraftV2;
   } catch {
     sessionStorage.removeItem(storageKey);
     return null;
   }
-}
-
-function readMetaDiscoveryDraft(parsed: Partial<SetupDraft> & {
-  metaAccountId?: unknown;
-  metaToken?: unknown;
-  metaLabel?: unknown;
-  metaAccounts?: unknown;
-}) {
-  const currentAccounts = parseStoredDiscoveredMetaAccounts(parsed.discoveredMetaAccounts);
-  const currentSelectedIds = readStringArray(parsed.selectedDiscoveredMetaIds).map(normalizeAccountId);
-  if (currentAccounts.length > 0 || currentSelectedIds.length > 0) {
-    return {
-      metaToken: typeof parsed.metaToken === "string" ? parsed.metaToken : "",
-      discoveredMetaAccounts: currentAccounts,
-      selectedDiscoveredMetaIds: currentSelectedIds,
-    };
-  }
-
-  const legacyRows = Array.isArray(parsed.metaAccounts) ? parsed.metaAccounts : [];
-  const legacyAccounts = legacyRows.flatMap((value) => {
-    if (!value || typeof value !== "object") return [];
-    const account = value as Record<string, unknown>;
-    const accountId = typeof account.accountId === "string" ? account.accountId.trim() : "";
-    if (!accountId) return [];
-    return [{
-      accountId: normalizeAccountId(accountId),
-      name: typeof account.label === "string" && account.label.trim() ? account.label.trim() : null,
-      accountStatus: null,
-      currency: null,
-      timezone: null,
-    } satisfies DiscoveredMetaAccount];
-  });
-  const legacyRowToken = legacyRows.find((value) =>
-    Boolean(value && typeof value === "object" && typeof (value as Record<string, unknown>).accessToken === "string")
-  );
-  const tokenFromLegacyRow = legacyRowToken && typeof legacyRowToken === "object"
-    ? String((legacyRowToken as Record<string, unknown>).accessToken ?? "")
-    : "";
-  const singleAccountId = typeof parsed.metaAccountId === "string" ? parsed.metaAccountId.trim() : "";
-  const singleAccount = singleAccountId
-    ? [{
-        accountId: normalizeAccountId(singleAccountId),
-        name: typeof parsed.metaLabel === "string" && parsed.metaLabel.trim() ? parsed.metaLabel.trim() : null,
-        accountStatus: null,
-        currency: null,
-        timezone: null,
-      } satisfies DiscoveredMetaAccount]
-    : [];
-  const discoveredMetaAccounts = [...new Map(
-    [...legacyAccounts, ...singleAccount].map((account) => [account.accountId, account]),
-  ).values()];
-
-  return {
-    metaToken: typeof parsed.metaToken === "string" ? parsed.metaToken : tokenFromLegacyRow,
-    discoveredMetaAccounts,
-    selectedDiscoveredMetaIds: discoveredMetaAccounts.map((account) => account.accountId),
-  };
-}
-
-function parseStoredDiscoveredMetaAccounts(value: unknown) {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((entry) => {
-    if (!entry || typeof entry !== "object") return [];
-    const account = entry as Partial<DiscoveredMetaAccount>;
-    if (typeof account.accountId !== "string" || !account.accountId.trim()) return [];
-    return [{
-      accountId: normalizeAccountId(account.accountId),
-      name: typeof account.name === "string" ? account.name : null,
-      accountStatus: typeof account.accountStatus === "number" ? account.accountStatus : null,
-      currency: typeof account.currency === "string" ? account.currency : null,
-      timezone: typeof account.timezone === "string" ? account.timezone : null,
-    } satisfies DiscoveredMetaAccount];
-  });
 }
 
 function readStringArray(value: unknown) {
@@ -1086,90 +1348,35 @@ function humanizeMetaDiscoveryError(message: string) {
   return message;
 }
 
-function isStepId(value: unknown): value is StepId {
-  return typeof value === "string" && STEPS.some((step) => step.id === value);
+function readStepId(value: unknown): StepId {
+  if (value === "fontes" || value === "meta" || value === "vturb" || value === "hubla") {
+    return "fontes";
+  }
+  if (value === "revisao" || value === "final") return "revisao";
+  return "nome";
 }
 
-function isSetupDraftEmpty(draft: SetupDraft) {
+function isSetupSource(value: string): value is SetupSource {
+  return value === "meta" || value === "vturb" || value === "gateway";
+}
+
+function isSetupDraftEmpty(draft: SetupDraftV2) {
   return (
     draft.step === "nome" &&
     !draft.name.trim() &&
     draft.selectedExistingMetaIds.length === 0 &&
-    !draft.metaToken.trim() &&
-    draft.discoveredMetaAccounts.length === 0 &&
-    draft.selectedDiscoveredMetaIds.length === 0 &&
-    !draft.vturbKey.trim() &&
     !draft.playersText.trim() &&
-    !draft.hublaSecret.trim()
+    draft.skippedSources.length === 0
   );
 }
 
-function emptySetupDraft(): SetupDraft {
+function emptySetupDraft(): SetupDraftV2 {
   return {
+    version: 2,
     step: "nome",
     name: "",
     selectedExistingMetaIds: [],
-    metaToken: "",
-    discoveredMetaAccounts: [],
-    selectedDiscoveredMetaIds: [],
-    vturbKey: "",
     playersText: "",
-    hublaSecret: "",
-    webhookToken: randomHex(24),
+    skippedSources: [],
   };
-}
-
-async function runInitialSync(projectId: string, source: SyncSource) {
-  if (source === "vturb") {
-    const result = await syncVturbUntilDone({ projectId, days: 30 });
-    return {
-      source,
-      errors: result.errors,
-    };
-  }
-
-  const { data, error } = await supabase.functions.invoke(source === "meta" ? "meta-pull" : "vturb-pull", {
-    body: { project_id: projectId, days: 30 },
-  });
-
-  return {
-    source,
-    errors: [
-      ...(error?.message ? [error.message] : []),
-      ...extractSyncErrors(data),
-    ],
-  };
-}
-
-function extractSyncErrors(payload: unknown) {
-  if (!payload || typeof payload !== "object") return [];
-
-  const errors: string[] = [];
-  const record = payload as { error?: unknown; results?: unknown[] };
-
-  if (typeof record.error === "string" && record.error.trim()) {
-    errors.push(record.error.trim());
-  }
-
-  if (Array.isArray(record.results)) {
-    for (const result of record.results) {
-      if (!result || typeof result !== "object") continue;
-      const message = (result as { error?: unknown }).error;
-      if (typeof message === "string" && message.trim()) {
-        errors.push(message.trim());
-      }
-    }
-  }
-
-  return [...new Set(errors)];
-}
-
-function labelForSource(source: SyncSource) {
-  return source === "meta" ? "Meta" : "VTurb";
-}
-
-function randomHex(length: number) {
-  return [...crypto.getRandomValues(new Uint8Array(length))]
-    .map((value) => value.toString(16).padStart(2, "0"))
-    .join("");
 }

@@ -1,5 +1,11 @@
-import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import { Calendar, FileSpreadsheet, LogOut, Plus } from "lucide-react";
+import {
+  createAppNavigation,
+  type AppNavigationItem,
+  type DashboardTab,
+} from "@/components/app-navigation";
 import {
   CommandDialog,
   CommandEmpty,
@@ -9,25 +15,9 @@ import {
   CommandList,
   CommandSeparator,
 } from "@/components/ui/command";
-import { supabase } from "@/integrations/supabase/client";
-import {
-  BarChart3,
-  Radio,
-  Target,
-  Gift,
-  Stethoscope,
-  FileSpreadsheet,
-  Calendar,
-  Plus,
-  LogOut,
-  Settings,
-  Users,
-  Megaphone,
-  Map,
-  FileText,
-} from "lucide-react";
-import type { Period } from "./PeriodFilter";
 import { useWorkspace } from "@/hooks/useWorkspace";
+import { supabase } from "@/integrations/supabase/client";
+import type { Period } from "./PeriodFilter";
 
 interface ProjectMini {
   id: string;
@@ -37,19 +27,50 @@ interface ProjectMini {
 
 interface Props {
   open: boolean;
-  onOpenChange: (o: boolean) => void;
-  /** Quando passado, mostra ações específicas do dashboard */
-  onSelectTab?: (tab: "geral" | "trafego" | "funil" | "bumps" | "anuncios" | "atribuicao" | "relatorio" | "diagnostico" | "simulador") => void;
-  onSelectPeriod?: (p: Period) => void;
+  onOpenChange: (open: boolean) => void;
+  onSelectTab?: (tab: DashboardTab) => void;
+  onSelectPeriod?: (period: Period) => void;
 }
 
-export const CommandPalette = ({ open, onOpenChange, onSelectTab, onSelectPeriod }: Props) => {
+export function CommandPalette({
+  open,
+  onOpenChange,
+  onSelectTab,
+  onSelectPeriod,
+}: Props) {
   const navigate = useNavigate();
-  const { currentWorkspaceId, isOrganizationAdmin } = useWorkspace();
+  const location = useLocation();
+  const {
+    currentWorkspaceId,
+    isWorkspaceAdmin,
+    isOrganizationAdmin,
+  } = useWorkspace();
   const [projects, setProjects] = useState<ProjectMini[]>([]);
+  const funnelRouteMatch = location.pathname.match(/^\/funnels\/([^/]+)/);
+  const clientRouteMatch = location.pathname.match(/^\/clients\/([^/]+)/);
+  const funnelId = funnelRouteMatch
+    ? decodeURIComponent(funnelRouteMatch[1])
+    : new URLSearchParams(location.search).get("project");
+  const navigationClientId = clientRouteMatch
+    ? decodeURIComponent(clientRouteMatch[1])
+    : currentWorkspaceId;
+  const navigationGroups = useMemo(
+    () =>
+      createAppNavigation({
+        clientId: navigationClientId,
+        funnelId,
+        canManageOrganization: isOrganizationAdmin,
+        canManageClient: isWorkspaceAdmin,
+      }),
+    [funnelId, isOrganizationAdmin, isWorkspaceAdmin, navigationClientId],
+  );
 
   useEffect(() => {
-    if (!open || !currentWorkspaceId) return;
+    if (!open || !currentWorkspaceId) {
+      setProjects([]);
+      return;
+    }
+
     void supabase
       .from("projects")
       .select("id, name, file_name")
@@ -60,129 +81,102 @@ export const CommandPalette = ({ open, onOpenChange, onSelectTab, onSelectPeriod
   }, [currentWorkspaceId, open]);
 
   const close = () => onOpenChange(false);
-  const run = (fn: () => void) => () => {
-    fn();
+  const run = (action: () => void | Promise<void>) => () => {
+    void action();
     close();
+  };
+
+  const selectNavigationItem = (item: AppNavigationItem) => {
+    if (item.dashboardTab && onSelectTab) {
+      onSelectTab(item.dashboardTab);
+      return;
+    }
+    navigate(item.href);
   };
 
   return (
     <CommandDialog open={open} onOpenChange={onOpenChange}>
-      <CommandInput placeholder="Buscar projeto, aba ou ação..." />
+      <CommandInput placeholder="Buscar funil, página ou ação..." />
       <CommandList>
         <CommandEmpty>Nada encontrado</CommandEmpty>
 
-        {onSelectTab && (
-          <>
-            <CommandGroup heading="Abas">
-              <CommandItem onSelect={run(() => onSelectTab("geral"))}>
-                <BarChart3 className="w-4 h-4 mr-2" />
-                Visão Geral
-                <span className="ml-auto text-[10px] text-muted-foreground">1</span>
-              </CommandItem>
-              <CommandItem onSelect={run(() => onSelectTab("trafego"))}>
-                <Radio className="w-4 h-4 mr-2" />
-                Tráfego
-                <span className="ml-auto text-[10px] text-muted-foreground">2</span>
-              </CommandItem>
-              <CommandItem onSelect={run(() => onSelectTab("funil"))}>
-                <Target className="w-4 h-4 mr-2" />
-                Funil VSL
-                <span className="ml-auto text-[10px] text-muted-foreground">3</span>
-              </CommandItem>
-              <CommandItem onSelect={run(() => onSelectTab("bumps"))}>
-                <Gift className="w-4 h-4 mr-2" />
-                Bumps &amp; Upsell
-                <span className="ml-auto text-[10px] text-muted-foreground">4</span>
-              </CommandItem>
-              <CommandItem onSelect={run(() => onSelectTab("anuncios"))}>
-                <Megaphone className="w-4 h-4 mr-2" />
-                Anúncios
-                <span className="ml-auto text-[10px] text-muted-foreground">5</span>
-              </CommandItem>
-              <CommandItem onSelect={run(() => onSelectTab("atribuicao"))}>
-                <Map className="w-4 h-4 mr-2" />
-                Atribuição
-                <span className="ml-auto text-[10px] text-muted-foreground">6</span>
-              </CommandItem>
-              <CommandItem onSelect={run(() => onSelectTab("relatorio"))}>
-                <FileText className="w-4 h-4 mr-2" />
-                Relatório
-                <span className="ml-auto text-[10px] text-muted-foreground">7</span>
-              </CommandItem>
-              <CommandItem onSelect={run(() => onSelectTab("diagnostico"))}>
-                <Stethoscope className="w-4 h-4 mr-2" />
-                Alertas
-                <span className="ml-auto text-[10px] text-muted-foreground">8</span>
-              </CommandItem>
+        {navigationGroups.map((group, index) => (
+          <div key={group.id}>
+            {index > 0 && <CommandSeparator />}
+            <CommandGroup heading={group.label}>
+              {group.items.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <CommandItem
+                    key={item.id}
+                    value={`${group.label} ${item.label}`}
+                    onSelect={run(() => selectNavigationItem(item))}
+                  >
+                    <Icon className="mr-2 h-4 w-4" />
+                    {item.label}
+                    {item.shortcut && (
+                      <span className="ml-auto text-[10px] text-muted-foreground">
+                        {item.shortcut}
+                      </span>
+                    )}
+                  </CommandItem>
+                );
+              })}
             </CommandGroup>
-            <CommandSeparator />
-          </>
-        )}
+          </div>
+        ))}
 
         {onSelectPeriod && (
           <>
-            <CommandGroup heading="Período">
-              <CommandItem onSelect={run(() => onSelectPeriod("today"))}>
-                <Calendar className="w-4 h-4 mr-2" /> Hoje
-              </CommandItem>
-              <CommandItem onSelect={run(() => onSelectPeriod("yesterday"))}>
-                <Calendar className="w-4 h-4 mr-2" /> Ontem
-              </CommandItem>
-              <CommandItem onSelect={run(() => onSelectPeriod("7d"))}>
-                <Calendar className="w-4 h-4 mr-2" /> Últimos 7 dias
-              </CommandItem>
-              <CommandItem onSelect={run(() => onSelectPeriod("15d"))}>
-                <Calendar className="w-4 h-4 mr-2" /> Últimos 15 dias
-              </CommandItem>
-              <CommandItem onSelect={run(() => onSelectPeriod("30d"))}>
-                <Calendar className="w-4 h-4 mr-2" /> Últimos 30 dias
-              </CommandItem>
-              <CommandItem onSelect={run(() => onSelectPeriod("all"))}>
-                <Calendar className="w-4 h-4 mr-2" /> Tudo
-              </CommandItem>
-            </CommandGroup>
             <CommandSeparator />
+            <CommandGroup heading="Período">
+              {[
+                ["today", "Hoje"],
+                ["yesterday", "Ontem"],
+                ["7d", "Últimos 7 dias"],
+                ["15d", "Últimos 15 dias"],
+                ["30d", "Últimos 30 dias"],
+                ["all", "Tudo"],
+              ].map(([period, label]) => (
+                <CommandItem
+                  key={period}
+                  onSelect={run(() => onSelectPeriod(period as Period))}
+                >
+                  <Calendar className="mr-2 h-4 w-4" />
+                  {label}
+                </CommandItem>
+              ))}
+            </CommandGroup>
           </>
         )}
 
-        <CommandGroup heading="Projetos">
-          <CommandItem onSelect={run(() => navigate("/projects"))}>
-            <BarChart3 className="w-4 h-4 mr-2" />
-            Ver todos os projetos
-          </CommandItem>
-          <CommandItem onSelect={run(() => navigate("/dashboard"))}>
-            <Plus className="w-4 h-4 mr-2" />
-            Novo projeto (CSV)
-          </CommandItem>
-          {projects.map((p) => (
+        <CommandSeparator />
+        <CommandGroup heading="Funis">
+          {isWorkspaceAdmin && currentWorkspaceId && (
             <CommandItem
-              key={p.id}
-              value={`projeto ${p.name} ${p.file_name ?? ""}`}
-              onSelect={run(() => navigate(`/dashboard?project=${p.id}`))}
+              onSelect={run(() =>
+                navigate(`/clients/${currentWorkspaceId}/funnels/new`),
+              )}
             >
-              <FileSpreadsheet className="w-4 h-4 mr-2" />
-              <span className="truncate">{p.name}</span>
-              {p.file_name && (
-                <span className="ml-auto text-[10px] text-muted-foreground truncate max-w-[160px]">
-                  {p.file_name}
+              <Plus className="mr-2 h-4 w-4" />
+              Novo funil
+            </CommandItem>
+          )}
+          {projects.map((project) => (
+            <CommandItem
+              key={project.id}
+              value={`funil ${project.name} ${project.file_name ?? ""}`}
+              onSelect={run(() => navigate(`/dashboard?project=${project.id}`))}
+            >
+              <FileSpreadsheet className="mr-2 h-4 w-4" />
+              <span className="truncate">{project.name}</span>
+              {project.file_name && (
+                <span className="ml-auto max-w-[160px] truncate text-[10px] text-muted-foreground">
+                  {project.file_name}
                 </span>
               )}
             </CommandItem>
           ))}
-        </CommandGroup>
-
-        <CommandSeparator />
-        <CommandGroup heading="Workspace">
-          <CommandItem onSelect={run(() => navigate("/workspace-settings"))}>
-            <Users className="w-4 h-4 mr-2" />
-            Configurar workspace
-          </CommandItem>
-          {isOrganizationAdmin && (
-            <CommandItem onSelect={run(() => navigate("/organization-settings"))}>
-              <Settings className="w-4 h-4 mr-2" />
-              Configurar organização
-            </CommandItem>
-          )}
         </CommandGroup>
 
         <CommandSeparator />
@@ -193,11 +187,11 @@ export const CommandPalette = ({ open, onOpenChange, onSelectTab, onSelectPeriod
               navigate("/auth", { replace: true });
             })}
           >
-            <LogOut className="w-4 h-4 mr-2" />
+            <LogOut className="mr-2 h-4 w-4" />
             Sair
           </CommandItem>
         </CommandGroup>
       </CommandList>
     </CommandDialog>
   );
-};
+}

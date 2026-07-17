@@ -14,19 +14,19 @@ test.describe("authenticated launch smoke", () => {
 
   test("projects and main navigation load", async ({ page }) => {
     await page.goto("/projects");
-    await expect(page.getByText("Infinite Profit")).toBeVisible();
-    await expect(page.getByRole("button", { name: /Nova operação/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Funis" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Novo funil/i })).toBeVisible();
   });
 
   test("diagnostics, dashboard, and connections load for QA project", async ({ page }) => {
     test.skip(!hasProjectEnv(), "Set E2E_PROJECT_ID to run project smoke tests.");
 
     await page.goto(`/diagnostics?project=${qaProjectId}`);
-    await expect(page.getByText("Diagnóstico", { exact: false })).toBeVisible();
+    await expect(page.getByText("Saúde do funil", { exact: false })).toBeVisible();
     await expect(page.getByRole("button", { name: /Atualizar alertas/i })).toBeVisible();
     await expect(page.getByText("Meta", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("VTurb", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("Hubla", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("Gateway", { exact: true }).first()).toBeVisible();
 
     await page.goto(`/dashboard?project=${qaProjectId}`);
     await expect(page.getByText(/Visão Geral|Visao Geral/)).toBeVisible();
@@ -36,9 +36,9 @@ test.describe("authenticated launch smoke", () => {
     await expect(page.getByText("Simulador")).toBeVisible();
 
     await page.goto(`/connections?project=${qaProjectId}`);
-    await expect(page.getByText("Conexões", { exact: false })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /Fontes de dados/i })).toBeVisible();
     await expect(page.getByText("Meta Ads")).toBeVisible();
     await expect(page.getByRole("heading", { name: "VTurb" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Gateway de Pagamento" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Gateway" })).toBeVisible();
   });
 });
