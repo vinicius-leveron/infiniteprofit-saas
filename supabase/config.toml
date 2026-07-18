@@ -67,3 +67,12 @@ verify_jwt = true
 
 [functions.creative-jobs-admin]
 verify_jwt = true
+
+[functions.sync-scheduler]
+verify_jwt = false
+
+[functions.sync-worker]
+verify_jwt = false
+
+[functions.sync-watchdog]
+verify_jwt = false

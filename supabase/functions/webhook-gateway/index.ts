@@ -1,13 +1,23 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
-import { buildAutomationHeaders } from "../_shared/automation.ts";
+import { isAutomationRequest } from "../_shared/automation.ts";
+import {
+  gatewayQueueUrl,
+  sendGatewayQueueEnvelope,
+} from "../_shared/sqs.ts";
+import { enqueueSyncJob } from "../_shared/sync-jobs.ts";
+import {
+  buildGatewayQueueEnvelope,
+  isGatewayProvider,
+} from "../gateway-queue/core.ts";
+import { buildAggregateJobInput } from "../sync-jobs/core.ts";
 import { normalizeEvent } from "./core.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-hotmart-hottok, x-hub-signature, x-hub-signature-256, x-hubla-token, x-hubla-sandbox, x-hubla-idempotency, x-kiwify-signature, x-signature",
+    "authorization, x-client-info, apikey, content-type, x-request-id, x-infiniteprofit-queue-consumer, x-hotmart-hottok, x-hub-signature, x-hub-signature-256, x-hubla-token, x-hubla-sandbox, x-hubla-idempotency, x-kiwify-signature, x-signature",
 };
 
 const HUBLA_RULESET_VERSION = "hubla-subtotal-without-installment-fee-v1";
@@ -18,6 +28,9 @@ Deno.serve(async (req) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  const traceId = req.headers.get("x-request-id") ?? crypto.randomUUID();
+  const startedAt = Date.now();
+
   try {
     const { provider, token } = parsePath(req.url);
     if (!provider || !token) {
@@ -26,6 +39,83 @@ Deno.serve(async (req) => {
 
     if (req.method === "GET") {
       return json({ ok: true, message: `gateway webhook ready (${provider})`, ruleset: HUBLA_RULESET_VERSION });
+    }
+
+    if (req.method !== "POST") {
+      return json({ error: "method not allowed" }, 405);
+    }
+
+    const isQueueConsumer =
+      req.headers.get("x-infiniteprofit-queue-consumer") === "1";
+    if (isQueueConsumer && !isAutomationRequest(req)) {
+      return json({ error: "unauthorized queue consumer" }, 401);
+    }
+
+    const queueUrl = gatewayQueueUrl();
+    if (queueUrl && !isQueueConsumer) {
+      const rawBody = await req.text();
+      let envelope;
+      try {
+        envelope = await buildGatewayQueueEnvelope({
+          provider,
+          webhookToken: token,
+          headers: req.headers,
+          rawBody,
+          traceId,
+        });
+      } catch (error) {
+        return json(
+          {
+            error:
+              error instanceof Error
+                ? error.message
+                : "invalid gateway webhook",
+          },
+          400,
+          traceId,
+        );
+      }
+
+      try {
+        const queued = await sendGatewayQueueEnvelope(queueUrl, envelope);
+        console.log(JSON.stringify({
+          event: "gateway_webhook_queued",
+          trace_id: traceId,
+          envelope_id: envelope.envelope_id,
+          provider,
+          sqs_message_id: queued.messageId,
+          duration_ms: Date.now() - startedAt,
+        }));
+        return json(
+          {
+            ok: true,
+            accepted: true,
+            trace_id: traceId,
+            envelope_id: envelope.envelope_id,
+          },
+          202,
+          traceId,
+        );
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "queue unavailable";
+        console.error(JSON.stringify({
+          event: "gateway_webhook_queue_failed",
+          trace_id: traceId,
+          envelope_id: envelope.envelope_id,
+          provider,
+          error: message,
+        }));
+        return json(
+          {
+            error: "temporary queue failure",
+            retryable: true,
+            trace_id: traceId,
+          },
+          503,
+          traceId,
+        );
+      }
     }
 
     const sb = createClient(SUPABASE_URL, SERVICE_KEY);
@@ -201,11 +291,33 @@ Deno.serve(async (req) => {
         .eq("id", project.id);
 
       if (datesTouched.size > 0) {
-        await fetch(`${SUPABASE_URL}/functions/v1/aggregate-daily`, {
-          method: "POST",
-          headers: buildAutomationHeaders(),
-          body: JSON.stringify({ project_id: project.id, dates: [...datesTouched] }),
+        const aggregateJob = buildAggregateJobInput({
+          workspaceId: project.workspace_id,
+          projectId: project.id,
+          dates: datesTouched,
+          priority: 1,
         });
+        if (aggregateJob) {
+          try {
+            await enqueueSyncJob(sb, aggregateJob, {
+              requeueSucceededAfterMinutes: 0,
+              reviveDeadLetter: true,
+            });
+          } catch (enqueueError) {
+            // raw_events are already durable and idempotent at this point.
+            // The watchdog will detect the missing aggregate date later, so
+            // an enqueue failure must not make the provider resend the sale.
+            console.error(JSON.stringify({
+              event: "gateway_aggregate_enqueue_failed",
+              trace_id: traceId,
+              project_id: project.id,
+              error:
+                enqueueError instanceof Error
+                  ? enqueueError.message
+                  : "Falha ao enfileirar agregação",
+            }));
+          }
+        }
       }
 
       await finishSyncRun(sb, runId, {
@@ -215,6 +327,7 @@ Deno.serve(async (req) => {
           inserted,
           dates: [...datesTouched],
           event_types: events.map((event) => event.event_type),
+          trace_id: traceId,
         },
         errorMessage: null,
       });
@@ -228,10 +341,24 @@ Deno.serve(async (req) => {
       throw error;
     }
 
-    return json({ ok: true, inserted });
+    console.log(JSON.stringify({
+      event: "gateway_webhook_ingested",
+      trace_id: traceId,
+      provider,
+      project_id: project.id,
+      inserted,
+      duration_ms: Date.now() - startedAt,
+    }));
+    return json({ ok: true, inserted, trace_id: traceId }, 200, traceId);
   } catch (error) {
-    console.error("webhook-gateway error", error);
-    return json({ error: error instanceof Error ? error.message : "Erro inesperado" }, 500);
+    const message =
+      error instanceof Error ? error.message : "Erro inesperado";
+    console.error(JSON.stringify({
+      event: "gateway_webhook_failed",
+      trace_id: traceId,
+      error: message,
+    }));
+    return json({ error: message, trace_id: traceId }, 500, traceId);
   }
 });
 
@@ -284,8 +411,7 @@ function parsePath(rawUrl: string) {
   const provider = segments[baseIndex + 1]?.toLowerCase() ?? null;
   const token = segments[baseIndex + 2] ?? null;
   return {
-    provider:
-      provider && ["hotmart", "hubla", "kiwify"].includes(provider) ? provider : null,
+    provider: provider && isGatewayProvider(provider) ? provider : null,
     token,
   };
 }
@@ -371,9 +497,13 @@ function safeEqual(a: string, b: string) {
   return result === 0;
 }
 
-function json(body: unknown, status = 200) {
+function json(body: unknown, status = 200, traceId?: string) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "application/json",
+      ...(traceId ? { "x-request-id": traceId } : {}),
+    },
   });
 }

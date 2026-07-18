@@ -4,6 +4,8 @@ const supabaseUrl = process.env.VITE_SUPABASE_URL;
 const anonKey = process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 const automationKey = process.env.E2E_AUTOMATION_KEY;
 const projectId = process.env.E2E_PROJECT_ID;
+const remoteDescribe =
+  process.env.RUN_REMOTE_CONTRACT_TESTS === "1" ? describe : describe.skip;
 
 async function post(functionName: string, body: unknown, headers: Record<string, string>) {
   if (!supabaseUrl) throw new Error("VITE_SUPABASE_URL is required.");
@@ -19,7 +21,7 @@ async function post(functionName: string, body: unknown, headers: Record<string,
   return { response, json };
 }
 
-describe("generate-alerts edge contract", () => {
+remoteDescribe("generate-alerts edge contract", () => {
   it("rejects unauthenticated anonymous calls", async () => {
     if (!supabaseUrl || !anonKey) {
       console.warn("Skipping generate-alerts edge auth test: Supabase env vars are not set.");

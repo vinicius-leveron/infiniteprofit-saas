@@ -27,6 +27,10 @@ import { getDashboardPeriodRows, getDashboardSelectedDateRange } from "@/lib/das
 import { writeLastDashboardPreference } from "@/lib/lastDashboard";
 import { applyMetaAccountFilter } from "@/lib/metaAccountFilter";
 import {
+  getProjectSyncSettingsSafe,
+  listWorkspaceMetaAccountsSafe,
+} from "@/lib/operationalReadApi";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -80,7 +84,11 @@ const Index = () => {
   const projectId = searchParams.get("project");
   const { user, loading: authLoading } = useAuth();
   const userId = user?.id ?? null;
-  const { currentWorkspace, setCurrentWorkspaceId } = useWorkspace();
+  const {
+    currentWorkspace,
+    isWorkspaceAdmin,
+    setCurrentWorkspaceId,
+  } = useWorkspace();
 
   const [rows, setRows] = useState<DailyRow[] | null>(null);
   const [fileName, setFileName] = useState<string>("");
@@ -174,7 +182,7 @@ const Index = () => {
     setLoadingProject(true);
     void supabase
       .from("projects")
-      .select("id, name, file_name, csv_content, sheet_url, sync_token, last_synced_at, source, workspace_id")
+      .select("id, name, file_name, csv_content, sheet_url, last_synced_at, source, workspace_id")
       .eq("id", projectId)
       .maybeSingle()
       .then(async ({ data, error }) => {
@@ -199,7 +207,17 @@ const Index = () => {
         }
         setFileName(data.file_name ?? "");
         setSheetUrl(data.sheet_url ?? null);
-        setSyncToken(data.sync_token ?? null);
+        if (isWorkspaceAdmin) {
+          try {
+            const syncSettings = await getProjectSyncSettingsSafe(data.id);
+            setSyncToken(syncSettings?.sync_token ?? null);
+          } catch {
+            setSyncToken(null);
+            toast.error("Não foi possível carregar a credencial da planilha");
+          }
+        } else {
+          setSyncToken(null);
+        }
         setLastSyncedAt(data.last_synced_at ?? null);
 
         if (src === "api") {
@@ -216,13 +234,12 @@ const Index = () => {
           ]);
           let accs: Array<{ account_id: string; label: string | null }> = [];
           const accountIds = ((bindings ?? []) as ProjectMetaBindingRow[]).map((binding) => binding.meta_account_id);
-          if (accountIds.length > 0) {
-            const { data: accountRows } = await supabase
-              .from("workspace_meta_accounts")
-              .select("account_id, label")
-              .in("id", accountIds)
-              .order("created_at", { ascending: true });
-            accs = (accountRows ?? []) as Array<{ account_id: string; label: string | null }>;
+          if (accountIds.length > 0 && data.workspace_id) {
+            const accountRows = await listWorkspaceMetaAccountsSafe(data.workspace_id);
+            const selectedAccountIds = new Set(accountIds);
+            accs = accountRows
+              .filter((account) => selectedAccountIds.has(account.id))
+              .map(({ account_id, label }) => ({ account_id, label }));
           }
           const apiRows = dailyMetricsToDailyRows((metrics ?? []) as unknown as DailyMetricsRow[]);
           setRawApiRows(apiRows);
@@ -239,7 +256,7 @@ const Index = () => {
         }
         setLoadingProject(false);
       });
-  }, [currentWorkspace?.id, navigate, projectId, setCurrentWorkspaceId, userId]);
+  }, [currentWorkspace?.id, isWorkspaceAdmin, navigate, projectId, setCurrentWorkspaceId, userId]);
 
   const reloadProject = async () => {
     if (!currentProjectId) return;
@@ -261,14 +278,13 @@ const Index = () => {
       const bindings = bindingsResult.data;
       let accs: Array<{ account_id: string; label: string | null }> = [];
       const accountIds = ((bindings ?? []) as ProjectMetaBindingRow[]).map((binding) => binding.meta_account_id);
-      if (accountIds.length > 0) {
-        const { data: accountRows, error: accountRowsError } = await supabase
-          .from("workspace_meta_accounts")
-          .select("account_id, label")
-          .in("id", accountIds)
-          .order("created_at", { ascending: true });
-        if (accountRowsError) throw accountRowsError;
-        accs = (accountRows ?? []) as Array<{ account_id: string; label: string | null }>;
+      const workspaceId = projectWorkspaceId ?? currentWorkspace?.id;
+      if (accountIds.length > 0 && workspaceId) {
+        const accountRows = await listWorkspaceMetaAccountsSafe(workspaceId);
+        const selectedAccountIds = new Set(accountIds);
+        accs = accountRows
+          .filter((account) => selectedAccountIds.has(account.id))
+          .map(({ account_id, label }) => ({ account_id, label }));
       }
       const apiRows = dailyMetricsToDailyRows((metrics ?? []) as unknown as DailyMetricsRow[]);
       setRawApiRows(apiRows);

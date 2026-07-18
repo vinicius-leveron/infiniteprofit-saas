@@ -30,6 +30,7 @@ import {
   type ActivationSource,
   type ActivationSyncSource,
 } from "@/lib/funnelActivation";
+import { listWorkspaceMetaAccountsSafe } from "@/lib/operationalReadApi";
 import type {
   SetupDraftV2,
   SetupSource,
@@ -332,21 +333,18 @@ export default function SetupOperation() {
     }
 
     let cancelled = false;
-    void supabase
-      .from("workspace_meta_accounts")
-      .select("id, account_id, label, last_synced_at")
-      .eq("workspace_id", client.id)
-      .order("created_at", { ascending: true })
-      .then(({ data, error }) => {
+    void listWorkspaceMetaAccountsSafe(client.id)
+      .then((data) => {
         if (cancelled) return;
-        if (error) {
-          toast.error("Falha ao carregar contas Meta do cliente");
-          return;
-        }
         const accounts = (data ?? []) as WorkspaceMetaAccount[];
         const accountIds = new Set(accounts.map((account) => account.id));
         setExistingMetaAccounts(accounts);
         setSelectedExistingMetaIds((current) => current.filter((id) => accountIds.has(id)));
+      })
+      .catch(() => {
+        if (!cancelled) {
+          toast.error("Falha ao carregar contas Meta do cliente");
+        }
       });
 
     return () => {
@@ -506,12 +504,17 @@ export default function SetupOperation() {
       }
 
       if (hublaSecret.trim()) {
-        const { error: checkoutError } = await supabase
-          .from("project_checkout_bindings")
-          .insert({
-            project_id: project.id,
-            enabled: true,
-          });
+        const { error: checkoutError } = await supabase.functions.invoke(
+          "workspace-credentials",
+          {
+            body: {
+              action: "upsert_checkout_binding",
+              workspace_id: client.id,
+              project_id: project.id,
+              enabled: true,
+            },
+          },
+        );
         if (checkoutError) throw checkoutError;
         configuredSources.push("gateway");
       }

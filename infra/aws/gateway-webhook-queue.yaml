@@ -1,0 +1,182 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Durable external queue and DLQ for InfiniteProfit checkout webhooks.
+
+Parameters:
+  Environment:
+    Type: String
+    Default: production
+    AllowedPattern: "[a-z0-9-]+"
+  AlertEmail:
+    Type: String
+    Default: ""
+    Description: Optional email subscription for queue alarms.
+
+Conditions:
+  HasAlertEmail: !Not [!Equals [!Ref AlertEmail, ""]]
+
+Resources:
+  GatewayWebhookDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "infiniteprofit-gateway-webhooks-${Environment}-dlq"
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+      Tags:
+        - Key: application
+          Value: infiniteprofit
+        - Key: environment
+          Value: !Ref Environment
+        - Key: data-classification
+          Value: checkout-webhook
+
+  GatewayWebhookQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "infiniteprofit-gateway-webhooks-${Environment}"
+      MessageRetentionPeriod: 1209600
+      ReceiveMessageWaitTimeSeconds: 20
+      VisibilityTimeout: 120
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt GatewayWebhookDeadLetterQueue.Arn
+        maxReceiveCount: 8
+      Tags:
+        - Key: application
+          Value: infiniteprofit
+        - Key: environment
+          Value: !Ref Environment
+        - Key: data-classification
+          Value: checkout-webhook
+
+  GatewayIngressUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: !Sub "infiniteprofit-gateway-ingress-${Environment}"
+      Policies:
+        - PolicyName: SendGatewayWebhookMessages
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                  - sqs:GetQueueUrl
+                Resource: !GetAtt GatewayWebhookQueue.Arn
+
+  GatewayConsumerUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: !Sub "infiniteprofit-gateway-consumer-${Environment}"
+      Policies:
+        - PolicyName: ConsumeGatewayWebhookMessages
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:ChangeMessageVisibility
+                  - sqs:GetQueueAttributes
+                  - sqs:GetQueueUrl
+                Resource:
+                  - !GetAtt GatewayWebhookQueue.Arn
+                  - !GetAtt GatewayWebhookDeadLetterQueue.Arn
+
+  GatewayQueueAlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "infiniteprofit-gateway-queue-${Environment}-alarms"
+      KmsMasterKeyId: alias/aws/sns
+      Tags:
+        - Key: application
+          Value: infiniteprofit
+        - Key: environment
+          Value: !Ref Environment
+
+  GatewayQueueAlarmEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlertEmail
+    Properties:
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+      TopicArn: !Ref GatewayQueueAlarmTopic
+
+  GatewayQueueAgeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "infiniteprofit-gateway-${Environment}-oldest-message"
+      AlarmDescription: Gateway webhook has waited more than five minutes.
+      Namespace: AWS/SQS
+      MetricName: ApproximateAgeOfOldestMessage
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt GatewayWebhookQueue.QueueName
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 2
+      Threshold: 300
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref GatewayQueueAlarmTopic
+
+  GatewayQueueDepthAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "infiniteprofit-gateway-${Environment}-backlog"
+      AlarmDescription: Gateway webhook queue contains more than 100 messages.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt GatewayWebhookQueue.QueueName
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 2
+      Threshold: 100
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref GatewayQueueAlarmTopic
+
+  GatewayDeadLetterAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "infiniteprofit-gateway-${Environment}-dead-letter"
+      AlarmDescription: At least one checkout webhook reached the DLQ.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt GatewayWebhookDeadLetterQueue.QueueName
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref GatewayQueueAlarmTopic
+
+Outputs:
+  QueueUrl:
+    Description: Configure as GATEWAY_QUEUE_URL in Supabase and the consumer.
+    Value: !Ref GatewayWebhookQueue
+  QueueArn:
+    Value: !GetAtt GatewayWebhookQueue.Arn
+  DeadLetterQueueUrl:
+    Value: !Ref GatewayWebhookDeadLetterQueue
+  DeadLetterQueueArn:
+    Value: !GetAtt GatewayWebhookDeadLetterQueue.Arn
+  IngressIamUser:
+    Description: Create an access key and store it only as Supabase secrets.
+    Value: !Ref GatewayIngressUser
+  ConsumerIamUser:
+    Description: Create an access key and store it only in the worker service.
+    Value: !Ref GatewayConsumerUser
+  AlarmTopicArn:
+    Value: !Ref GatewayQueueAlarmTopic

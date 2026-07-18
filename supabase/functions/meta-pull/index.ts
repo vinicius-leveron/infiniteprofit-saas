@@ -48,6 +48,8 @@ Deno.serve(async (req) => {
     const targetProjectId = stringOrNull(body.project_id);
     const targetAccountId = normalizeMetaAccountId(stringOrNull(body.account_id));
     const days = Math.min(Math.max(Number(body.days) || 7, 1), 90);
+    const skipAggregate = caller.kind === "service" && body.skip_aggregate === true;
+    const skipCreative = caller.kind === "service" && body.skip_creative === true;
 
     if (caller.kind === "user" && !targetProjectId) {
       return json({ error: "project_id é obrigatório para sync manual" }, 400);
@@ -84,7 +86,13 @@ Deno.serve(async (req) => {
 
         for (const account of accounts) {
           try {
-            const pulled = await pullForAccount(sb, project, account, days);
+            const pulled = await pullForAccount(
+              sb,
+              project,
+              account,
+              days,
+              skipAggregate,
+            );
             latestProjectSync = new Date().toISOString();
             projectResults.push({
               project_id: project.id,
@@ -117,7 +125,9 @@ Deno.serve(async (req) => {
             .update({ last_synced_at: latestProjectSync })
             .eq("id", project.id);
 
-          const creativeTrigger = await triggerCreativeSync(project.id, days, targetAccountId);
+          const creativeTrigger = skipCreative
+            ? null
+            : await triggerCreativeSync(project.id, days, targetAccountId);
           if (creativeTrigger) {
             projectResults.push({
               project_id: project.id,
@@ -161,6 +171,7 @@ async function pullForAccount(
   project: ProjectContext,
   account: MetaAccountBinding,
   days: number,
+  skipAggregate: boolean,
 ) {
   const { sinceStr, untilStr } = inclusiveLocalDateRange(days);
   const accountId = normalizeMetaAccountId(account.account_id);
@@ -207,7 +218,7 @@ async function pullForAccount(
     .update({ last_synced_at: syncedAt })
     .eq("id", account.id);
 
-  if (dates.size > 0) {
+  if (dates.size > 0 && !skipAggregate) {
     await fetch(`${SUPABASE_URL}/functions/v1/aggregate-daily`, {
       method: "POST",
       headers: buildAutomationHeaders(),

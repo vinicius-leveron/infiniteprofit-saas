@@ -50,6 +50,12 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Verify browser secret boundaries
+        run: npm run check:secret-boundaries
+
+      - name: Verify migration safety
+        run: npm run check:migration-safety
+
       - name: Local E2E smoke
         run: npm run e2e
 

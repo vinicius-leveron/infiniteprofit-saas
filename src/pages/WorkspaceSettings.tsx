@@ -13,6 +13,10 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorkspace, type WorkspaceRole } from "@/hooks/useWorkspace";
+import {
+  getWorkspaceIntegrationSafe,
+  listWorkspaceMetaAccountsSafe,
+} from "@/lib/operationalReadApi";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "sonner";
 
@@ -24,7 +28,7 @@ interface WorkspaceIntegrationRow {
   vturb_last_event_at: string | null;
   gateway_provider: GatewayProvider | null;
   gateway_webhook_secret: string | null;
-  gateway_webhook_token: string;
+  gateway_webhook_token: string | null;
   gateway_last_event_at: string | null;
 }
 
@@ -137,22 +141,14 @@ export default function WorkspaceSettings() {
     setLoading(true);
     try {
       const [
-        { data: integrationRow },
-        { data: metaRows },
+        integrationRow,
+        metaRows,
         { data: playerRows },
         { data: memberRows },
         { data: inviteRows },
       ] = await Promise.all([
-        supabase
-          .from("workspace_integrations")
-          .select("workspace_id, vturb_last_event_at, gateway_provider, gateway_webhook_token, gateway_last_event_at")
-          .eq("workspace_id", currentWorkspace.id)
-          .maybeSingle(),
-        supabase
-          .from("workspace_meta_accounts")
-          .select("id, account_id, label, last_synced_at")
-          .eq("workspace_id", currentWorkspace.id)
-          .order("created_at", { ascending: true }),
+        getWorkspaceIntegrationSafe(currentWorkspace.id),
+        listWorkspaceMetaAccountsSafe(currentWorkspace.id),
         supabase
           .from("workspace_vturb_players")
           .select("id, player_id, label, last_synced_at")
@@ -206,7 +202,7 @@ export default function WorkspaceSettings() {
           vturb_last_event_at: null,
           gateway_provider: null,
           gateway_webhook_secret: null,
-          gateway_webhook_token: randomSecret(),
+          gateway_webhook_token: isWorkspaceAdmin ? randomSecret() : null,
           gateway_last_event_at: null,
         },
       );
@@ -318,7 +314,13 @@ export default function WorkspaceSettings() {
         throw new Error(`Esta conta Meta está ligada a ${formatBoundProjects(row.boundProjectCount ?? 0)}. Desvincule em Conexões antes de remover.`);
       }
       if (row.id) {
-        const { error } = await supabase.from("workspace_meta_accounts").delete().eq("id", row.id);
+        const { error } = await supabase.functions.invoke("workspace-credentials", {
+          body: {
+            action: "delete_meta_account",
+            workspace_id: currentWorkspace?.id,
+            meta_account_id: row.id,
+          },
+        });
         if (error) throw error;
       }
       setMetaAccounts((current) => current.filter((_, currentIndex) => currentIndex !== index));

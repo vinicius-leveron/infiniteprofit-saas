@@ -89,4 +89,39 @@ describe("AuthProvider", () => {
     expect(screen.getByText("owner@example.com")).toBeInTheDocument();
     expect(userEffect).toHaveBeenCalledTimes(1);
   });
+
+  it("finishes loading and exposes a retry after a transient Supabase failure", async () => {
+    authMock.getSession
+      .mockRejectedValueOnce(new Error("AuthRetryableFetchError: HTTP 504"))
+      .mockResolvedValueOnce({ data: { session: null }, error: null });
+
+    function Probe() {
+      const { loading, error, retry } = useAuth();
+      return (
+        <div>
+          <span>{loading ? "loading" : error ?? "ready"}</span>
+          <button type="button" onClick={retry}>retry</button>
+        </div>
+      );
+    }
+
+    render(
+      <AuthProvider>
+        <Probe />
+      </AuthProvider>,
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("A autenticação está temporariamente indisponível. Tente novamente em instantes."),
+      ).toBeInTheDocument(),
+    );
+
+    await act(async () => {
+      screen.getByRole("button", { name: "retry" }).click();
+    });
+
+    await waitFor(() => expect(screen.getByText("ready")).toBeInTheDocument());
+    expect(authMock.getSession).toHaveBeenCalledTimes(2);
+  });
 });

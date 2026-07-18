@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 const supabaseUrl = process.env.VITE_SUPABASE_URL;
 const anonKey = process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 const publicShareToken = process.env.E2E_PUBLIC_SHARE_TOKEN;
+const remoteDescribe =
+  process.env.RUN_REMOTE_CONTRACT_TESTS === "1" ? describe : describe.skip;
 
 async function invoke(functionName: string, body: unknown, headers: Record<string, string> = {}) {
   if (!supabaseUrl || !anonKey) {
@@ -24,7 +26,7 @@ async function invoke(functionName: string, body: unknown, headers: Record<strin
   return { response, json };
 }
 
-describe("public-share edge contract", () => {
+remoteDescribe("public-share edge contract", () => {
   it("rejects invalid public share tokens without leaking project data", async () => {
     if (!supabaseUrl || !anonKey) {
       console.warn("Skipping public-share edge test: Supabase env vars are not set.");

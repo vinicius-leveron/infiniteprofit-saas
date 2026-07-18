@@ -36,6 +36,7 @@ import {
   type FunnelActivationPlan,
   type FunnelActivationSnapshot,
 } from "@/lib/funnelActivation";
+import { getFunnelCheckoutBindingSafe } from "@/lib/operationalReadApi";
 import { cn } from "@/lib/utils";
 
 interface ProjectSummary {
@@ -129,12 +130,7 @@ export default function FunnelActivation() {
             .from("project_vturb_players")
             .select("vturb_player_id", { count: "exact", head: true })
             .eq("project_id", funnelId),
-          supabase
-            .from("project_checkout_bindings")
-            .select("enabled")
-            .eq("project_id", funnelId)
-            .eq("enabled", true)
-            .maybeSingle(),
+          getFunnelCheckoutBindingSafe(funnelId),
           supabase
             .from("raw_events")
             .select("source, received_at", { count: "exact" })
@@ -159,7 +155,6 @@ export default function FunnelActivation() {
           projectResult.error,
           metaResult.error,
           vturbResult.error,
-          gatewayResult.error,
           eventResult.error,
           metricResult.error,
           syncResult.error,
@@ -170,7 +165,7 @@ export default function FunnelActivation() {
         const configuredSources: ActivationSource[] = [];
         if ((metaResult.count ?? 0) > 0) configuredSources.push("meta");
         if ((vturbResult.count ?? 0) > 0) configuredSources.push("vturb");
-        if (gatewayResult.data?.enabled) configuredSources.push("gateway");
+        if (gatewayResult?.enabled) configuredSources.push("gateway");
 
         const runs = (syncResult.data ?? []) as SyncRunSummary[];
         const latestRunBySource = new Map<ActivationSyncSource, SyncRunSummary>();

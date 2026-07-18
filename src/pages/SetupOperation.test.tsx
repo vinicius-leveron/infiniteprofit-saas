@@ -3,9 +3,10 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import SetupOperation from "./SetupOperation";
 
-const { fromMock, invokeMock } = vi.hoisted(() => ({
+const { fromMock, invokeMock, rpcMock } = vi.hoisted(() => ({
   fromMock: vi.fn(),
   invokeMock: vi.fn(),
+  rpcMock: vi.fn(),
 }));
 
 const metaAccounts = [
@@ -54,6 +55,7 @@ vi.mock("@/hooks/useWorkspace", () => ({
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
     from: fromMock,
+    rpc: rpcMock,
     functions: { invoke: invokeMock },
   },
 }));
@@ -71,6 +73,20 @@ describe("SetupOperation Meta step", () => {
     window.sessionStorage.clear();
     vi.clearAllMocks();
     fromMock.mockImplementation(() => createMetaAccountsQuery());
+    rpcMock.mockImplementation((functionName: string) => ({
+      abortSignal: vi.fn().mockResolvedValue({
+        data:
+          functionName === "list_workspace_meta_accounts_safe"
+            ? metaAccounts.map((account, index) => ({
+                ...account,
+                workspace_id: "workspace-1",
+                created_at: `2026-07-17T00:00:0${index}Z`,
+                has_access_token: true,
+              }))
+            : [],
+        error: null,
+      }),
+    }));
     invokeMock.mockImplementation(async (functionName: string, options?: { body?: Record<string, unknown> }) => {
       if (functionName === "meta-test" && options?.body?.action === "list_accounts") {
         return {

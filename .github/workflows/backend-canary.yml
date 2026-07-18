@@ -1,0 +1,61 @@
+name: Backend Canary
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/15 * * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-production-canary
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: Production SLO Probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PROBE_APP_URL: https://infiniteprofit-saas.onrender.com
+      VITE_SUPABASE_URL: https://nztnctrkmfrgclrnflfa.supabase.co
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im56dG5jdHJrbWZyZ2Nscm5mbGZhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc4NDEyNzEsImV4cCI6MjA5MzQxNzI3MX0.GpBf50JXc8sorlE29_W2ej0zNEeYpAuv3Fg3JiBQ-U4' }}
+      PROBE_AUTH_EMAIL: ${{ secrets.PROBE_AUTH_EMAIL }}
+      PROBE_AUTH_PASSWORD: ${{ secrets.PROBE_AUTH_PASSWORD }}
+      PROBE_SAMPLES: "3"
+      PROBE_TIMEOUT_MS: "8000"
+      PROBE_APP_P95_MS: "3000"
+      PROBE_AUTH_P95_MS: "2000"
+      PROBE_REST_P95_MS: "800"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Probe frontend, Auth, PostgREST, and health contract
+        run: npm run ops:probe | tee backend-canary.json
+
+      - name: Publish canary summary
+        if: always()
+        run: |
+          echo "## Backend production canary" >> "$GITHUB_STEP_SUMMARY"
+          if test -f backend-canary.json; then
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat backend-canary.json >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload canary report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-canary-${{ github.run_id }}
+          path: backend-canary.json
+          if-no-files-found: ignore
+          retention-days: 14

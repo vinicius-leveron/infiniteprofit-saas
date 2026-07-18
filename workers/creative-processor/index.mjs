@@ -23,6 +23,10 @@ const ANALYSIS_MODEL = process.env.CREATIVE_ANALYSIS_MODEL || "google/gemini-3-f
 const PROMPT_VERSION = process.env.CREATIVE_ANALYSIS_PROMPT_VERSION || "creative-sync-v4";
 const CUSTOM_ANALYSIS_INSTRUCTIONS = String(process.env.CREATIVE_ANALYSIS_PROMPT || "").trim();
 const POLL_INTERVAL_MS = Number(process.env.CREATIVE_WORKER_POLL_INTERVAL_MS || "5000");
+const MAX_POLL_INTERVAL_MS = Math.max(
+  POLL_INTERVAL_MS,
+  Number(process.env.CREATIVE_WORKER_MAX_POLL_INTERVAL_MS || "60000"),
+);
 const BATCH_SIZE = Number(process.env.CREATIVE_WORKER_BATCH_SIZE || "2");
 const WORKER_ID = process.env.CREATIVE_WORKER_ID || process.env.RENDER_SERVICE_NAME || os.hostname();
 const HEARTBEAT_INTERVAL_MS = Number(process.env.CREATIVE_WORKER_HEARTBEAT_INTERVAL_MS || "30000");
@@ -35,6 +39,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 let processedCount = 0;
 let failedCount = 0;
 let lastHeartbeatAt = 0;
+let currentPollIntervalMs = POLL_INTERVAL_MS;
 
 main().catch((error) => {
   console.error("creative worker fatal error", error);
@@ -50,9 +55,14 @@ async function main() {
       const jobs = await claimJobs(BATCH_SIZE);
       if (jobs.length === 0) {
         await reportHeartbeat({ status: "idle" });
-        await sleep(POLL_INTERVAL_MS);
+        await sleep(currentPollIntervalMs);
+        currentPollIntervalMs = Math.min(
+          MAX_POLL_INTERVAL_MS,
+          Math.ceil(currentPollIntervalMs * 1.5),
+        );
         continue;
       }
+      currentPollIntervalMs = POLL_INTERVAL_MS;
 
       for (const job of jobs) {
         await reportHeartbeat({ status: "processing", activeJobId: job.id, force: true });
@@ -67,7 +77,11 @@ async function main() {
     } catch (error) {
       console.error("creative worker loop error", error);
       await reportHeartbeat({ status: "error", lastError: error instanceof Error ? error.message : String(error), force: true });
-      await sleep(POLL_INTERVAL_MS);
+      await sleep(currentPollIntervalMs);
+      currentPollIntervalMs = Math.min(
+        MAX_POLL_INTERVAL_MS,
+        Math.ceil(currentPollIntervalMs * 1.5),
+      );
     }
   }
 }
@@ -94,6 +108,7 @@ async function reportHeartbeat({ status, activeJobId = null, lastError = null, f
           bucket: CREATIVE_BUCKET,
           batch_size: BATCH_SIZE,
           poll_interval_ms: POLL_INTERVAL_MS,
+          max_poll_interval_ms: MAX_POLL_INTERVAL_MS,
           prompt_version: PROMPT_VERSION,
           transcription_provider: TRANSCRIPTION_PROVIDER,
           transcription_model: TRANSCRIPTION_MODEL,

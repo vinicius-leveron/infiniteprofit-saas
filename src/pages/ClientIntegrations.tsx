@@ -37,6 +37,11 @@ import {
 } from "@/components/ui/sheet";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import {
+  getWorkspaceIntegrationSafe,
+  listWorkspaceCheckoutBindingsSafe,
+  listWorkspaceMetaAccountsSafe,
+} from "@/lib/operationalReadApi";
 import { toast } from "sonner";
 
 type GatewayProvider = "hotmart" | "hubla" | "kiwify";
@@ -137,23 +142,13 @@ export default function ClientIntegrations() {
     setErrorMessage(null);
     try {
       const [
-        { data: integrationRow, error: integrationError },
-        { data: metaRows, error: metaError },
+        integrationRow,
+        metaRows,
         { data: playerRows, error: playerError },
         { data: projectRows, error: projectError },
       ] = await Promise.all([
-        supabase
-          .from("workspace_integrations")
-          .select(
-            "workspace_id, vturb_last_event_at, gateway_provider, gateway_last_event_at",
-          )
-          .eq("workspace_id", clientId)
-          .maybeSingle(),
-        supabase
-          .from("workspace_meta_accounts")
-          .select("id, account_id, label, last_synced_at")
-          .eq("workspace_id", clientId)
-          .order("created_at", { ascending: true }),
+        getWorkspaceIntegrationSafe(clientId),
+        listWorkspaceMetaAccountsSafe(clientId),
         supabase
           .from("workspace_vturb_players")
           .select("id, player_id, label, last_synced_at")
@@ -161,8 +156,6 @@ export default function ClientIntegrations() {
           .order("created_at", { ascending: true }),
         supabase.from("projects").select("id").eq("workspace_id", clientId),
       ]);
-      if (integrationError) throw integrationError;
-      if (metaError) throw metaError;
       if (playerError) throw playerError;
       if (projectError) throw projectError;
 
@@ -190,16 +183,11 @@ export default function ClientIntegrations() {
                 .in("vturb_player_id", playerIds)
             : Promise.resolve({ data: [], error: null }),
           projectIds.length
-            ? supabase
-                .from("project_checkout_bindings")
-                .select("project_id")
-                .in("project_id", projectIds)
-                .eq("enabled", true)
-            : Promise.resolve({ data: [], error: null }),
+            ? listWorkspaceCheckoutBindingsSafe(clientId)
+            : Promise.resolve([]),
         ]);
       if (metaBindingResult.error) throw metaBindingResult.error;
       if (playerBindingResult.error) throw playerBindingResult.error;
-      if (gatewayBindingResult.error) throw gatewayBindingResult.error;
 
       const metaCounts = countBindings(
         (metaBindingResult.data ?? []) as Array<Record<string, string | null>>,
@@ -223,7 +211,9 @@ export default function ClientIntegrations() {
           boundProjectCount: playerCounts.get(player.id) ?? 0,
         })),
       );
-      setGatewayUseCount((gatewayBindingResult.data ?? []).length);
+      setGatewayUseCount(
+        gatewayBindingResult.filter((binding) => binding.enabled).length,
+      );
     } catch (error) {
       setErrorMessage(
         error instanceof Error ? error.message : "Falha ao carregar as integrações.",
@@ -356,10 +346,13 @@ export default function ClientIntegrations() {
     }
     setDeletingId(account.id);
     try {
-      const { error } = await supabase
-        .from("workspace_meta_accounts")
-        .delete()
-        .eq("id", account.id);
+      const { error } = await supabase.functions.invoke("workspace-credentials", {
+        body: {
+          action: "delete_meta_account",
+          workspace_id: clientId,
+          meta_account_id: account.id,
+        },
+      });
       if (error) throw error;
       await loadIntegrations();
       toast.success("Conta Meta removida");

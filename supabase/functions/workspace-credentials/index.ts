@@ -14,6 +14,16 @@ const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const GATEWAY_PROVIDERS = new Set(["hotmart", "hubla", "kiwify"]);
 type SupabaseClientAny = ReturnType<typeof createClient<any, "public", any>>;
 
+class HttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "HttpError";
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -49,10 +59,23 @@ Deno.serve(async (req) => {
       return json({ ok: true, meta_account: result });
     }
 
+    if (body.action === "delete_meta_account") {
+      const result = await deleteMetaAccount(admin, body, workspaceId);
+      return json({ ok: true, deleted_meta_account_id: result });
+    }
+
+    if (body.action === "upsert_checkout_binding") {
+      const result = await upsertCheckoutBinding(admin, body, workspaceId);
+      return json({ ok: true, checkout_binding: result });
+    }
+
     return json({ error: "Invalid action" }, 400);
   } catch (error) {
     console.error("workspace-credentials error", error);
-    return json({ error: error instanceof Error ? error.message : "Erro inesperado" }, 500);
+    return json(
+      { error: error instanceof Error ? error.message : "Erro inesperado" },
+      error instanceof HttpError ? error.status : 500,
+    );
   }
 });
 
@@ -168,6 +191,71 @@ async function upsertMetaAccount(
   return data;
 }
 
+async function deleteMetaAccount(
+  admin: SupabaseClientAny,
+  body: Record<string, unknown>,
+  workspaceId: string,
+) {
+  const metaAccountId = stringOrNull(body.meta_account_id);
+  if (!metaAccountId) {
+    throw new HttpError("meta_account_id obrigatorio", 400);
+  }
+
+  const { data, error } = await admin.rpc("delete_workspace_meta_account", {
+    _workspace_id: workspaceId,
+    _meta_account_id: metaAccountId,
+  });
+  if (error?.code === "23503") {
+    throw new HttpError(
+      "Desvincule esta conta Meta dos funis antes de removê-la.",
+      409,
+    );
+  }
+  if (error?.code === "P0002") {
+    throw new HttpError("Conta Meta não encontrada neste cliente.", 404);
+  }
+  if (error) throw new Error(error.message);
+
+  return data as string;
+}
+
+async function upsertCheckoutBinding(
+  admin: SupabaseClientAny,
+  body: Record<string, unknown>,
+  workspaceId: string,
+) {
+  const projectId = stringOrNull(body.project_id);
+  if (!projectId) {
+    throw new HttpError("project_id obrigatorio", 400);
+  }
+
+  const { data: project, error: projectError } = await admin
+    .from("projects")
+    .select("id")
+    .eq("id", projectId)
+    .eq("workspace_id", workspaceId)
+    .maybeSingle();
+  if (projectError) throw new Error(projectError.message);
+  if (!project) {
+    throw new HttpError("Funil não encontrado neste cliente.", 404);
+  }
+
+  const { data, error } = await admin
+    .from("project_checkout_bindings")
+    .upsert(
+      {
+        project_id: projectId,
+        enabled: body.enabled !== false,
+      },
+      { onConflict: "project_id" },
+    )
+    .select("project_id, webhook_token, enabled")
+    .single();
+  if (error) throw new Error(error.message);
+
+  return data;
+}
+
 async function resolveUser(authHeader: string | null) {
   if (!authHeader?.startsWith("Bearer ")) return null;
   const userClient = createClient(SUPABASE_URL, ANON_KEY, {
@@ -208,7 +296,10 @@ async function assertWorkspaceAdmin(admin: SupabaseClientAny, workspaceId: strin
     return;
   }
 
-  throw new Error("Sem permissao para alterar credenciais deste workspace");
+  throw new HttpError(
+    "Sem permissao para alterar credenciais deste workspace",
+    403,
+  );
 }
 
 function normalizeGatewayProvider(value: unknown) {

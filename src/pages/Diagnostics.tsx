@@ -66,6 +66,12 @@ import {
   type SourceHealthStatus,
 } from "@/lib/sourceHealth";
 import {
+  getFunnelCheckoutBindingSafe,
+  getWorkspaceIntegrationSafe,
+  listFunnelEventCoverage,
+  type FunnelEventCoverageRow,
+} from "@/lib/operationalReadApi";
+import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
@@ -156,6 +162,7 @@ export default function Diagnostics() {
   const [jobActionSubmitting, setJobActionSubmitting] = useState(false);
   const [project, setProject] = useState<ProjectRow | null>(null);
   const [events, setEvents] = useState<RawEventRow[]>([]);
+  const [eventCoverage, setEventCoverage] = useState<FunnelEventCoverageRow[]>([]);
   const [metrics, setMetrics] = useState<DailyMetricRow[]>([]);
   const [operationalAlerts, setOperationalAlerts] = useState<OperationalAlertRow[]>([]);
   const [syncRuns, setSyncRuns] = useState<SyncRunRow[]>([]);
@@ -196,41 +203,36 @@ export default function Diagnostics() {
       }
 
       const [
-        { data: rawRows },
-        { data: metricRows },
-        { data: metaRows },
-        { data: playerRows },
-        { data: creativeAssetRows },
-        { data: checkoutRow },
-        { data: integrationRow },
-        { data: alertRows },
-        { data: syncRunRows },
-        { data: creativeJobRows },
+        rawResult,
+        coverageResult,
+        metricResult,
+        metaResult,
+        playerResult,
+        creativeAssetResult,
+        checkoutResult,
+        integrationResult,
+        alertResult,
+        syncRunResult,
+        creativeJobResult,
       ] = await Promise.all([
         supabase
           .from("raw_events")
           .select("source, event_type, event_date, received_at, external_id")
           .eq("project_id", typedProject.id)
           .order("received_at", { ascending: false })
-          .limit(5000),
+          .limit(30),
+        listFunnelEventCoverage(typedProject.id),
         supabase
           .from("daily_metrics")
           .select("*")
           .eq("project_id", typedProject.id)
-          .order("event_date", { ascending: false }),
+          .order("event_date", { ascending: false })
+          .limit(1000),
         supabase.from("project_meta_accounts").select("meta_account_id").eq("project_id", typedProject.id),
         supabase.from("project_vturb_players").select("vturb_player_id").eq("project_id", typedProject.id),
         supabase.from("creative_assets" as never).select("id").eq("project_id", typedProject.id),
-        supabase
-          .from("project_checkout_bindings")
-          .select("webhook_token, enabled")
-          .eq("project_id", typedProject.id)
-          .maybeSingle(),
-        supabase
-          .from("workspace_integrations")
-          .select("gateway_provider")
-          .eq("workspace_id", typedProject.workspace_id)
-          .maybeSingle(),
+        getFunnelCheckoutBindingSafe(typedProject.id),
+        getWorkspaceIntegrationSafe(typedProject.workspace_id),
         supabase
           .from("operational_alerts" as never)
           .select("id, source, type, severity, title, message, last_seen_at")
@@ -249,27 +251,47 @@ export default function Diagnostics() {
           .select("id, asset_id, status, attempt_count, max_attempts, last_error, created_at, updated_at, available_at, locked_at, locked_by, finished_at")
           .eq("project_id", typedProject.id)
           .order("created_at", { ascending: false })
-          .limit(1000),
+          .limit(100),
       ]);
 
-      const typedEvents = (rawRows ?? []) as RawEventRow[];
+      const firstError = [
+        rawResult.error,
+        metricResult.error,
+        metaResult.error,
+        playerResult.error,
+        creativeAssetResult.error,
+        alertResult.error,
+        syncRunResult.error,
+        creativeJobResult.error,
+      ].find(Boolean);
+      if (firstError) throw firstError;
+
+      const typedEvents = (rawResult.data ?? []) as RawEventRow[];
+      const typedCoverage = coverageResult;
       setEvents(typedEvents);
-      setMetrics((metricRows ?? []) as DailyMetricRow[]);
-      const typedSyncRuns = (syncRunRows ?? []) as SyncRunRow[];
+      setEventCoverage(typedCoverage);
+      setMetrics((metricResult.data ?? []) as DailyMetricRow[]);
+      const typedSyncRuns = (syncRunResult.data ?? []) as SyncRunRow[];
       setBindings({
-        metaAccounts: (metaRows ?? []).length,
-        vturbPlayers: (playerRows ?? []).length,
-        creativeAssets: (creativeAssetRows ?? []).length,
-        checkoutToken: checkoutRow?.enabled ? checkoutRow.webhook_token : null,
-        gatewayProvider: integrationRow?.gateway_provider ?? null,
-        lastMetaSync: lastReceivedAt(typedEvents, "meta"),
-        lastVturbSync: lastReceivedAt(typedEvents, "vturb"),
+        metaAccounts: (metaResult.data ?? []).length,
+        vturbPlayers: (playerResult.data ?? []).length,
+        creativeAssets: (creativeAssetResult.data ?? []).length,
+        checkoutToken: checkoutResult?.enabled
+          ? checkoutResult.webhook_token
+          : null,
+        gatewayProvider: integrationResult?.gateway_provider ?? null,
+        lastMetaSync: lastCoverageAt(typedCoverage, "meta"),
+        lastVturbSync: lastCoverageAt(typedCoverage, "vturb"),
         lastCreativeSync: typedSyncRuns.find((row) => row.source === "creative" && row.status === "succeeded")?.created_at ?? null,
-        lastGatewayEvent: lastReceivedAt(typedEvents, "gateway"),
+        lastGatewayEvent: lastCoverageAt(typedCoverage, "gateway"),
       });
-      setOperationalAlerts((alertRows ?? []) as unknown as OperationalAlertRow[]);
+      setOperationalAlerts(
+        (alertResult.data ?? []) as unknown as OperationalAlertRow[],
+      );
       setSyncRuns(typedSyncRuns);
-      setCreativeJobs((creativeJobRows ?? []) as unknown as CreativeJobRow[]);
+      setCreativeJobs(
+        (creativeJobResult.data ?? []) as unknown as CreativeJobRow[],
+      );
       setLastLoadedAt(new Date());
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : "Falha ao carregar a saúde do funil");
@@ -335,9 +357,10 @@ export default function Diagnostics() {
   const coverageRows = useMemo(() => {
     const rawBySource: Record<string, number> = {};
     const rawByType: Record<string, number> = {};
-    for (const event of events) {
-      rawBySource[event.source] = (rawBySource[event.source] ?? 0) + 1;
-      rawByType[event.event_type] = (rawByType[event.event_type] ?? 0) + 1;
+    for (const row of eventCoverage) {
+      const count = Number(row.event_count) || 0;
+      rawBySource[row.source] = (rawBySource[row.source] ?? 0) + count;
+      rawByType[row.event_type] = (rawByType[row.event_type] ?? 0) + count;
     }
     const latestVturbRun = syncRuns.find((run) => run.source === "vturb") ?? null;
     const hasVturbPitchGap = detectVturbPitchGap(rawByType, metrics, latestVturbRun);
@@ -366,7 +389,7 @@ export default function Diagnostics() {
       }
       return row;
     });
-  }, [events, metrics, syncRuns]);
+  }, [eventCoverage, metrics, syncRuns]);
   const creativeJobSummary = useMemo(() => {
     return summarizeCreativeJobs(creativeJobs);
   }, [creativeJobs]);
@@ -386,7 +409,13 @@ export default function Diagnostics() {
     bindings.gatewayProvider && bindings.checkoutToken
       ? `${SUPABASE_URL}/functions/v1/webhook-gateway/${bindings.gatewayProvider}/${bindings.checkoutToken}`
       : "";
-  const alerts = buildAlerts(bindings, coverageRows, events, syncRuns, metrics);
+  const alerts = buildAlerts(
+    bindings,
+    coverageRows,
+    eventCoverage,
+    syncRuns,
+    metrics,
+  );
   const sourceHealth = useMemo(() => {
     const configured: Record<SourceHealthKey, boolean> = {
       meta: bindings.metaAccounts > 0,
@@ -1132,8 +1161,11 @@ function JobActionButton({
   );
 }
 
-function lastReceivedAt(events: RawEventRow[], source: string) {
-  return events.find((event) => event.source === source)?.received_at ?? null;
+function lastCoverageAt(rows: FunnelEventCoverageRow[], source: string) {
+  return rows
+    .filter((row) => row.source === source && row.last_event_at)
+    .map((row) => row.last_event_at as string)
+    .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0] ?? null;
 }
 
 function groupBy<T, K>(items: T[], getKey: (item: T) => K) {
@@ -1148,14 +1180,15 @@ function groupBy<T, K>(items: T[], getKey: (item: T) => K) {
 function buildAlerts(
   bindings: BindingState,
   coverageRows: CoverageRow[],
-  events: RawEventRow[],
+  eventCoverage: FunnelEventCoverageRow[],
   syncRuns: SyncRunRow[],
   metrics: DailyMetricRow[],
 ) {
   const alerts: string[] = [];
   const rawByType: Record<string, number> = {};
-  for (const event of events) {
-    rawByType[event.event_type] = (rawByType[event.event_type] ?? 0) + 1;
+  for (const row of eventCoverage) {
+    rawByType[row.event_type] =
+      (rawByType[row.event_type] ?? 0) + (Number(row.event_count) || 0);
   }
   const latestVturbRun = syncRuns.find((run) => run.source === "vturb") ?? null;
 

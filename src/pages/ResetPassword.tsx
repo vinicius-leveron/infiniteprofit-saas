@@ -45,18 +45,27 @@ export default function ResetPassword() {
       }
     });
 
-    void supabase.auth.getSession().then(({ data: { session }, error: sessionError }) => {
-      if (!active) return;
-      if (sessionError) {
-        setError(sessionError.message);
+    void supabase.auth
+      .getSession()
+      .then(({ data: { session }, error: sessionError }) => {
+        if (sessionError) throw sessionError;
+        if (!active) return;
+        if (session && hasRecoveryHint) {
+          setStatus("ready");
+        } else {
+          setError("O link de recuperação é inválido ou expirou.");
+          setStatus("invalid");
+        }
+      })
+      .catch((sessionError: unknown) => {
+        if (!active) return;
+        setError(
+          sessionError instanceof Error
+            ? sessionError.message
+            : "Não foi possível validar o link. Tente novamente.",
+        );
         setStatus("invalid");
-      } else if (session && hasRecoveryHint) {
-        setStatus("ready");
-      } else {
-        setError("O link de recuperação é inválido ou expirou.");
-        setStatus("invalid");
-      }
-    });
+      });
 
     return () => {
       active = false;

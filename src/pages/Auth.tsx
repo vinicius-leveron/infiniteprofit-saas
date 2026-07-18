@@ -53,6 +53,17 @@ function authErrorMessage(error: unknown) {
   if (message.includes("rate limit") || message.includes("security purposes")) {
     return "Muitas tentativas em pouco tempo. Aguarde alguns minutos e tente novamente.";
   }
+  if (
+    message.includes("retryable") ||
+    message.includes("failed to fetch") ||
+    message.includes("fetch failed") ||
+    message.includes("timeout") ||
+    message.includes("502") ||
+    message.includes("503") ||
+    message.includes("504")
+  ) {
+    return "A autenticação está temporariamente indisponível. Aguarde alguns instantes e tente novamente.";
+  }
   return error.message || fallback;
 }
 
@@ -81,11 +92,17 @@ export default function Auth() {
 
   useEffect(() => {
     let active = true;
-    void supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!active || !session) return;
-      sessionStorage.removeItem(CONFIRMATION_STORAGE_KEY);
-      navigate(nextPath, { replace: true });
-    });
+    void supabase.auth
+      .getSession()
+      .then(({ data: { session }, error }) => {
+        if (error) throw error;
+        if (!active || !session) return;
+        sessionStorage.removeItem(CONFIRMATION_STORAGE_KEY);
+        navigate(nextPath, { replace: true });
+      })
+      .catch((error: unknown) => {
+        if (active) setFeedback(authErrorMessage(error));
+      });
     return () => {
       active = false;
     };

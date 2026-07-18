@@ -88,7 +88,12 @@ export function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
-  const { user, loading: authLoading } = useAuth();
+  const {
+    user,
+    loading: authLoading,
+    error: authError,
+    retry: retryAuth,
+  } = useAuth();
   const {
     loading,
     error: workspaceError,
@@ -143,6 +148,27 @@ export function AppShell() {
 
   if (authLoading || loading) {
     return <AppShellSkeleton />;
+  }
+
+  if (authError && !user) {
+    return (
+      <main className="flex min-h-screen items-center justify-center px-4">
+        <div
+          className="w-full max-w-md rounded-xl border border-amber-500/30 bg-card p-6 text-center"
+          role="alert"
+        >
+          <p className="font-semibold">Não foi possível validar sua sessão</p>
+          <p className="mt-1 text-sm text-muted-foreground">{authError}</p>
+          <Button
+            variant="outline"
+            className="mt-4 min-h-11"
+            onClick={retryAuth}
+          >
+            Tentar novamente
+          </Button>
+        </div>
+      </main>
+    );
   }
 
   if (!user) {

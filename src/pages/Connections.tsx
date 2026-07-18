@@ -23,6 +23,11 @@ import { Input } from "@/components/ui/input";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorkspace } from "@/hooks/useWorkspace";
+import {
+  getFunnelCheckoutBindingSafe,
+  getWorkspaceIntegrationSafe,
+  listWorkspaceMetaAccountsSafe,
+} from "@/lib/operationalReadApi";
 import { getProjectMetaBindingChanges } from "@/lib/projectMetaBindings";
 import { cn } from "@/lib/utils";
 
@@ -128,16 +133,8 @@ export default function Connections({ mode = "sources" }: { mode?: ConnectionsMo
         checkoutResult,
         linkResult,
       ] = await Promise.all([
-        supabase
-          .from("workspace_integrations")
-          .select("gateway_provider")
-          .eq("workspace_id", typedProject.workspace_id)
-          .maybeSingle(),
-        supabase
-          .from("workspace_meta_accounts")
-          .select("id, account_id, label")
-          .eq("workspace_id", typedProject.workspace_id)
-          .order("created_at", { ascending: true }),
+        getWorkspaceIntegrationSafe(typedProject.workspace_id),
+        listWorkspaceMetaAccountsSafe(typedProject.workspace_id),
         supabase.from("project_meta_accounts").select("meta_account_id").eq("project_id", typedProject.id),
         supabase
           .from("workspace_vturb_players")
@@ -145,11 +142,7 @@ export default function Connections({ mode = "sources" }: { mode?: ConnectionsMo
           .eq("workspace_id", typedProject.workspace_id)
           .order("created_at", { ascending: true }),
         supabase.from("project_vturb_players").select("vturb_player_id").eq("project_id", typedProject.id),
-        supabase
-          .from("project_checkout_bindings")
-          .select("project_id, webhook_token, enabled")
-          .eq("project_id", typedProject.id)
-          .maybeSingle(),
+        getFunnelCheckoutBindingSafe(typedProject.id),
         supabase
           .from("project_public_links" as never)
           .select("id, token, enabled, label, last_accessed_at, expires_at, created_at")
@@ -158,12 +151,9 @@ export default function Connections({ mode = "sources" }: { mode?: ConnectionsMo
       ]);
 
       const firstError = [
-        integrationResult.error,
-        metaResult.error,
         selectedMetaResult.error,
         playerResult.error,
         selectedPlayerResult.error,
-        checkoutResult.error,
         linkResult.error,
       ].find(Boolean);
       if (firstError) throw firstError;
@@ -179,9 +169,9 @@ export default function Connections({ mode = "sources" }: { mode?: ConnectionsMo
       }
 
       const nextPlayerIds = (selectedPlayerResult.data ?? []).map((row) => row.vturb_player_id);
-      const typedCheckout = (checkoutResult.data ?? null) as CheckoutBindingRow | null;
-      setIntegration((integrationResult.data ?? null) as WorkspaceIntegrationRow | null);
-      setMetaAccounts((metaResult.data ?? []) as MetaAccountRow[]);
+      const typedCheckout = checkoutResult as CheckoutBindingRow | null;
+      setIntegration((integrationResult ?? null) as WorkspaceIntegrationRow | null);
+      setMetaAccounts(metaResult as MetaAccountRow[]);
       setVturbPlayers((playerResult.data ?? []) as VturbPlayerRow[]);
       setSelectedPlayerIds(nextPlayerIds);
       setSavedPlayerIds(nextPlayerIds);
@@ -251,23 +241,22 @@ export default function Connections({ mode = "sources" }: { mode?: ConnectionsMo
         if (error) throw error;
       }
 
-      if (checkoutBinding) {
-        const { data, error } = await supabase
-          .from("project_checkout_bindings")
-          .update({ enabled: checkoutEnabled })
-          .eq("project_id", project.id)
-          .select("project_id, webhook_token, enabled")
-          .single();
+      if (checkoutBinding || checkoutEnabled) {
+        const { data, error } = await supabase.functions.invoke(
+          "workspace-credentials",
+          {
+            body: {
+              action: "upsert_checkout_binding",
+              workspace_id: project.workspace_id,
+              project_id: project.id,
+              enabled: checkoutEnabled,
+            },
+          },
+        );
         if (error) throw error;
-        setCheckoutBinding(data as CheckoutBindingRow);
-      } else if (checkoutEnabled) {
-        const { data, error } = await supabase
-          .from("project_checkout_bindings")
-          .insert({ project_id: project.id, enabled: true })
-          .select("project_id, webhook_token, enabled")
-          .single();
-        if (error) throw error;
-        setCheckoutBinding(data as CheckoutBindingRow);
+        setCheckoutBinding(
+          (data?.checkout_binding ?? null) as CheckoutBindingRow | null,
+        );
       }
 
       setSavedMetaIds([...selectedMetaIds]);

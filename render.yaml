@@ -46,7 +46,9 @@ services:
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: CREATIVE_WORKER_POLL_INTERVAL_MS
-        value: "5000"
+        value: "15000"
+      - key: CREATIVE_WORKER_MAX_POLL_INTERVAL_MS
+        value: "60000"
       - key: CREATIVE_WORKER_BATCH_SIZE
         value: "2"
       - key: FFMPEG_PATH

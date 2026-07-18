@@ -1,0 +1,145 @@
+name: Backend Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_project_ref:
+        description: Type the production Supabase project ref to confirm.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-production-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Database, Functions, And Production Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+      VITE_SUPABASE_URL: https://nztnctrkmfrgclrnflfa.supabase.co
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
+      VITE_SUPABASE_PROJECT_ID: nztnctrkmfrgclrnflfa
+      PROBE_APP_URL: https://infiniteprofit-saas.onrender.com
+      PROBE_AUTH_EMAIL: ${{ secrets.PROBE_AUTH_EMAIL }}
+      PROBE_AUTH_PASSWORD: ${{ secrets.PROBE_AUTH_PASSWORD }}
+      RLS_WORKSPACE_ID: ${{ vars.RLS_WORKSPACE_ID }}
+      RLS_PROJECT_ID: ${{ vars.RLS_PROJECT_ID }}
+      RLS_MEMBER_EMAIL: ${{ secrets.RLS_MEMBER_EMAIL }}
+      RLS_MEMBER_PASSWORD: ${{ secrets.RLS_MEMBER_PASSWORD }}
+      RLS_ADMIN_EMAIL: ${{ secrets.RLS_ADMIN_EMAIL }}
+      RLS_ADMIN_PASSWORD: ${{ secrets.RLS_ADMIN_PASSWORD }}
+
+    steps:
+      - name: Checkout exact release commit
+        uses: actions/checkout@v4
+
+      - name: Confirm production target
+        run: |
+          test -n "$SUPABASE_PROJECT_REF" || (echo "SUPABASE_PROJECT_REF variable is required" && exit 1)
+          test "${{ inputs.confirm_project_ref }}" = "$SUPABASE_PROJECT_REF" || (echo "Production project confirmation does not match" && exit 1)
+          test -n "$SUPABASE_ACCESS_TOKEN" || (echo "SUPABASE_ACCESS_TOKEN secret is required" && exit 1)
+          test -n "$SUPABASE_DB_PASSWORD" || (echo "SUPABASE_DB_PASSWORD secret is required" && exit 1)
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Runtime dependency audit
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Local release gates
+        run: |
+          npm run lint -- --quiet
+          npx tsc --noEmit --pretty false
+          npm test
+          npm run build
+          npm run check:migration-safety
+          npm run check:secret-boundaries
+          npm run check:function-manifest
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v2
+        with:
+          version: 2.109.1
+
+      - name: Link production database
+        run: supabase link --project-ref "$SUPABASE_PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
+
+      - name: Preview database migration
+        run: supabase db push --linked --dry-run | tee migration-dry-run.txt
+
+      - name: Apply non-blocking production indexes
+        run: |
+          for migration in supabase/online-migrations/[0-9]*.sql; do
+            echo "Applying $migration" | tee -a online-indexes.log
+            supabase db query --linked --file "$migration" --output json | tee -a online-indexes.log
+          done
+          supabase db query --linked --file supabase/online-migrations/verify_backend_reliability_indexes.sql --output json | tee -a online-indexes.log
+
+      - name: Apply database migrations
+        run: supabase db push --linked
+
+      - name: Deploy backend functions in dependency order
+        run: |
+          supabase functions deploy workspace-credentials --project-ref "$SUPABASE_PROJECT_REF" --use-api
+          supabase functions deploy aggregate-daily --project-ref "$SUPABASE_PROJECT_REF" --use-api
+          supabase functions deploy meta-pull --project-ref "$SUPABASE_PROJECT_REF" --use-api
+          supabase functions deploy vturb-pull --project-ref "$SUPABASE_PROJECT_REF" --use-api
+          supabase functions deploy creative-sync --project-ref "$SUPABASE_PROJECT_REF" --use-api
+          supabase functions deploy sync-scheduler --project-ref "$SUPABASE_PROJECT_REF" --use-api
+          supabase functions deploy sync-worker --project-ref "$SUPABASE_PROJECT_REF" --use-api
+          supabase functions deploy sync-watchdog --project-ref "$SUPABASE_PROJECT_REF" --use-api
+          supabase functions deploy webhook-gateway --project-ref "$SUPABASE_PROJECT_REF" --use-api
+
+      - name: Verify function inventory
+        run: npm run check:function-drift
+
+      - name: Verify production RLS contracts
+        run: npm run ops:verify-rls | tee rls-contracts.json
+
+      - name: Production canary
+        run: npm run ops:probe | tee backend-canary.json
+
+      - name: Resume background jobs after green gates
+        id: resume_background_jobs
+        env:
+          BACKGROUND_CRON_PRODUCTION_ACK: ${{ inputs.confirm_project_ref }}
+        run: npm run ops:cron -- resume | tee background-cron-resume.json
+
+      - name: Post-resume canary
+        run: npm run ops:probe | tee backend-canary-post-resume.json
+
+      - name: Pause background jobs when post-resume canary fails
+        if: ${{ failure() && steps.resume_background_jobs.outcome == 'success' }}
+        env:
+          BACKGROUND_CRON_PRODUCTION_ACK: ${{ inputs.confirm_project_ref }}
+        run: npm run ops:cron -- pause
+
+      - name: Upload release evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-release-${{ github.sha }}
+          path: |
+            migration-dry-run.txt
+            online-indexes.log
+            rls-contracts.json
+            backend-canary.json
+            background-cron-resume.json
+            backend-canary-post-resume.json
+          if-no-files-found: ignore
+          retention-days: 30

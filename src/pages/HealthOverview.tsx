@@ -24,6 +24,10 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import {
+  listSourceHealthSignals,
+  type SourceHealthSignalRow,
+} from "@/lib/operationalReadApi";
+import {
   deriveOverallHealth,
   deriveSourceHealth,
   SOURCE_HEALTH_LABELS,
@@ -39,42 +43,6 @@ interface ProjectRow {
   workspace_id: string;
   name: string;
   updated_at: string;
-}
-
-interface RawEventRow {
-  project_id: string;
-  source: string;
-  received_at: string;
-}
-
-interface SyncRunRow {
-  project_id: string;
-  source: string;
-  status: string;
-  error_message: string | null;
-  created_at: string;
-  finished_at: string | null;
-}
-
-interface OperationalAlertRow {
-  project_id: string;
-  source: string;
-  severity: "info" | "warning" | "critical";
-  last_seen_at: string;
-}
-
-interface AuthorizedHealthSignalRow {
-  workspace_id: string;
-  project_id: string;
-  project_name: string;
-  source: SourceHealthKey;
-  configured: boolean;
-  last_success_at: string | null;
-  last_event_at: string | null;
-  last_error_at: string | null;
-  sync_status: string | null;
-  warning_count: number;
-  critical_count: number;
 }
 
 interface HealthRow {
@@ -141,101 +109,27 @@ export default function HealthOverview() {
         return;
       }
 
-      const [
-        healthSignalResult,
-        metaResult,
-        vturbResult,
-        checkoutResult,
-        creativeResult,
-        eventResult,
-        syncResult,
-        alertResult,
-      ] = await Promise.all([
-        supabase.rpc("list_source_health_signals", {
-          _workspace_id: scopeClientId === "all" ? null : scopeClientId,
-        }),
-        supabase.from("project_meta_accounts").select("project_id").in("project_id", projectIds),
-        supabase.from("project_vturb_players").select("project_id").in("project_id", projectIds),
-        supabase
-          .from("project_checkout_bindings")
-          .select("project_id, enabled")
-          .in("project_id", projectIds),
-        supabase
-          .from("creative_assets" as never)
-          .select("project_id")
-          .in("project_id", projectIds),
-        supabase
-          .from("raw_events")
-          .select("project_id, source, received_at")
-          .in("project_id", projectIds)
-          .order("received_at", { ascending: false })
-          .limit(10000),
-        supabase
-          .from("sync_runs")
-          .select("project_id, source, status, error_message, created_at, finished_at")
-          .in("project_id", projectIds)
-          .order("created_at", { ascending: false })
-          .limit(5000),
-        supabase
-          .from("operational_alerts" as never)
-          .select("project_id, source, severity, last_seen_at")
-          .in("project_id", projectIds)
-          .eq("status", "active"),
-      ]);
-
-      const firstError = [
-        metaResult.error,
-        vturbResult.error,
-        checkoutResult.error,
-        creativeResult.error,
-        eventResult.error,
-        syncResult.error,
-        alertResult.error,
-      ].find(Boolean);
-      if (firstError) throw firstError;
-
-      const metaProjects = new Set((metaResult.data ?? []).map((row) => row.project_id));
-      const vturbProjects = new Set((vturbResult.data ?? []).map((row) => row.project_id));
-      const gatewayProjects = new Set(
-        (checkoutResult.data ?? []).filter((row) => row.enabled).map((row) => row.project_id),
+      const authorizedSignals = await listSourceHealthSignals(
+        scopeClientId === "all" ? null : scopeClientId,
       );
-      const creativeProjects = new Set(
-        ((creativeResult.data ?? []) as unknown as Array<{ project_id: string }>).map(
-          (row) => row.project_id,
-        ),
-      );
-      const events = (eventResult.data ?? []) as RawEventRow[];
-      const syncRuns = (syncResult.data ?? []) as SyncRunRow[];
-      const alerts = (alertResult.data ?? []) as unknown as OperationalAlertRow[];
-      const authorizedSignals = healthSignalResult.error
-        ? []
-        : ((healthSignalResult.data ?? []) as AuthorizedHealthSignalRow[]);
+      const signalsByProject = new Map<
+        string,
+        Map<SourceHealthKey, SourceHealthSignalRow>
+      >();
+      for (const signal of authorizedSignals) {
+        if (!projectIds.includes(signal.project_id)) continue;
+        const projectSignals =
+          signalsByProject.get(signal.project_id) ??
+          new Map<SourceHealthKey, SourceHealthSignalRow>();
+        projectSignals.set(signal.source, signal);
+        signalsByProject.set(signal.project_id, projectSignals);
+      }
 
       const nextRows = projects.map<HealthRow>((project) => {
-        const projectAlerts = alerts.filter((alert) => alert.project_id === project.id);
+        const projectSignals = signalsByProject.get(project.id);
         const sources = Object.fromEntries(
           SOURCE_KEYS.map((source) => {
-            const sourceEvents = events.filter(
-              (event) => event.project_id === project.id && event.source === source,
-            );
-            const sourceRuns = syncRuns.filter(
-              (run) => run.project_id === project.id && run.source === source,
-            );
-            const sourceAlerts = projectAlerts.filter((alert) => alert.source === source);
-            const latestRun = sourceRuns[0] ?? null;
-            const latestSuccess = sourceRuns.find((run) => run.status === "succeeded") ?? null;
-            const latestFailure = sourceRuns.find((run) => run.status === "failed") ?? null;
-            const authorizedSignal = authorizedSignals.find(
-              (signal) => signal.project_id === project.id && signal.source === source,
-            );
-            const fallbackConfigured =
-              source === "meta"
-                ? metaProjects.has(project.id)
-                : source === "vturb"
-                  ? vturbProjects.has(project.id)
-                  : source === "gateway"
-                    ? gatewayProjects.has(project.id)
-                    : creativeProjects.has(project.id);
+            const authorizedSignal = projectSignals?.get(source);
 
             return [
               source,
@@ -243,42 +137,21 @@ export default function HealthOverview() {
                 workspaceId: project.workspace_id,
                 projectId: project.id,
                 source,
-                configured: authorizedSignal?.configured ?? fallbackConfigured,
-                lastSuccessAt:
-                  authorizedSignal?.last_success_at ??
-                  latestSuccess?.finished_at ??
-                  latestSuccess?.created_at ??
-                  null,
-                lastEventAt:
-                  authorizedSignal?.last_event_at ?? sourceEvents[0]?.received_at ?? null,
-                lastErrorAt:
-                  authorizedSignal?.last_error_at ?? latestFailure?.created_at ?? null,
-                syncing: authorizedSignal
-                  ? authorizedSignal.sync_status === "queued" ||
-                    authorizedSignal.sync_status === "running"
-                  : latestRun?.status === "queued" || latestRun?.status === "running",
-                warningCount:
-                  authorizedSignal?.warning_count ??
-                  sourceAlerts.filter((alert) => alert.severity === "warning").length,
-                criticalCount:
-                  authorizedSignal?.critical_count ??
-                  sourceAlerts.filter((alert) => alert.severity === "critical").length,
+                configured: authorizedSignal?.configured ?? false,
+                lastSuccessAt: authorizedSignal?.last_success_at ?? null,
+                lastEventAt: authorizedSignal?.last_event_at ?? null,
+                lastErrorAt: authorizedSignal?.last_error_at ?? null,
+                syncing:
+                  authorizedSignal?.sync_status === "queued" ||
+                  authorizedSignal?.sync_status === "running",
+                warningCount: authorizedSignal?.warning_count ?? 0,
+                criticalCount: authorizedSignal?.critical_count ?? 0,
               }),
             ];
           }),
         ) as Record<SourceHealthKey, SourceHealthResult>;
 
-        const generalAlerts = projectAlerts.filter(
-          (alert) => !SOURCE_KEYS.includes(alert.source as SourceHealthKey),
-        );
-        let overall = deriveOverallHealth(Object.values(sources));
-        if (generalAlerts.some((alert) => alert.severity === "critical")) overall = "error";
-        else if (
-          generalAlerts.some((alert) => alert.severity === "warning") &&
-          !statusRequiresAction(overall)
-        ) {
-          overall = "warning";
-        }
+        const overall = deriveOverallHealth(Object.values(sources));
 
         const sourceActivities = Object.values(sources)
           .map((source) => source.lastActivityAt)
@@ -296,7 +169,7 @@ export default function HealthOverview() {
           sources,
           overall,
           lastActivityAt: sourceActivities[0] ?? null,
-          problemCount: sourceProblemCount + generalAlerts.length,
+          problemCount: sourceProblemCount,
         };
       });
 

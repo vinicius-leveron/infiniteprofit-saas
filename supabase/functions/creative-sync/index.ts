@@ -244,7 +244,6 @@ Deno.serve(async (req) => {
     }
 
     const sb = createClient(SUPABASE_URL, SERVICE_KEY);
-    await failStaleRunningSyncRuns(sb);
     const projects = targetProjectId
       ? [await getProjectOrThrow(sb, targetProjectId)]
       : await loadSchedulableProjects(sb);
@@ -256,6 +255,7 @@ Deno.serve(async (req) => {
         await assertWorkspaceAdmin(sb, project.workspace_id, caller.userId);
       }
 
+      await failStaleRunningSyncRuns(sb, project.id);
       const activeRun = await findActiveSyncRun(sb, project.id);
       if (activeRun) {
         results.push({
@@ -1467,11 +1467,15 @@ async function assertWorkspaceAdmin(
   throw new Error("Sem permissão para sincronizar este workspace");
 }
 
-async function failStaleRunningSyncRuns(sb: ReturnType<typeof createClient>) {
+async function failStaleRunningSyncRuns(
+  sb: ReturnType<typeof createClient>,
+  projectId: string,
+) {
   const threshold = new Date(Date.now() - CREATIVE_RUNNING_SYNC_TIMEOUT_MS).toISOString();
   const { data, error } = await sb
     .from("sync_runs")
     .select("id")
+    .eq("project_id", projectId)
     .eq("source", "creative")
     .eq("status", "running")
     .lt("created_at", threshold);

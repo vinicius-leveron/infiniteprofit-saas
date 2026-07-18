@@ -87,6 +87,7 @@ Deno.serve(async (req) => {
     const targetProjectId = stringOrNull(body.project_id);
     const targetPlayerId = stringOrNull(body.player_id);
     const days = Math.min(Math.max(Number(body.days) || 30, 1), 90);
+    const skipAggregate = caller.kind === "service" && body.skip_aggregate === true;
     const batchOptions = parseVturbBatchOptions(body);
     const executionOptions = parseVturbExecutionOptions(body);
     const invocationStartedAt = Date.now();
@@ -100,7 +101,6 @@ Deno.serve(async (req) => {
     }
 
     const sb = createClient(SUPABASE_URL, SERVICE_KEY);
-    await failStaleRunningSyncRuns(sb);
     const projects = targetProjectId
       ? [await getProjectOrThrow(sb, targetProjectId)]
       : await loadSchedulableProjects(sb);
@@ -146,6 +146,7 @@ Deno.serve(async (req) => {
         await assertWorkspaceAdmin(sb, project.workspace_id, caller.userId);
       }
 
+      await failStaleRunningSyncRuns(sb, project.id);
       const activeRun = await findActiveSyncRun(sb, project.id);
       if (activeRun) {
         results.push({
@@ -280,7 +281,7 @@ Deno.serve(async (req) => {
             .eq("id", project.id);
         }
 
-        if (projectDatesTouched.size > 0) {
+        if (projectDatesTouched.size > 0 && !skipAggregate) {
           await triggerAggregateDaily(project.id, [...projectDatesTouched]);
         }
 
@@ -851,7 +852,10 @@ async function createSyncRun(
   return data?.id as string | undefined;
 }
 
-async function failStaleRunningSyncRuns(sb: ReturnType<typeof createClient>) {
+async function failStaleRunningSyncRuns(
+  sb: ReturnType<typeof createClient>,
+  projectId: string,
+) {
   const cutoff = new Date(Date.now() - VTURB_RUNNING_SYNC_TIMEOUT_MS).toISOString();
 
   await sb
@@ -861,6 +865,7 @@ async function failStaleRunningSyncRuns(sb: ReturnType<typeof createClient>) {
       finished_at: new Date().toISOString(),
       error_message: "Encerrado automaticamente após exceder o tempo limite do sync VTurb.",
     })
+    .eq("project_id", projectId)
     .eq("source", "vturb")
     .eq("status", "running")
     .lt("started_at", cutoff);

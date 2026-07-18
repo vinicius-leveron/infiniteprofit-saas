@@ -28,122 +28,43 @@ import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorkspace } from "@/hooks/useWorkspace";
+import {
+  listClientOperationalSummaries,
+  type ClientOperationalSummaryRow,
+} from "@/lib/operationalReadApi";
 import { toast } from "sonner";
 
-interface ClientRow {
+interface ClientSummary {
   id: string;
   name: string;
-  updated_at: string;
   organization_id: string;
-}
-
-interface ProjectSignal {
-  id: string;
-  workspace_id: string;
-  updated_at: string;
-}
-
-interface SyncSignal {
-  workspace_id: string;
-  project_id: string | null;
-  status: "queued" | "running" | "succeeded" | "failed";
-  created_at: string;
-}
-
-interface ClientSummary extends ClientRow {
   funnelCount: number;
   healthLabel: string;
   healthTone: StatusTone;
   lastActivity: string;
 }
 
-function maxDate(values: string[]) {
-  return values.reduce((latest, value) => {
-    const timestamp = new Date(value).getTime();
-    return timestamp > new Date(latest).getTime() ? value : latest;
-  });
-}
-
-function summarizeClient(
-  client: ClientRow,
-  projects: ProjectSignal[],
-  syncRuns: SyncSignal[],
-): ClientSummary {
-  const clientProjects = projects.filter((project) => project.workspace_id === client.id);
-  const projectIds = new Set(clientProjects.map((project) => project.id));
-  const clientRuns = syncRuns
-    .filter(
-      (run) =>
-        run.workspace_id === client.id &&
-        (!run.project_id || projectIds.has(run.project_id)),
-    )
-    .sort(
-      (left, right) =>
-        new Date(right.created_at).getTime() - new Date(left.created_at).getTime(),
-    );
-
-  const activityDates = [
-    client.updated_at,
-    ...clientProjects.map((project) => project.updated_at),
-    ...clientRuns.map((run) => run.created_at),
-  ];
-  const lastActivity = maxDate(activityDates);
-
-  if (clientProjects.length === 0) {
-    return {
-      ...client,
-      funnelCount: 0,
-      healthLabel: "Sem funis",
-      healthTone: "neutral",
-      lastActivity,
-    };
-  }
-
-  const latestRunByProject = new Map<string, SyncSignal>();
-  for (const run of clientRuns) {
-    if (run.project_id && !latestRunByProject.has(run.project_id)) {
-      latestRunByProject.set(run.project_id, run);
-    }
-  }
-  const latestRuns = [...latestRunByProject.values()];
-
-  if (latestRuns.some((run) => run.status === "failed")) {
-    return {
-      ...client,
-      funnelCount: clientProjects.length,
-      healthLabel: "Requer ação",
-      healthTone: "danger",
-      lastActivity,
-    };
-  }
-  if (latestRuns.some((run) => run.status === "queued" || run.status === "running")) {
-    return {
-      ...client,
-      funnelCount: clientProjects.length,
-      healthLabel: "Sincronizando",
-      healthTone: "info",
-      lastActivity,
-    };
-  }
-  if (
-    latestRuns.length === clientProjects.length &&
-    latestRuns.every((run) => run.status === "succeeded")
-  ) {
-    return {
-      ...client,
-      funnelCount: clientProjects.length,
-      healthLabel: "Saudável",
-      healthTone: "success",
-      lastActivity,
-    };
-  }
+function summarizeClient(row: ClientOperationalSummaryRow): ClientSummary {
+  const funnelCount = Number(row.funnel_count) || 0;
+  const health =
+    funnelCount === 0
+      ? { label: "Sem funis", tone: "neutral" as const }
+      : row.health_status === "healthy"
+        ? { label: "Saudável", tone: "success" as const }
+        : row.health_status === "syncing"
+          ? { label: "Sincronizando", tone: "info" as const }
+          : row.health_status === "warning" || row.health_status === "error"
+            ? { label: "Requer ação", tone: "danger" as const }
+            : { label: "Sem conexão", tone: "warning" as const };
 
   return {
-    ...client,
-    funnelCount: clientProjects.length,
-    healthLabel: "Sem conexão",
-    healthTone: "warning",
-    lastActivity,
+    id: row.workspace_id,
+    name: row.workspace_name,
+    organization_id: row.organization_id,
+    funnelCount,
+    healthLabel: health.label,
+    healthTone: health.tone,
+    lastActivity: row.last_activity_at,
   };
 }
 
@@ -180,40 +101,8 @@ export default function Clients() {
     setErrorMessage(null);
 
     try {
-      const { data: clientRows, error: clientError } = await supabase
-        .from("workspaces")
-        .select("id, name, updated_at, organization_id")
-        .eq("organization_id", organization.id)
-        .order("name", { ascending: true });
-      if (clientError) throw clientError;
-
-      const typedClients = (clientRows ?? []) as ClientRow[];
-      if (typedClients.length === 0) {
-        setClients([]);
-        return;
-      }
-
-      const clientIds = typedClients.map((client) => client.id);
-      const [
-        { data: projectRows, error: projectError },
-        { data: runRows, error: runError },
-      ] = await Promise.all([
-        supabase
-          .from("projects")
-          .select("id, workspace_id, updated_at")
-          .in("workspace_id", clientIds),
-        supabase
-          .from("sync_runs")
-          .select("workspace_id, project_id, status, created_at")
-          .in("workspace_id", clientIds)
-          .order("created_at", { ascending: false }),
-      ]);
-      if (projectError) throw projectError;
-      if (runError) throw runError;
-
-      const projects = (projectRows ?? []) as ProjectSignal[];
-      const runs = (runRows ?? []) as SyncSignal[];
-      setClients(typedClients.map((client) => summarizeClient(client, projects, runs)));
+      const data = await listClientOperationalSummaries(organization.id);
+      setClients(data.map(summarizeClient));
     } catch (error) {
       setErrorMessage(
         error instanceof Error ? error.message : "Falha ao carregar os clientes.",
