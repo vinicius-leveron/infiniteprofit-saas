@@ -19,6 +19,7 @@
     "ops:cron": "node scripts/manage-background-cron.mjs",
     "ops:function-logs": "node scripts/inspect-supabase-function-logs.mjs",
     "ops:probe": "node scripts/probe-production.mjs",
+    "ops:prepare-staging": "node scripts/prepare-staging-readiness.mjs",
     "ops:readiness": "node scripts/check-backend-readiness.mjs",
     "ops:recover-vturb-dlq": "node scripts/recover-vturb-dead-letters.mjs",
     "ops:restore-drill": "node scripts/verify-restore-drill.mjs",

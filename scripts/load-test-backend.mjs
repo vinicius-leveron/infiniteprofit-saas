@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import process from "node:process";
+import { summarizeDatabaseSnapshots } from "./load-test-database-core.mjs";
 
 const PRODUCTION_PROJECT_REF = "nztnctrkmfrgclrnflfa";
 const mode = String(
@@ -26,7 +27,33 @@ const requestTimeoutMs = boundedInt(
   1_000,
   30_000,
 );
+const requireDatabaseHealth =
+  process.env.LOAD_TEST_REQUIRE_DATABASE_HEALTH === "true";
+const databaseProjectRef = requireDatabaseHealth
+  ? requiredFrom(
+    ["LOAD_TEST_PROJECT_REF", "SUPABASE_PROJECT_REF"],
+    "LOAD_TEST_PROJECT_REF or SUPABASE_PROJECT_REF",
+  )
+  : null;
+const databaseAccessToken = requireDatabaseHealth
+  ? required("SUPABASE_ACCESS_TOKEN")
+  : null;
+const databaseSampleIntervalMs = boundedInt(
+  "LOAD_TEST_DATABASE_SAMPLE_INTERVAL_MS",
+  15_000,
+  5_000,
+  60_000,
+);
 const productionTarget = url.includes(PRODUCTION_PROJECT_REF);
+
+if (
+  requireDatabaseHealth &&
+  !url.includes(String(databaseProjectRef))
+) {
+  throw new Error(
+    "LOAD_TEST_PROJECT_REF must match LOAD_TEST_SUPABASE_URL.",
+  );
+}
 
 if (productionTarget) {
   if (process.env.LOAD_TEST_PRODUCTION_ACK !== PRODUCTION_PROJECT_REF) {
@@ -48,10 +75,19 @@ const samples = {
 };
 const startedAt = Date.now();
 const deadline = startedAt + durationSeconds * 1_000;
+const databaseMonitor = requireDatabaseHealth
+  ? createDatabaseMonitor()
+  : null;
+const databaseMonitorPromise = databaseMonitor?.run();
 
 await Promise.all(
   Array.from({ length: virtualUsers }, (_, index) => runVirtualUser(index)),
 );
+const loadFinishedAt = Date.now();
+databaseMonitor?.stop();
+const databaseHealth = databaseMonitorPromise
+  ? await databaseMonitorPromise
+  : null;
 
 const report = {
   schema_version: 1,
@@ -60,7 +96,7 @@ const report = {
   mode,
   virtual_users: virtualUsers,
   configured_duration_seconds: durationSeconds,
-  actual_duration_seconds: round((Date.now() - startedAt) / 1_000),
+  actual_duration_seconds: round((loadFinishedAt - startedAt) / 1_000),
   think_ms: thinkMs,
   scenarios: {
     auth: summarize(samples.auth),
@@ -69,6 +105,7 @@ const report = {
       : {}),
     health_rpc: summarize(samples.healthRpc),
   },
+  ...(databaseHealth ? { database: databaseHealth } : {}),
 };
 
 const failures = [];
@@ -81,6 +118,15 @@ gate(
   report.scenarios.health_rpc,
   threshold("LOAD_TEST_RPC_P95_MS", 800),
 );
+if (requireDatabaseHealth && !databaseHealth?.ok) {
+  failures.push(
+    `database health failed: connections=${
+      databaseHealth?.max_connection_utilization ?? "missing"
+    }, locks=${databaseHealth?.max_lock_waits ?? "missing"}, expired=${
+      databaseHealth?.max_expired_running_jobs ?? "missing"
+    }, dlq=${databaseHealth?.max_unclassified_dead_letters ?? "missing"}`,
+  );
+}
 
 console.log(JSON.stringify({ ...report, ok: failures.length === 0, failures }, null, 2));
 if (failures.length > 0) process.exitCode = 1;
@@ -197,6 +243,104 @@ async function timedRequest(scenario, requestUrl, init) {
   return { ok: sample.ok, response, sample };
 }
 
+function createDatabaseMonitor() {
+  let stopped = false;
+  let releaseWait = () => {};
+  const stopSignal = new Promise((resolve) => {
+    releaseWait = resolve;
+  });
+
+  return {
+    async run() {
+      const snapshots = [await fetchDatabaseSnapshot()];
+      while (!stopped) {
+        await Promise.race([
+          delay(databaseSampleIntervalMs),
+          stopSignal,
+        ]);
+        if (!stopped) snapshots.push(await fetchDatabaseSnapshot());
+      }
+      snapshots.push(await fetchDatabaseSnapshot());
+      return {
+        ...summarizeDatabaseSnapshots(snapshots),
+        project_ref: databaseProjectRef,
+      };
+    },
+    stop() {
+      stopped = true;
+      releaseWait();
+    },
+  };
+}
+
+async function fetchDatabaseSnapshot() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const response = await fetch(
+      `https://api.supabase.com/v1/projects/${databaseProjectRef}/database/query/read-only`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${databaseAccessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          query: `
+            select
+              pg_catalog.now() as observed_at,
+              current_setting('max_connections')::integer as max_connections,
+              (
+                select pg_catalog.count(*)::integer
+                from pg_catalog.pg_stat_activity
+                where datname = current_database()
+              ) as total_connections,
+              (
+                select pg_catalog.count(*)::integer
+                from pg_catalog.pg_stat_activity
+                where datname = current_database() and state = 'active'
+              ) as active_connections,
+              (
+                select pg_catalog.count(*)::integer
+                from pg_catalog.pg_stat_activity
+                where datname = current_database()
+                  and wait_event_type = 'Lock'
+              ) as lock_waits,
+              (
+                select pg_catalog.count(*)::integer
+                from public.sync_jobs
+                where status = 'running'
+                  and locked_at < pg_catalog.now() - interval '5 minutes'
+              ) as expired_running_jobs,
+              (
+                select pg_catalog.count(*)::integer
+                from public.sync_jobs
+                where status = 'dead_letter'
+                  and coalesce(payload -> 'failure' ->> 'kind', '')
+                    <> 'permanent'
+              ) as unclassified_dead_letters
+          `,
+        }),
+        signal: controller.signal,
+      },
+    );
+    const body = await response.json().catch(() => null);
+    if (!response.ok || !Array.isArray(body) || !body[0]) {
+      throw new Error(
+        `Database health snapshot failed (${response.status}): ${
+          String(body?.message ?? body?.error ?? "invalid response").slice(
+            0,
+            300,
+          )
+        }`,
+      );
+    }
+    return body[0];
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function summarize(entries) {
   const durations = entries
     .map((entry) => entry.duration_ms)
@@ -256,6 +400,14 @@ function required(name) {
   const value = String(process.env[name] ?? "").trim();
   if (!value) throw new Error(`${name} is required.`);
   return value;
+}
+
+function requiredFrom(names, label) {
+  for (const name of names) {
+    const value = String(process.env[name] ?? "").trim();
+    if (value) return value;
+  }
+  throw new Error(`${label} is required.`);
 }
 
 function delay(milliseconds) {

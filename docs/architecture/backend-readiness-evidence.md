@@ -58,8 +58,9 @@ O workflow manual `backend-staging-readiness.yml`:
 4. cria um usuário descartável e percorre login, bootstrap e primeiro funil;
 5. prova que secrets do wizard não chegam ao `sessionStorage`;
 6. executa rampas autenticadas de 1, 5, 10 e 20 VUs;
-7. sustenta 2x o pico esperado por 15 minutos;
-8. publica os relatórios como artifact imutável.
+7. amostra conexões, locks, jobs expirados e DLQ durante toda a carga;
+8. sustenta 2x o pico esperado por 15 minutos;
+9. publica os relatórios como artifact imutável.
 
 Configurar o environment GitHub `staging`:
 
@@ -67,8 +68,6 @@ Configurar o environment GitHub `staging`:
 
 - `STAGING_SUPABASE_URL`
 - `STAGING_SUPABASE_PUBLISHABLE_KEY`
-- `STAGING_RLS_WORKSPACE_ID`
-- `STAGING_RLS_PROJECT_ID`
 
 ### Secrets
 
@@ -80,9 +79,11 @@ Configurar o environment GitHub `staging`:
 - `STAGING_RLS_ADMIN_EMAIL`
 - `STAGING_RLS_ADMIN_PASSWORD`
 
-O Admin de QA deve pertencer à Organização como Owner/Admin e não pode ter
-membership explícita no Cliente usado pelo gate. Assim, o teste comprova acesso
-herdado em vez de apenas acesso direto.
+O workflow cria ou atualiza uma fixture identificada, sem dados reais: usuários
+QA, Organização, Cliente e Funil. O Admin fica somente na Organização como
+Admin, sem membership explícita no Cliente; o Member recebe membership direta.
+Os IDs são exportados para os passos de RLS e carga pelo `GITHUB_ENV`. A fixture
+é idempotente e recusa o project ref de produção.
 
 Depois de baixar o artifact:
 

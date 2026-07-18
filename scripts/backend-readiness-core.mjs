@@ -176,6 +176,17 @@ export function evaluateLoadReport(
     Number(report?.scenarios?.rest?.p95_ms ?? Infinity) < limits.restP95Ms &&
     Number(report?.scenarios?.health_rpc?.p95_ms ?? Infinity) <
       limits.restP95Ms;
+  const databaseHealthy =
+    report?.database?.ok === true &&
+    String(report?.target ?? "").includes(
+      String(report?.database?.project_ref ?? "__missing_project_ref__"),
+    ) &&
+    Number(report?.database?.samples ?? 0) >= 2 &&
+    Number(report?.database?.max_connection_utilization ?? Infinity) <
+      limits.connectionUtilization &&
+    Number(report?.database?.max_lock_waits ?? Infinity) === 0 &&
+    Number(report?.database?.max_expired_running_jobs ?? Infinity) === 0 &&
+    Number(report?.database?.max_unclassified_dead_letters ?? Infinity) === 0;
 
   return check(
     "staging_load_2x",
@@ -186,12 +197,13 @@ export function evaluateLoadReport(
       enoughLoad &&
       Number(report?.actual_duration_seconds ?? 0) >=
         limits.minimumLoadDurationSeconds &&
-      scenariosHealthy,
+      scenariosHealthy &&
+      databaseHealthy,
     `target=${report?.target ?? "missing"}; VUs=${
       Number(report?.virtual_users ?? 0)
     }; expected_peak=${expectedPeakVirtualUsers ?? "missing"}; duration=${
       Number(report?.actual_duration_seconds ?? 0)
-    }s`,
+    }s; database=${databaseHealthy}`,
   );
 }
 

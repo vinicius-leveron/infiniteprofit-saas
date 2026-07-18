@@ -24,7 +24,7 @@ jobs:
   readiness:
     name: Deploy, RLS, Onboarding, And Load 2x
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     environment: staging
     env:
       PRODUCTION_PROJECT_REF: nztnctrkmfrgclrnflfa
@@ -36,8 +36,7 @@ jobs:
       VITE_SUPABASE_PROJECT_ID: ${{ inputs.staging_project_ref }}
       VITE_ENABLE_GOOGLE_AUTH: "false"
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.STAGING_SERVICE_ROLE_KEY }}
-      RLS_WORKSPACE_ID: ${{ vars.STAGING_RLS_WORKSPACE_ID }}
-      RLS_PROJECT_ID: ${{ vars.STAGING_RLS_PROJECT_ID }}
+      STAGING_FIXTURE_ACK: ${{ inputs.staging_project_ref }}
       RLS_MEMBER_EMAIL: ${{ secrets.STAGING_RLS_MEMBER_EMAIL }}
       RLS_MEMBER_PASSWORD: ${{ secrets.STAGING_RLS_MEMBER_PASSWORD }}
       RLS_ADMIN_EMAIL: ${{ secrets.STAGING_RLS_ADMIN_EMAIL }}
@@ -51,7 +50,8 @@ jobs:
       LOAD_TEST_ANON_KEY: ${{ vars.STAGING_SUPABASE_PUBLISHABLE_KEY }}
       LOAD_TEST_EMAIL: ${{ secrets.STAGING_RLS_MEMBER_EMAIL }}
       LOAD_TEST_PASSWORD: ${{ secrets.STAGING_RLS_MEMBER_PASSWORD }}
-      LOAD_TEST_WORKSPACE_ID: ${{ vars.STAGING_RLS_WORKSPACE_ID }}
+      LOAD_TEST_PROJECT_REF: ${{ inputs.staging_project_ref }}
+      LOAD_TEST_REQUIRE_DATABASE_HEALTH: "true"
       LOAD_TEST_DURATION_SECONDS: "300"
       LOAD_TEST_THINK_MS: "500"
 
@@ -66,6 +66,10 @@ jobs:
           test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "STAGING_SERVICE_ROLE_KEY is required" && exit 1)
           test -n "$VITE_SUPABASE_URL" || (echo "STAGING_SUPABASE_URL is required" && exit 1)
           test -n "$VITE_SUPABASE_PUBLISHABLE_KEY" || (echo "STAGING_SUPABASE_PUBLISHABLE_KEY is required" && exit 1)
+          test -n "$RLS_MEMBER_EMAIL" || (echo "STAGING_RLS_MEMBER_EMAIL is required" && exit 1)
+          test -n "$RLS_MEMBER_PASSWORD" || (echo "STAGING_RLS_MEMBER_PASSWORD is required" && exit 1)
+          test -n "$RLS_ADMIN_EMAIL" || (echo "STAGING_RLS_ADMIN_EMAIL is required" && exit 1)
+          test -n "$RLS_ADMIN_PASSWORD" || (echo "STAGING_RLS_ADMIN_PASSWORD is required" && exit 1)
           test "$SUPABASE_PROJECT_REF" != "$PRODUCTION_PROJECT_REF" || (echo "Staging workflow refuses production" && exit 1)
           case "$VITE_SUPABASE_URL" in
             *"$SUPABASE_PROJECT_REF"*) ;;
@@ -123,9 +127,13 @@ jobs:
           done
           npm run check:function-drift
 
-      - name: Verify credential-based RLS and inherited Organization Admin
+      - name: Prepare idempotent staging tenancy and QA identities
         run: |
           mkdir -p artifacts
+          node scripts/prepare-staging-readiness.mjs | tee artifacts/staging-fixture.json
+
+      - name: Verify credential-based RLS and inherited Organization Admin
+        run: |
           node scripts/verify-rls-contracts.mjs | tee artifacts/staging-rls.json
 
       - name: Verify fresh-user onboarding and first funnel
@@ -152,7 +160,7 @@ jobs:
           echo "- staging project: \`$SUPABASE_PROJECT_REF\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- expected peak: \`${{ inputs.expected_peak_vus }} VUs\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- twice-peak hold: \`$(( ${{ inputs.expected_peak_vus }} * 2 )) VUs / 15 min\`" >> "$GITHUB_STEP_SUMMARY"
-          for report in artifacts/staging-rls.json artifacts/staging-onboarding.json artifacts/load-2x.json; do
+          for report in artifacts/staging-fixture.json artifacts/staging-rls.json artifacts/staging-onboarding.json artifacts/load-2x.json; do
             if test -f "$report"; then
               echo "### $report" >> "$GITHUB_STEP_SUMMARY"
               echo '```json' >> "$GITHUB_STEP_SUMMARY"

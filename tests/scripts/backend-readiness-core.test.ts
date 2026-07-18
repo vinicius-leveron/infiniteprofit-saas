@@ -77,12 +77,23 @@ describe("backend market readiness", () => {
         rest: { error_rate: 0, p95_ms: 250 },
         health_rpc: { error_rate: 0, p95_ms: 300 },
       },
+      database: {
+        ok: true,
+        project_ref: "staging",
+        samples: 61,
+        max_connection_utilization: 0.4,
+        max_lock_waits: 0,
+        max_expired_running_jobs: 0,
+        max_unclassified_dead_letters: 0,
+      },
     };
 
     expect(evaluateLoadReport(report, 10).status).toBe("pass");
     expect(evaluateLoadReport({ ...report, production: true }, 10).status)
       .toBe("hold");
     expect(evaluateLoadReport({ ...report, virtual_users: 19 }, 10).status)
+      .toBe("hold");
+    expect(evaluateLoadReport({ ...report, database: undefined }, 10).status)
       .toBe("hold");
   });
 
