@@ -79,3 +79,6 @@ verify_jwt = false
 
 [functions.gateway-worker-heartbeat]
 verify_jwt = false
+
+[functions.backend-canary]
+verify_jwt = false

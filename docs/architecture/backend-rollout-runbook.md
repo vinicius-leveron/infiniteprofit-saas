@@ -30,6 +30,8 @@ Cron
   -> sync-worker
   -> APIs Meta / VTurb / agregação
   -> sync-watchdog
+  -> backend-internal-canary
+  -> backend_canary_runs
 ```
 
 O Postgres é control plane e data plane nesta fase. Separar bancos antes de
@@ -69,6 +71,8 @@ em produção.
 - Leituras operacionais têm deadline de 8 s no cliente e `statement_timeout` no
   banco.
 - Consultas de tela não carregam históricos inteiros.
+- O canário interno grava somente status, latências e códigos HTTP; tabelas,
+  URLs completas, tokens e corpos de resposta não entram no histórico.
 
 ## Capacidade inicial
 

@@ -15,6 +15,7 @@ import {
 import {
   evaluateCanaryRuns,
   evaluateGatewayDrillReport,
+  evaluateInternalCanaryRuns,
   evaluateLoadReport,
   evaluateOnboardingReport,
   evaluateProbe,
@@ -79,6 +80,7 @@ const checks = [
   ...runtimeChecks,
   evaluateProbe(probeReport),
   evaluateCanaryRuns(canaryRuns, { now }),
+  evaluateInternalCanaryRuns(databaseSnapshot.backend_canary_runs, { now }),
   evaluateSqsSnapshot({
     ...sqsSnapshot,
     consumer_status: databaseSnapshot.gateway_consumer_status,
@@ -152,7 +154,8 @@ async function getDatabaseSnapshot(token, ref) {
       values
         ('sync-scheduler-projects'::text),
         ('sync-worker-projects'::text),
-        ('sync-watchdog-projects'::text)
+        ('sync-watchdog-projects'::text),
+        ('backend-internal-canary'::text)
     ),
     legacy_cron(name) as (
       values
@@ -278,7 +281,19 @@ async function getDatabaseSnapshot(token, ref) {
           epoch from pg_catalog.now() - pg_catalog.max(heartbeat.last_seen_at)
         )::integer
         from public.gateway_worker_heartbeats heartbeat
-      ), 2147483647) as gateway_consumer_heartbeat_age_seconds
+      ), 2147483647) as gateway_consumer_heartbeat_age_seconds,
+      coalesce((
+        select pg_catalog.jsonb_agg(
+          pg_catalog.jsonb_build_object(
+            'status', run.status,
+            'created_at', run.created_at,
+            'finished_at', run.finished_at
+          )
+          order by run.created_at
+        )
+        from public.backend_canary_runs run
+        where run.created_at >= pg_catalog.now() - interval '24 hours'
+      ), '[]'::jsonb) as backend_canary_runs
   `;
   const response = await fetch(
     `https://api.supabase.com/v1/projects/${ref}/database/query/read-only`,

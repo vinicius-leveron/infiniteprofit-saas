@@ -96,6 +96,7 @@ jobs:
       - name: Deploy backend functions in dependency order
         run: |
           supabase functions deploy workspace-credentials --project-ref "$SUPABASE_PROJECT_REF" --use-api
+          supabase functions deploy backend-canary --project-ref "$SUPABASE_PROJECT_REF" --use-api
           supabase functions deploy aggregate-daily --project-ref "$SUPABASE_PROJECT_REF" --use-api
           supabase functions deploy meta-pull --project-ref "$SUPABASE_PROJECT_REF" --use-api
           supabase functions deploy vturb-pull --project-ref "$SUPABASE_PROJECT_REF" --use-api

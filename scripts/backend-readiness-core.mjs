@@ -52,10 +52,10 @@ export function evaluateRuntime(snapshot, limits = READINESS_LIMITS) {
     ),
     check(
       "background_cron",
-      Number(snapshot.expected_cron_jobs ?? 0) === 3 &&
-        Number(snapshot.active_expected_cron_jobs ?? 0) === 3 &&
+      Number(snapshot.expected_cron_jobs ?? 0) === 4 &&
+        Number(snapshot.active_expected_cron_jobs ?? 0) === 4 &&
         Number(snapshot.unexpected_legacy_cron_jobs ?? 0) === 0,
-      `${Number(snapshot.active_expected_cron_jobs ?? 0)}/3 expected active; ${
+      `${Number(snapshot.active_expected_cron_jobs ?? 0)}/4 expected active; ${
         Number(snapshot.unexpected_legacy_cron_jobs ?? 0)
       } legacy active`,
     ),
@@ -155,6 +155,19 @@ export function evaluateCanaryRuns(
       failedRuns.length
     } failed/incomplete; start=${hasStartCoverage}; recent=${hasRecentCoverage}`,
   );
+}
+
+export function evaluateInternalCanaryRuns(runs, options = {}) {
+  const normalized = (Array.isArray(runs) ? runs : []).map((run) => ({
+    created_at: run.created_at,
+    updated_at: run.finished_at ?? run.created_at,
+    status: "completed",
+    conclusion: run.status === "pass" ? "success" : "failure",
+  }));
+  return {
+    ...evaluateCanaryRuns(normalized, options),
+    id: "internal_canary_24h",
+  };
 }
 
 export function evaluateLoadReport(

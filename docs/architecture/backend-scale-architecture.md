@@ -94,6 +94,12 @@ Postgres.
 O workflow `backend-canary.yml` mede frontend, Auth, PostgREST e, quando há
 credenciais de QA, o contrato autenticado de saúde.
 
+O cron `backend-internal-canary` chama uma Edge Function service-only a cada
+15 minutos e persiste, sem payloads de negócio, a disponibilidade e o p95 de
+frontend, Auth e PostgREST. O gate exige também 24 horas dessa série interna;
+assim, atrasos ou descarte de um schedule externo não removem a observabilidade
+do próprio ambiente.
+
 Nenhum novo lote de clientes entra quando qualquer uma destas condições ocorre:
 
 - Auth ou PostgREST abaixo do SLO;

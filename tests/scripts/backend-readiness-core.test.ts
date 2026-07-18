@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   evaluateCanaryRuns,
   evaluateGatewayDrillReport,
+  evaluateInternalCanaryRuns,
   evaluateLoadReport,
   evaluateOnboardingReport,
   evaluateRestoreReport,
@@ -20,8 +21,8 @@ describe("backend market readiness", () => {
       max_connections: 60,
       total_connections: 45,
       lock_waits: 1,
-      expected_cron_jobs: 3,
-      active_expected_cron_jobs: 3,
+      expected_cron_jobs: 4,
+      active_expected_cron_jobs: 4,
       unexpected_legacy_cron_jobs: 0,
       ready_jobs: 1,
       oldest_ready_age_seconds: 20,
@@ -61,6 +62,16 @@ describe("backend market readiness", () => {
     expect(evaluateCanaryRuns(runs.slice(-10), { now }).status).toBe("hold");
     runs[50].conclusion = "failure";
     expect(evaluateCanaryRuns(runs, { now }).status).toBe("hold");
+
+    const internalRuns = runs.map((run) => ({
+      created_at: run.created_at,
+      finished_at: run.updated_at,
+      status: run.conclusion === "success" ? "pass" : "fail",
+    }));
+    expect(evaluateInternalCanaryRuns(internalRuns, { now })).toMatchObject({
+      id: "internal_canary_24h",
+      status: "hold",
+    });
   });
 
   it("accepts only authenticated staging load at twice the expected peak", () => {

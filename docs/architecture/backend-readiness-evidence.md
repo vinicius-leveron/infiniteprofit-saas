@@ -33,6 +33,7 @@ O comando consulta, sem mutação:
 - idade do último autovacuum e proporção de tuplas mortas em `raw_events`;
 - frontend, Auth e PostgREST;
 - histórico de 24 horas do workflow `backend-canary.yml`;
+- histórico de 24 horas do cron service-only `backend-internal-canary`;
 - SQS e DLQ, quando as URLs e credenciais AWS estiverem configuradas.
 
 Variáveis para SQS:
@@ -74,6 +75,7 @@ Configurar o environment GitHub `staging`:
 - `SUPABASE_ACCESS_TOKEN`
 - `STAGING_DB_PASSWORD`
 - `STAGING_SERVICE_ROLE_KEY`
+- `STAGING_AUTOMATION_KEY`
 - `STAGING_RLS_MEMBER_EMAIL`
 - `STAGING_RLS_MEMBER_PASSWORD`
 - `STAGING_RLS_ADMIN_EMAIL`
