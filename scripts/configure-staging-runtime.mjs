@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import { validateStagingTarget } from "./staging-readiness-fixture-core.mjs";
-import { buildSafeVaultStatements } from "./staging-runtime-core.mjs";
+import {
+  buildSafeVaultStatements,
+  buildStagingRuntimeInstallSql,
+} from "./staging-runtime-core.mjs";
 
 const mode = process.argv[2];
 if (!["vault", "install"].includes(mode)) {
@@ -25,7 +28,7 @@ if (mode === "vault") {
     automationKey,
   }), true);
 } else {
-  await runQuery(installSql(), false);
+  await runQuery(buildStagingRuntimeInstallSql(), false);
 }
 
 console.log(JSON.stringify({
@@ -119,22 +122,6 @@ function vaultSql({ projectUrl, automationKey: key }) {
       end if;
     end
     $configure_vault$;
-  `;
-}
-
-function installSql() {
-  return `
-    select * from app_private.install_sync_cron_jobs();
-
-    do $install_optional_canary$
-    begin
-      if pg_catalog.to_regprocedure(
-        'app_private.install_backend_canary_cron(text)'
-      ) is not null then
-        perform app_private.install_backend_canary_cron();
-      end if;
-    end
-    $install_optional_canary$;
   `;
 }
 

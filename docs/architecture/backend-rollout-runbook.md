@@ -61,8 +61,9 @@ em produção.
 - Owner/Admin recebe tokens apenas por contrato explícito.
 - Jobs têm dedupe determinística, claim com `SKIP LOCKED`, lease global de
   5 min, retry e DLQ.
-- O worker roda lote de 4, tem orçamento total de 50 s e limita cada chamada
-  downstream a 40 s. Se a lease estiver ocupada, o cron seguinte termina como
+- O worker reivindica um lote serial de até 12, tem orçamento total de 50 s e
+  limita cada chamada downstream a 40 s. Jobs que não couberem no orçamento
+  voltam à fila. Se a lease estiver ocupada, o cron seguinte termina como
   `lease_held` sem tocar na fila.
 - Metadados de catálogo VTurb ficam cacheados no Cliente por 6 h. Requests do
   provedor expiram em 8 s e erros internos nunca contam como falso sucesso.

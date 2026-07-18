@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildSafeVaultStatements } from "../../scripts/staging-runtime-core.mjs";
+import {
+  buildSafeVaultStatements,
+  buildStagingRuntimeInstallSql,
+} from "../../scripts/staging-runtime-core.mjs";
 
 describe("staging runtime SQL boundaries", () => {
   it("escapes values before they enter a management SQL query", () => {
@@ -21,5 +24,13 @@ describe("staging runtime SQL boundaries", () => {
       projectUrl: "https://staging-ref.supabase.co",
       automationKey: "bad\0key",
     })).toThrow(/null byte/i);
+  });
+
+  it("reapplies worker capacity tuning after reinstalling staging cron jobs", () => {
+    const sql = buildStagingRuntimeInstallSql();
+
+    expect(sql).toContain("install_sync_cron_jobs");
+    expect(sql).toContain("tune_sync_worker_cron");
+    expect(sql).toContain("install_backend_canary_cron");
   });
 });

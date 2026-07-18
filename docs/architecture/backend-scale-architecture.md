@@ -60,8 +60,8 @@ só aparecem nos contratos seguros para Owner/Admin. O gate
 - batch atômico por RPC;
 - lease global de 5 min, renovada por job e liberada no `finally`, para impedir
   sobreposição entre invocações do cron;
-- lote padrão de 4 jobs, orçamento de 50 s por worker e timeout de 40 s por
-  chamada downstream;
+- lote serial de até 12 jobs, orçamento de 50 s por worker e timeout de 40 s
+  por chamada downstream; jobs que não couberem no orçamento voltam à fila;
 - catálogo não secreto da VTurb cacheado por Cliente por 6 h e requests do
   provedor limitados a 8 s, evitando um `/players/list` por player;
 - retry 5 min, 15 min, 60 min e 6 h para falhas transitórias;
@@ -128,6 +128,12 @@ Sequência:
 
 O pool de PostgREST não deve consumir todas as conexões diretas; é necessário
 reservar capacidade para Auth, migrations, cron e operação.
+
+O lote de 12 é capacidade inicial, não autoscaling. Antes de ultrapassar o
+volume validado no teste de 2x, medir a taxa de chegada e drenagem de
+`sync_jobs`. Se a idade crescer continuamente, particionar consumidores por
+Cliente/fonte ou mover o processamento para workers escaláveis; não aumentar
+concorrência externa sem validar limites Meta/VTurb e headroom do banco.
 
 ## Retenção
 
