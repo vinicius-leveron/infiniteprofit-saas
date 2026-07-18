@@ -238,6 +238,13 @@ export function workerJobTimeoutMs(args: {
   );
 }
 
+export function hasWorkerJobBudget(
+  timeoutMs: number,
+  minimumBudgetMs = 12_000,
+) {
+  return timeoutMs >= minimumBudgetMs;
+}
+
 export function retryDelayMinutes(attemptCount: number) {
   if (attemptCount <= 1) return 5;
   if (attemptCount === 2) return 15;

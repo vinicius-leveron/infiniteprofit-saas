@@ -80,6 +80,8 @@ interface DiscoveredMetaAccount {
 interface VturbPlayerMetadata {
   id: string;
   name: string | null;
+  duration?: number | null;
+  pitch_time?: number | null;
 }
 
 function countBindings(
@@ -404,6 +406,7 @@ export default function ClientIntegrations() {
       if (players.length === 0) {
         throw new Error("A VTurb não retornou players para esta chave.");
       }
+      const metadataSyncedAt = new Date().toISOString();
       const { error: upsertError } = await supabase
         .from("workspace_vturb_players")
         .upsert(
@@ -412,6 +415,9 @@ export default function ClientIntegrations() {
             created_by: user.id,
             player_id: player.id,
             label: player.name,
+            video_duration: player.duration ?? null,
+            pitch_time: player.pitch_time ?? null,
+            metadata_synced_at: metadataSyncedAt,
           })),
           { onConflict: "workspace_id,player_id" },
         );

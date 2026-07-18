@@ -61,6 +61,8 @@ em produção.
 - O worker roda lote de 4, tem orçamento total de 50 s e limita cada chamada
   downstream a 40 s. Se a lease estiver ocupada, o cron seguinte termina como
   `lease_held` sem tocar na fila.
+- Metadados de catálogo VTurb ficam cacheados no Cliente por 6 h. Requests do
+  provedor expiram em 8 s e erros internos nunca contam como falso sucesso.
 - Scheduler cria no máximo 5.000 jobs por execução e grava em transações de até
   500 itens.
 - Leituras operacionais têm deadline de 8 s no cliente e `statement_timeout` no
@@ -154,6 +156,51 @@ Executar degraus de 1, 5, 10 e 20 VUs, cinco minutos por degrau. Depois executar
 
 Produção aceita somente canário leve, exige
 `LOAD_TEST_PRODUCTION_ACK=nztnctrkmfrgclrnflfa` e limita 10 VUs/120 s.
+
+Sem credenciais de QA, o modo `public_canary` mede somente Auth e o RPC de
+saúde sem dados:
+
+```bash
+LOAD_TEST_MODE=public_canary \
+LOAD_TEST_SUPABASE_URL=... \
+LOAD_TEST_ANON_KEY=... \
+LOAD_TEST_VUS=5 \
+LOAD_TEST_DURATION_SECONDS=60 \
+LOAD_TEST_PRODUCTION_ACK=nztnctrkmfrgclrnflfa \
+npm run ops:load
+```
+
+Esse modo é um gate leve de contenção e não substitui a carga autenticada de
+2x em staging.
+
+## Contratos RLS
+
+O gate principal continua sendo `npm run ops:verify-rls` com logins QA
+independentes. Quando as senhas não estiverem disponíveis, a política do banco
+pode ser validada em transações somente leitura, com claims reais e sem criar
+usuários:
+
+```bash
+SUPABASE_PROJECT_REF=... \
+RLS_MANAGEMENT_SESSION_ACK=... \
+npm run ops:verify-rls-db
+```
+
+O gate alternativo verifica Member e Admin efetivos, redaction de webhooks,
+bloqueio de `sync_token` e negação de leitura direta das tabelas de
+credenciais. Ele não substitui o teste do fluxo de login.
+
+## Recuperação da DLQ VTurb
+
+Auditar primeiro:
+
+```bash
+SUPABASE_PROJECT_REF=... npm run ops:recover-vturb-dlq
+```
+
+Para executar, informar `VTURB_DLQ_RECOVERY_ACK` e `--execute`. O comando
+recusa erros desconhecidos e bindings órfãos, resolve janelas superseded e
+distribui as demais em grupos de quatro a cada dois minutos.
 
 ## Abertura gradual
 

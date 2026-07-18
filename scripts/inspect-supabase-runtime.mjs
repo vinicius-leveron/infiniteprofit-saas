@@ -170,6 +170,47 @@ const databaseCheckDefinitions = [
     `,
   ],
   [
+    "sync_queue_pressure",
+    `
+      select
+        count(*) filter (where status = 'queued') as queued_jobs,
+        count(*) filter (
+          where status = 'queued'
+            and available_at <= pg_catalog.now()
+        ) as ready_jobs,
+        count(*) filter (where status = 'running') as running_jobs,
+        count(*) filter (where status = 'dead_letter') as dead_letter_jobs,
+        min(available_at) filter (
+          where status = 'queued'
+        ) as next_available_at,
+        extract(
+          epoch from pg_catalog.max(
+            pg_catalog.now() - available_at
+          ) filter (
+            where status = 'queued'
+              and available_at <= pg_catalog.now()
+          )
+        )::integer as oldest_ready_age_seconds
+      from public.sync_jobs
+    `,
+  ],
+  [
+    "recent_sync_job_errors",
+    `
+      select
+        source,
+        pg_catalog.left(last_error, 300) as error,
+        count(*) as jobs,
+        max(updated_at) as latest_at
+      from public.sync_jobs
+      where last_error is not null
+        and updated_at >= pg_catalog.now() - interval '30 minutes'
+      group by source, pg_catalog.left(last_error, 300)
+      order by latest_at desc
+      limit 20
+    `,
+  ],
+  [
     "critical_indexes",
     `
       select schemaname, tablename, indexname

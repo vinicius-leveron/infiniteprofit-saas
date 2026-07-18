@@ -4,6 +4,7 @@ import {
   buildSyncJobDedupeKey,
   buildSyncWindows,
   failureRetryPlan,
+  hasWorkerJobBudget,
   parseSyncWorkerOptions,
   shouldStopWorkerLoop,
   sourceSyncStaleMinutes,
@@ -126,5 +127,7 @@ describe("sync jobs core", () => {
         maxRuntimeMs: 50_000,
       }),
     ).toBe(5_000);
+    expect(hasWorkerJobBudget(11_999)).toBe(false);
+    expect(hasWorkerJobBudget(12_000)).toBe(true);
   });
 });

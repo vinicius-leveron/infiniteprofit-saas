@@ -10,6 +10,7 @@ const corsHeaders = {
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
+const VTURB_REQUEST_TIMEOUT_MS = 10_000;
 type SupabaseClientAny = ReturnType<typeof createClient<any, "public", any>>;
 
 /**
@@ -50,7 +51,7 @@ Deno.serve(async (req) => {
     const past = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
     const startDate = `${past.toISOString().slice(0, 10)} 00:00:00 -0300`;
 
-    const response = await fetch("https://analytics.vturb.net/conversions/active_platforms", {
+    const response = await fetchWithTimeout("https://analytics.vturb.net/conversions/active_platforms", {
       method: "POST",
       headers: {
         "X-Api-Token": apiKey,
@@ -81,7 +82,7 @@ Deno.serve(async (req) => {
 });
 
 async function fetchPlayers(apiKey: string) {
-  const response = await fetch("https://analytics.vturb.net/players/list", {
+  const response = await fetchWithTimeout("https://analytics.vturb.net/players/list", {
     method: "GET",
     headers: {
       "X-Api-Token": apiKey,
@@ -107,6 +108,24 @@ async function fetchPlayers(apiKey: string) {
     pitch_time: typeof player?.pitch_time === "number" ? player.pitch_time : null,
     created_at: typeof player?.created_at === "string" ? player.created_at : null,
   })).filter((player) => player.id);
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit) {
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    VTURB_REQUEST_TIMEOUT_MS,
+  );
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error("A VTurb não respondeu em 10 segundos.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function resolveUser(authHeader: string | null) {

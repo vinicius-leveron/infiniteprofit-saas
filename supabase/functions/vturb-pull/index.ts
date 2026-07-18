@@ -5,6 +5,7 @@ import { buildAutomationHeaders, isAutomationRequest } from "../_shared/automati
 import {
   filterSchedulableVturbProjects,
   hasCompleteUsableVturbSessionStats,
+  hasFreshVturbMetadata,
   normalizeVturbTrafficOriginRows,
   orderVturbPlayersForSync,
   parseVturbBatchOptions,
@@ -31,6 +32,8 @@ const VTURB_MAX_RETRY_AFTER_MS = 60000;
 const VTURB_RUNNING_SYNC_TIMEOUT_MS = 5 * 60 * 1000;
 const VTURB_NO_ACCESS_BACKOFF_MS = 60 * 60 * 1000;
 const VTURB_AUTOMATIC_MIN_PROJECT_BUDGET_MS = 20 * 1000;
+const VTURB_REQUEST_TIMEOUT_MS = 8 * 1000;
+const VTURB_PROVIDER_STOP_BUFFER_MS = 5 * 1000;
 
 type Caller =
   | { kind: "service" }
@@ -54,6 +57,9 @@ type PlayerBinding = {
   player_id: string;
   label: string | null;
   last_synced_at?: string | null;
+  video_duration?: number | null;
+  pitch_time?: number | null;
+  metadata_synced_at?: string | null;
 };
 
 type VturbPath =
@@ -70,6 +76,7 @@ type PlayerMetadata = {
 type VturbRuntime = {
   lastRequestAt: number;
   nextRequestAt: number;
+  deadlineAt: number;
 };
 
 Deno.serve(async (req) => {
@@ -206,9 +213,30 @@ Deno.serve(async (req) => {
         let projectSyncedAt: string | null = null;
         let stoppedReason: string | null = null;
         let playersAttempted = 0;
-        const vturbRuntime = createVturbRuntime();
-        const playerMetadata = await loadPlayerMetadataMap(apiKey, vturbRuntime);
-        await refreshPlayerLabels(sb, players, playerMetadata);
+        const vturbRuntime = createVturbRuntime(
+          invocationStartedAt +
+            executionOptions.maxRuntimeMs -
+            VTURB_PROVIDER_STOP_BUFFER_MS,
+        );
+        let playerMetadata = cachedPlayerMetadataMap(players);
+        if (!hasFreshVturbMetadata(players)) {
+          const refreshedMetadata = await loadPlayerMetadataMap(
+            apiKey,
+            vturbRuntime,
+          );
+          if (refreshedMetadata.size > 0) {
+            await refreshWorkspacePlayerMetadata(
+              sb,
+              project.workspace_id,
+              refreshedMetadata,
+            );
+            playerMetadata = mergePlayerMetadata(
+              playerMetadata,
+              refreshedMetadata,
+            );
+            refreshPlayerLabelsInMemory(players, refreshedMetadata);
+          }
+        }
 
         for (const player of playerBatch.players) {
           if (
@@ -519,7 +547,7 @@ async function vturbPost(runtime: VturbRuntime, apiKey: string, path: VturbPath,
   for (let attempt = 0; attempt <= VTURB_MAX_RATE_LIMIT_RETRIES; attempt += 1) {
     await waitForVturbSlot(runtime);
 
-    const response = await fetch(`${VTURB_BASE}${path}`, {
+    const response = await vturbFetch(runtime, `${VTURB_BASE}${path}`, {
       method: "POST",
       headers: {
         "X-Api-Token": apiKey,
@@ -586,32 +614,23 @@ async function loadPlayerMetadataMap(apiKey: string, runtime: VturbRuntime) {
   }
 }
 
-async function refreshPlayerLabels(
+async function refreshWorkspacePlayerMetadata(
   sb: ReturnType<typeof createClient>,
-  players: PlayerBinding[],
+  workspaceId: string,
   playerMetadata: Map<string, PlayerMetadata>,
 ) {
-  for (const player of players) {
-    const name = playerMetadata.get(player.player_id)?.name;
-    if (!name) continue;
-
-    const currentLabel = stringOrNull(player.label);
-    if (currentLabel && currentLabel !== player.player_id) continue;
-
-    const { error } = await sb
-      .from("workspace_vturb_players")
-      .update({ label: name })
-      .eq("id", player.id);
-
-    if (error) {
-      console.warn("vturb player label update failed", {
-        player_id: player.player_id,
-        error: error.message,
-      });
-      continue;
-    }
-
-    player.label = name;
+  const payload = [...playerMetadata.entries()].map(([id, metadata]) => ({
+    id,
+    name: metadata.name,
+    duration: metadata.duration,
+    pitch_time: metadata.pitchTime,
+  }));
+  const { error } = await sb.rpc("refresh_workspace_vturb_metadata", {
+    _workspace_id: workspaceId,
+    _players: payload,
+  });
+  if (error) {
+    throw new Error(`Falha ao salvar catálogo VTurb: ${error.message}`);
   }
 }
 
@@ -619,7 +638,7 @@ async function vturbGetPlayers(runtime: VturbRuntime, apiKey: string): Promise<u
   for (let attempt = 0; attempt <= VTURB_MAX_RATE_LIMIT_RETRIES; attempt += 1) {
     await waitForVturbSlot(runtime);
 
-    const response = await fetch(`${VTURB_BASE}/players/list`, {
+    const response = await vturbFetch(runtime, `${VTURB_BASE}/players/list`, {
       method: "GET",
       headers: {
         "X-Api-Token": apiKey,
@@ -774,7 +793,9 @@ async function loadProjectPlayers(
 
   const { data: playerRows, error: playersError } = await sb
     .from("workspace_vturb_players")
-    .select("id, player_id, label, last_synced_at")
+    .select(
+      "id, player_id, label, last_synced_at, video_duration, pitch_time, metadata_synced_at",
+    )
     .eq("workspace_id", project.workspace_id)
     .in("id", ids);
 
@@ -947,10 +968,11 @@ function positiveNumber(value: unknown) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
-function createVturbRuntime(): VturbRuntime {
+function createVturbRuntime(deadlineAt: number): VturbRuntime {
   return {
     lastRequestAt: 0,
     nextRequestAt: 0,
+    deadlineAt,
   };
 }
 
@@ -967,10 +989,78 @@ async function waitForVturbSlot(runtime: VturbRuntime) {
   );
 
   if (waitMs > 0) {
+    if (now + waitMs >= runtime.deadlineAt) {
+      throw new Error(
+        "VTurb adiou a requisição porque o orçamento de tempo foi atingido.",
+      );
+    }
     await sleep(waitMs);
   }
 
   runtime.lastRequestAt = Date.now();
+}
+
+async function vturbFetch(
+  runtime: VturbRuntime,
+  url: string,
+  init: RequestInit,
+) {
+  const remainingMs = runtime.deadlineAt - Date.now();
+  if (remainingMs <= 1_000) {
+    throw new Error(
+      "VTurb adiou a requisição porque o orçamento de tempo foi atingido.",
+    );
+  }
+
+  const timeoutMs = Math.min(VTURB_REQUEST_TIMEOUT_MS, remainingMs);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(
+        `VTurb não respondeu em ${Math.round(timeoutMs)}ms.`,
+      );
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function cachedPlayerMetadataMap(players: PlayerBinding[]) {
+  return new Map<string, PlayerMetadata>(
+    players.map((player) => [
+      player.player_id,
+      {
+        name: stringOrNull(player.label),
+        duration: positiveNumber(player.video_duration),
+        pitchTime: positiveNumber(player.pitch_time),
+      },
+    ]),
+  );
+}
+
+function mergePlayerMetadata(
+  cached: Map<string, PlayerMetadata>,
+  refreshed: Map<string, PlayerMetadata>,
+) {
+  return new Map([...cached, ...refreshed]);
+}
+
+function refreshPlayerLabelsInMemory(
+  players: PlayerBinding[],
+  metadata: Map<string, PlayerMetadata>,
+) {
+  for (const player of players) {
+    const name = metadata.get(player.player_id)?.name;
+    if (!name) continue;
+    const currentLabel = stringOrNull(player.label);
+    if (!currentLabel || currentLabel === player.player_id) {
+      player.label = name;
+    }
+  }
 }
 
 async function sleep(ms: number) {

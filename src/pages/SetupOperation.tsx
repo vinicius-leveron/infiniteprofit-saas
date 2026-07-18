@@ -66,6 +66,8 @@ type MetaTestResult = {
 type VturbDetectedPlayer = {
   id: string;
   name?: string | null;
+  duration?: number | null;
+  pitch_time?: number | null;
 };
 
 const STEPS: Array<{ id: StepId; label: string }> = [
@@ -475,20 +477,27 @@ export default function SetupOperation() {
       }
 
       if (playerIds.length > 0) {
-        const vturbNamesById = new Map(
+        const metadataSyncedAt = new Date().toISOString();
+        const vturbMetadataById = new Map(
           (vturbTestResult?.players ?? [])
-            .map((player) => [player.id.trim(), player.name?.trim() ?? ""] as const)
-            .filter(([id, playerName]) => id && playerName),
+            .map((player) => [player.id.trim(), player] as const)
+            .filter(([id]) => id),
         );
 
         for (const playerId of playerIds) {
-          const playerLabel = vturbNamesById.get(playerId) || playerId;
+          const playerMetadata = vturbMetadataById.get(playerId);
+          const playerLabel = playerMetadata?.name?.trim() || playerId;
           const { data: player, error: playerError } = await supabase
             .from("workspace_vturb_players")
             .upsert({
               workspace_id: client.id,
               player_id: playerId,
               label: playerLabel,
+              video_duration: playerMetadata?.duration ?? null,
+              pitch_time: playerMetadata?.pitch_time ?? null,
+              metadata_synced_at: playerMetadata
+                ? metadataSyncedAt
+                : null,
               created_by: user.id,
             }, { onConflict: "workspace_id,player_id" })
             .select("id")

@@ -5,6 +5,7 @@ export const VTURB_MAX_RUNTIME_MS = 90_000;
 export const VTURB_RUNTIME_STOP_BUFFER_MS = 10_000;
 export const VTURB_DEFAULT_MAX_PLAYERS = 50;
 export const VTURB_HARD_MAX_PLAYERS = 200;
+export const VTURB_METADATA_TTL_MS = 6 * 60 * 60 * 1000;
 
 type SortableVturbPlayer = {
   id: string;
@@ -15,6 +16,10 @@ type SortableVturbPlayer = {
 type SchedulableVturbProject = {
   id: string;
   workspace_id: string;
+};
+
+type CachedVturbMetadata = {
+  metadata_synced_at?: string | null;
 };
 
 export type VturbBatchOptions = {
@@ -164,6 +169,57 @@ export function selectVturbPlayersForSync<T>(
     selectionMode: "oldest_first",
     maxPlayers: options.executionOptions.maxPlayers,
   };
+}
+
+export function hasFreshVturbMetadata(
+  players: CachedVturbMetadata[],
+  nowMs = Date.now(),
+  ttlMs = VTURB_METADATA_TTL_MS,
+) {
+  if (players.length === 0) return false;
+  return players.every((player) => {
+    const syncedAt = Date.parse(player.metadata_synced_at ?? "");
+    return Number.isFinite(syncedAt) &&
+      syncedAt <= nowMs &&
+      nowMs - syncedAt <= ttlMs;
+  });
+}
+
+export function vturbResultError(payload: unknown) {
+  if (!payload || typeof payload !== "object") {
+    return "VTurb retornou uma resposta inválida.";
+  }
+  const rows = Array.isArray((payload as { results?: unknown }).results)
+    ? (payload as { results: unknown[] }).results
+    : [];
+  const errors = rows
+    .filter((row): row is Record<string, unknown> =>
+      Boolean(row && typeof row === "object" && "error" in row)
+    )
+    .map((row) => String(row.error ?? "").trim())
+    .filter(Boolean);
+  if (errors.length > 0) return errors.slice(0, 3).join(" | ");
+
+  const hasCompletedWork = rows.some((row) =>
+    Boolean(
+      row &&
+        typeof row === "object" &&
+        (
+          typeof (row as Record<string, unknown>).inserted === "number" ||
+          (row as Record<string, unknown>).batch
+        ),
+    )
+  );
+  const skips = rows
+    .filter((row): row is Record<string, unknown> =>
+      Boolean(row && typeof row === "object" && "skipped" in row)
+    )
+    .map((row) => String(row.skipped ?? "").trim())
+    .filter(Boolean);
+  if (!hasCompletedWork && skips.length > 0) {
+    return skips.slice(0, 3).join(" | ");
+  }
+  return null;
 }
 
 export function shouldStopVturbPlayerLoop(args: {

@@ -11,11 +11,13 @@ import {
   dateRangeToDates,
   daysForDateRange,
   failureRetryPlan,
+  hasWorkerJobBudget,
   parseSyncWorkerOptions,
   shouldStopWorkerLoop,
   workerJobTimeoutMs,
   type ClaimedSyncJob,
 } from "../sync-jobs/core.ts";
+import { vturbResultError } from "../vturb-pull/core.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -109,16 +111,26 @@ Deno.serve(async (req) => {
         continue;
       }
 
+      const jobTimeoutMs = workerJobTimeoutMs({
+        startedAtMs,
+        nowMs: Date.now(),
+        maxRuntimeMs: options.maxRuntimeMs,
+      });
+      if (!hasWorkerJobBudget(jobTimeoutMs)) {
+        await requeueClaimedJob(
+          sb,
+          job,
+          "Worker adiou o job por orçamento downstream insuficiente.",
+        );
+        results.push({ job_id: job.id, skipped: "downstream_budget" });
+        continue;
+      }
+
       try {
         const leaseRenewed = await renewWorkerLease(sb, workerName);
         if (!leaseRenewed) {
           throw new Error("Worker perdeu a lease exclusiva antes do job.");
         }
-        const jobTimeoutMs = workerJobTimeoutMs({
-          startedAtMs,
-          nowMs: Date.now(),
-          maxRuntimeMs: options.maxRuntimeMs,
-        });
         const result = await processJob(sb, job, traceId, jobTimeoutMs);
         await markSucceeded(sb, job.id, job.payload ?? {}, result);
         results.push({
@@ -237,6 +249,8 @@ async function processJob(
       traceId,
       timeoutMs,
     );
+    const sourceError = vturbResultError(result);
+    if (sourceError) throw new Error(sourceError);
     const aggregate = await enqueueAggregateForJob(
       sb,
       job,
@@ -490,6 +504,7 @@ async function requeueClaimedJob(
     .from("sync_jobs")
     .update({
       status: "queued",
+      attempt_count: Math.max(0, job.attempt_count - 1),
       available_at: new Date(Date.now() + 60_000).toISOString(),
       locked_at: null,
       locked_by: null,

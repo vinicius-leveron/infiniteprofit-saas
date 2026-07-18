@@ -2,11 +2,21 @@
 import process from "node:process";
 
 const PRODUCTION_PROJECT_REF = "nztnctrkmfrgclrnflfa";
+const mode = String(
+  process.env.LOAD_TEST_MODE ?? "authenticated",
+).trim().toLowerCase();
+if (!["authenticated", "public_canary"].includes(mode)) {
+  throw new Error(
+    "LOAD_TEST_MODE must be authenticated or public_canary.",
+  );
+}
 const url = required("LOAD_TEST_SUPABASE_URL").replace(/\/$/, "");
 const anonKey = required("LOAD_TEST_ANON_KEY");
-const email = required("LOAD_TEST_EMAIL");
-const password = required("LOAD_TEST_PASSWORD");
-const workspaceId = required("LOAD_TEST_WORKSPACE_ID");
+const email = mode === "authenticated" ? required("LOAD_TEST_EMAIL") : null;
+const password =
+  mode === "authenticated" ? required("LOAD_TEST_PASSWORD") : null;
+const workspaceId =
+  mode === "authenticated" ? required("LOAD_TEST_WORKSPACE_ID") : null;
 const virtualUsers = boundedInt("LOAD_TEST_VUS", 5, 1, 50);
 const durationSeconds = boundedInt("LOAD_TEST_DURATION_SECONDS", 60, 10, 900);
 const thinkMs = boundedInt("LOAD_TEST_THINK_MS", 500, 50, 10_000);
@@ -46,20 +56,25 @@ await Promise.all(
 const report = {
   target: new URL(url).host,
   production: productionTarget,
+  mode,
   virtual_users: virtualUsers,
   configured_duration_seconds: durationSeconds,
   actual_duration_seconds: round((Date.now() - startedAt) / 1_000),
   think_ms: thinkMs,
   scenarios: {
     auth: summarize(samples.auth),
-    rest: summarize(samples.rest),
+    ...(mode === "authenticated"
+      ? { rest: summarize(samples.rest) }
+      : {}),
     health_rpc: summarize(samples.healthRpc),
   },
 };
 
 const failures = [];
 gate("auth", report.scenarios.auth, threshold("LOAD_TEST_AUTH_P95_MS", 2_000));
-gate("rest", report.scenarios.rest, threshold("LOAD_TEST_REST_P95_MS", 800));
+if (mode === "authenticated") {
+  gate("rest", report.scenarios.rest, threshold("LOAD_TEST_REST_P95_MS", 800));
+}
 gate(
   "health_rpc",
   report.scenarios.health_rpc,
@@ -71,6 +86,10 @@ if (failures.length > 0) process.exitCode = 1;
 
 async function runVirtualUser(index) {
   await delay(index * Math.min(thinkMs, 250));
+  if (mode === "public_canary") {
+    return await runPublicCanaryVirtualUser();
+  }
+
   const authResult = await timedRequest(
     "auth",
     `${url}/auth/v1/token?grant_type=password`,
@@ -113,6 +132,34 @@ async function runVirtualUser(index) {
           method: "POST",
           headers: { ...headers, "Content-Type": "application/json" },
           body: JSON.stringify({ _workspace_id: workspaceId }),
+        },
+      );
+    }
+    iteration += 1;
+    await delay(thinkMs);
+  }
+}
+
+async function runPublicCanaryVirtualUser() {
+  let iteration = 0;
+  while (Date.now() < deadline) {
+    if (iteration % 2 === 0) {
+      await timedRequest(
+        "auth",
+        `${url}/auth/v1/health`,
+        { headers: { apikey: anonKey } },
+      );
+    } else {
+      await timedRequest(
+        "healthRpc",
+        `${url}/rest/v1/rpc/backend_healthcheck`,
+        {
+          method: "POST",
+          headers: {
+            apikey: anonKey,
+            "Content-Type": "application/json",
+          },
+          body: "{}",
         },
       );
     }

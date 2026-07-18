@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   filterSchedulableVturbProjects,
   hasCompleteUsableVturbSessionStats,
+  hasFreshVturbMetadata,
   hasUsableVturbSessionStats,
   hasUsableVturbSessionStatsPayload,
   normalizeVturbTrafficOriginRows,
@@ -12,6 +13,7 @@ import {
   selectVturbPlayersForSync,
   shouldStopVturbPlayerLoop,
   summarizeVturbPlayerResults,
+  vturbResultError,
   VTURB_DEFAULT_MAX_PLAYERS,
   VTURB_DEFAULT_MAX_RUNTIME_MS,
   VTURB_DEFAULT_PLAYER_BATCH_SIZE,
@@ -222,5 +224,41 @@ describe("vturb pull batching", () => {
     expect(summary.partialErrors).toBe(0);
     expect(summary.errorMessage).toContain("company does not have access");
     expect(summary.errorMessage).toContain("rate limited");
+  });
+
+  it("reuses fresh catalog metadata and refreshes stale entries", () => {
+    const now = Date.parse("2026-07-18T01:00:00Z");
+    expect(
+      hasFreshVturbMetadata(
+        [
+          { metadata_synced_at: "2026-07-17T23:00:00Z" },
+          { metadata_synced_at: "2026-07-17T22:00:00Z" },
+        ],
+        now,
+      ),
+    ).toBe(true);
+    expect(
+      hasFreshVturbMetadata(
+        [{ metadata_synced_at: "2026-07-17T18:00:00Z" }],
+        now,
+      ),
+    ).toBe(false);
+  });
+
+  it("turns nested provider errors and pure skips into worker retries", () => {
+    expect(
+      vturbResultError({ results: [{ error: "rate limited" }] }),
+    ).toBe("rate limited");
+    expect(
+      vturbResultError({ results: [{ skipped: "sync já em andamento" }] }),
+    ).toBe("sync já em andamento");
+    expect(
+      vturbResultError({
+        results: [
+          { player_id: "p1", inserted: 3 },
+          { batch: { has_more: false } },
+        ],
+      }),
+    ).toBeNull();
   });
 });

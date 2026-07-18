@@ -62,6 +62,8 @@ só aparecem nos contratos seguros para Owner/Admin. O gate
   sobreposição entre invocações do cron;
 - lote padrão de 4 jobs, orçamento de 50 s por worker e timeout de 40 s por
   chamada downstream;
+- catálogo não secreto da VTurb cacheado por Cliente por 6 h e requests do
+  provedor limitados a 8 s, evitando um `/players/list` por player;
 - retry 5 min, 15 min, 60 min e 6 h;
 - dead letter após tentativas;
 - recovery de locks antigos;
