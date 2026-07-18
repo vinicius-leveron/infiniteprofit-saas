@@ -19,7 +19,9 @@
     "ops:cron": "node scripts/manage-background-cron.mjs",
     "ops:function-logs": "node scripts/inspect-supabase-function-logs.mjs",
     "ops:probe": "node scripts/probe-production.mjs",
+    "ops:readiness": "node scripts/check-backend-readiness.mjs",
     "ops:recover-vturb-dlq": "node scripts/recover-vturb-dead-letters.mjs",
+    "ops:restore-drill": "node scripts/verify-restore-drill.mjs",
     "ops:verify-rls": "node scripts/verify-rls-contracts.mjs",
     "ops:verify-rls-db": "node scripts/verify-rls-management-session.mjs",
     "qa:data": "node scripts/qa-data.mjs",
@@ -36,6 +38,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@aws-sdk/client-cloudwatch": "^3.1090.0",
     "@aws-sdk/client-sqs": "^3.850.0",
     "@hookform/resolvers": "^3.10.0",
     "@radix-ui/react-accordion": "^1.2.11",

@@ -11,6 +11,8 @@ const config = {
   memberPassword: required("RLS_MEMBER_PASSWORD"),
   adminEmail: required("RLS_ADMIN_EMAIL"),
   adminPassword: required("RLS_ADMIN_PASSWORD"),
+  requireInheritedAdmin:
+    process.env.RLS_REQUIRE_INHERITED_ADMIN === "true",
 };
 
 if (config.memberEmail.toLowerCase() === config.adminEmail.toLowerCase()) {
@@ -31,17 +33,32 @@ try {
   await assertDirectSecretReadsFail(admin, "Admin");
   await assertMemberContracts(member);
   await assertAdminContracts(admin);
+  const adminInheritedAccess = config.requireInheritedAdmin
+    ? await assertAdminInheritedAccess(admin)
+    : false;
   console.log(
     JSON.stringify(
       {
+        schema_version: 1,
+        environment:
+          process.env.READINESS_ENVIRONMENT ?? "manual",
         ok: true,
+        completed_at: new Date().toISOString(),
+        artifact_url:
+          process.env.READINESS_ARTIFACT_URL ??
+          "https://github.com/vinicius-leveron/infiniteprofit-saas/actions",
         workspace_id: config.workspaceId,
         project_id: config.projectId,
+        member_redacted: true,
+        admin_inherited_access: adminInheritedAccess,
+        direct_credentials_denied: true,
+        sync_token_denied: true,
         checks: [
           "direct credential tables denied",
           "member webhook tokens redacted",
           "member project sync token denied",
           "admin safe contracts available",
+          ...(adminInheritedAccess ? ["organization admin inherited access"] : []),
         ],
       },
       null,
@@ -173,6 +190,59 @@ async function assertAdminContracts(client) {
       throw new Error("Admin Meta catalog exposed raw access_token.");
     }
   }
+}
+
+async function assertAdminInheritedAccess(client) {
+  const { data: userResult, error: userError } = await client.auth.getUser();
+  if (userError || !userResult.user) {
+    throw new Error(
+      `Admin identity lookup failed: ${userError?.message ?? "no user"}`,
+    );
+  }
+  const userId = userResult.user.id;
+  const [workspaceResult, explicitMembershipResult] = await Promise.all([
+    client
+      .from("workspaces")
+      .select("organization_id")
+      .eq("id", config.workspaceId)
+      .single(),
+    client
+      .from("workspace_members")
+      .select("role")
+      .eq("workspace_id", config.workspaceId)
+      .eq("user_id", userId),
+  ]);
+  assertNoError(workspaceResult, "Inherited Admin workspace read");
+  assertNoError(
+    explicitMembershipResult,
+    "Inherited Admin explicit membership lookup",
+  );
+  if ((explicitMembershipResult.data ?? []).length > 0) {
+    throw new Error(
+      "RLS_ADMIN_EMAIL has an explicit workspace membership; inherited access was not proven.",
+    );
+  }
+
+  const organizationId = workspaceResult.data?.organization_id;
+  const organizationMembershipResult = await client
+    .from("organization_members")
+    .select("role")
+    .eq("organization_id", organizationId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  assertNoError(
+    organizationMembershipResult,
+    "Inherited Admin organization membership",
+  );
+  if (
+    organizationMembershipResult.data?.role !== "owner" &&
+    organizationMembershipResult.data?.role !== "admin"
+  ) {
+    throw new Error(
+      "RLS_ADMIN_EMAIL is not an Organization Owner/Admin for the target Client.",
+    );
+  }
+  return true;
 }
 
 function assertNoError(result, label) {

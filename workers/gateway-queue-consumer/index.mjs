@@ -33,6 +33,12 @@ const DELIVERY_TIMEOUT_MS = boundedInteger(
   1_000,
   60_000,
 );
+const HEARTBEAT_INTERVAL_MS = boundedInteger(
+  process.env.GATEWAY_QUEUE_HEARTBEAT_INTERVAL_MS,
+  60_000,
+  15_000,
+  90_000,
+);
 const WORKER_ID =
   process.env.GATEWAY_QUEUE_WORKER_ID ||
   process.env.RENDER_SERVICE_NAME ||
@@ -42,6 +48,7 @@ const sqs = new SQSClient({ region: AWS_REGION });
 let stopping = false;
 let processed = 0;
 let failed = 0;
+let lastHeartbeatAt = 0;
 
 process.on("SIGTERM", () => {
   stopping = true;
@@ -70,31 +77,41 @@ async function main() {
     batch_size: BATCH_SIZE,
   }));
 
-  while (!stopping) {
-    try {
-      const response = await sqs.send(
-        new ReceiveMessageCommand({
-          QueueUrl: GATEWAY_QUEUE_URL,
-          MaxNumberOfMessages: BATCH_SIZE,
-          WaitTimeSeconds: WAIT_TIME_SECONDS,
-          AttributeNames: ["ApproximateReceiveCount", "SentTimestamp"],
-          MessageAttributeNames: ["All"],
-        }),
-      );
+  await reportHeartbeat("starting", null, true);
+  try {
+    while (!stopping) {
+      try {
+        await reportHeartbeat("healthy");
+        const response = await sqs.send(
+          new ReceiveMessageCommand({
+            QueueUrl: GATEWAY_QUEUE_URL,
+            MaxNumberOfMessages: BATCH_SIZE,
+            WaitTimeSeconds: WAIT_TIME_SECONDS,
+            AttributeNames: ["ApproximateReceiveCount", "SentTimestamp"],
+            MessageAttributeNames: ["All"],
+          }),
+        );
 
-      for (const message of response.Messages ?? []) {
-        if (stopping) break;
-        await processMessage(message);
+        for (const message of response.Messages ?? []) {
+          if (stopping) break;
+          await processMessage(message);
+          await reportHeartbeat("healthy");
+        }
+      } catch (error) {
+        failed += 1;
+        const message =
+          error instanceof Error ? error.message : String(error);
+        console.error(JSON.stringify({
+          event: "gateway_queue_receive_failed",
+          worker_id: WORKER_ID,
+          error: message,
+        }));
+        await reportHeartbeat("error", message, true);
+        await sleep(5_000);
       }
-    } catch (error) {
-      failed += 1;
-      console.error(JSON.stringify({
-        event: "gateway_queue_receive_failed",
-        worker_id: WORKER_ID,
-        error: error instanceof Error ? error.message : String(error),
-      }));
-      await sleep(5_000);
     }
+  } finally {
+    await reportHeartbeat("stopping", null, true);
   }
 }
 
@@ -196,6 +213,55 @@ async function postponeMessage(message, visibilityTimeout) {
       VisibilityTimeout: visibilityTimeout,
     }),
   );
+}
+
+async function reportHeartbeat(status, lastError = null, force = false) {
+  const now = Date.now();
+  if (!force && now - lastHeartbeatAt < HEARTBEAT_INTERVAL_MS) return;
+  lastHeartbeatAt = now;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5_000);
+  try {
+    const response = await fetch(
+      `${SUPABASE_URL.replace(/\/$/, "")}/functions/v1/gateway-worker-heartbeat`,
+      {
+        method: "POST",
+        headers: {
+          apikey: AUTOMATION_KEY,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          worker_id: WORKER_ID,
+          status,
+          processed_count: processed,
+          failed_count: failed,
+          last_error: lastError,
+          metadata: {
+            region: AWS_REGION,
+            batch_size: BATCH_SIZE,
+            wait_time_seconds: WAIT_TIME_SECONDS,
+            delivery_timeout_ms: DELIVERY_TIMEOUT_MS,
+          },
+        }),
+        signal: controller.signal,
+      },
+    );
+    if (!response.ok) {
+      console.warn(JSON.stringify({
+        event: "gateway_queue_heartbeat_failed",
+        worker_id: WORKER_ID,
+        status: response.status,
+      }));
+    }
+  } catch (error) {
+    console.warn(JSON.stringify({
+      event: "gateway_queue_heartbeat_failed",
+      worker_id: WORKER_ID,
+      error: error instanceof Error ? error.name : "request_failed",
+    }));
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function requiredEnv(name) {

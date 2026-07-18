@@ -30,6 +30,9 @@ durabilidade, retry e isolamento de carga.
   `project_id, source, event_type, external_id`.
 - O consumidor só remove a mensagem depois de receber resposta 2xx do
   processamento.
+- O consumidor envia heartbeat service-only a cada 60 s. O gate de abertura
+  exige status `starting|healthy` com idade máxima de 120 s; fila vazia sem
+  consumer vivo não conta como saudável.
 - Erros recebem backoff de visibilidade e, após oito tentativas, chegam à DLQ.
 - Mensagens ficam retidas por 14 dias e são criptografadas com SSE gerenciada.
 
@@ -76,6 +79,7 @@ receber, alterar visibilidade e remover.
    `202 -> SQS -> raw_events -> sync_jobs -> daily_metrics`.
 7. Ativar a variável `GATEWAY_QUEUE_URL` no Supabase.
 8. Monitorar idade, profundidade e DLQ durante 30 minutos.
+9. Confirmar heartbeat recente em `gateway_worker_heartbeats`.
 
 ## Rollback
 

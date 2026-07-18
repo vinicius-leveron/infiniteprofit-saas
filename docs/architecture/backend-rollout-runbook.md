@@ -19,6 +19,7 @@ Gateways
   -> webhook-gateway
   -> SQS
   -> gateway-queue-consumer
+  -> gateway-worker-heartbeat
   -> raw_events
   -> sync_jobs
   -> daily_metrics
@@ -230,6 +231,18 @@ Entre lotes, observar pelo menos 24 h. Interromper imediatamente se:
 - conexões superarem 70% sustentado;
 - CPU superar 70% ou I/O ficar saturado por 15 min.
 
+Antes de cada lote, executar o gate canônico:
+
+```bash
+npm run ops:readiness -- --enforce
+```
+
+O gate combina runtime, 24 h de canários, fila externa, staging autenticado,
+RLS, onboarding e restore drill. Evidência ausente resulta em `hold`; nenhum
+operador precisa interpretar manualmente vários outputs para decidir. Os
+contratos e comandos estão em
+`docs/architecture/backend-readiness-evidence.md`.
+
 ## Backup e recuperação
 
 Metas:
@@ -246,6 +259,11 @@ Trimestralmente:
 - reprocessar uma mensagem da DLQ;
 - validar idempotência;
 - registrar tempo real de recuperação.
+
+Use `npm run ops:restore-drill -- capture-baseline` no ponto de backup e
+`npm run ops:restore-drill -- verify` somente contra o projeto restaurado
+isolado. O verificador recusa explicitamente o project ref de produção e testa
+idempotência em transação revertida.
 
 ## Incidente 500/504
 

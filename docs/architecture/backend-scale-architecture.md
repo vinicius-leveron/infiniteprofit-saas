@@ -87,6 +87,7 @@ Postgres.
 | PostgREST operacional | 99,9%; p95 abaixo de 800 ms |
 | Webhook ingress | 99,99%; ACK p95 abaixo de 500 ms |
 | Fila de checkout | idade máxima normal abaixo de 60 s |
+| Consumer de checkout | heartbeat abaixo de 120 s |
 | Read model de saúde | p95 abaixo de 800 ms |
 | Sync | nenhum job `running` além do lease |
 
@@ -137,7 +138,8 @@ O prune é diário, em lotes, para evitar transações longas.
 
 ## Rollout
 
-1. aumentar compute e aguardar todos os serviços saudáveis;
+1. confirmar serviços saudáveis e aumentar compute somente quando carga,
+   conexões, CPU ou I/O provarem necessidade e houver aprovação financeira;
 2. canário com três amostras verdes;
 3. aplicar os índices de `supabase/online-migrations`, um por chamada e fora da
    transação implícita do `db push`;
@@ -159,6 +161,11 @@ secrets, usuários QA com papéis reais e environment approval.
 O teste de carga é executado por `npm run ops:load`. Ele exige credenciais de QA,
 falha pelos SLOs e recusa produção sem confirmação explícita. Em produção existe
 um limite rígido de 10 VUs por 120 segundos; testes maiores pertencem ao staging.
+
+O workflow `backend-staging-readiness.yml` materializa esse gate em ambiente
+isolado: deploy do commit, RLS herdado, jornada de onboarding, rampas e carga
+autenticada de 2x por 15 minutos. `npm run ops:readiness -- --enforce` é a
+decisão final de abertura e trata qualquer evidência ausente como `hold`.
 
 ## Rollback
 

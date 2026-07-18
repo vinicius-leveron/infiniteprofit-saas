@@ -54,6 +54,7 @@ await Promise.all(
 );
 
 const report = {
+  schema_version: 1,
   target: new URL(url).host,
   production: productionTarget,
   mode,

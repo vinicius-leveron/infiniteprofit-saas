@@ -82,6 +82,10 @@ Resources:
                 Resource:
                   - !GetAtt GatewayWebhookQueue.Arn
                   - !GetAtt GatewayWebhookDeadLetterQueue.Arn
+              - Effect: Allow
+                Action:
+                  - cloudwatch:GetMetricStatistics
+                Resource: "*"
 
   GatewayQueueAlarmTopic:
     Type: AWS::SNS::Topic

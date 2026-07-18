@@ -8,6 +8,7 @@
     "creative-jobs-admin",
     "creative-sync",
     "generate-alerts",
+    "gateway-worker-heartbeat",
     "hubla-csv-import",
     "insights",
     "meta-pull",

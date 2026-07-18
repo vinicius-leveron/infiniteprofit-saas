@@ -76,3 +76,6 @@ verify_jwt = false
 
 [functions.sync-watchdog]
 verify_jwt = false
+
+[functions.gateway-worker-heartbeat]
+verify_jwt = false

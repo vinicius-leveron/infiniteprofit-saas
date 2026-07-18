@@ -103,6 +103,7 @@ jobs:
           supabase functions deploy sync-scheduler --project-ref "$SUPABASE_PROJECT_REF" --use-api
           supabase functions deploy sync-worker --project-ref "$SUPABASE_PROJECT_REF" --use-api
           supabase functions deploy sync-watchdog --project-ref "$SUPABASE_PROJECT_REF" --use-api
+          supabase functions deploy gateway-worker-heartbeat --project-ref "$SUPABASE_PROJECT_REF" --use-api
           supabase functions deploy webhook-gateway --project-ref "$SUPABASE_PROJECT_REF" --use-api
 
       - name: Verify function inventory

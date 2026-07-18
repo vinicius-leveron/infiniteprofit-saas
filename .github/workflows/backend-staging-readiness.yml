@@ -1,0 +1,174 @@
+name: Backend Staging Readiness
+
+on:
+  workflow_dispatch:
+    inputs:
+      staging_project_ref:
+        description: Supabase project ref dedicated to staging.
+        required: true
+        type: string
+      expected_peak_vus:
+        description: Expected initial production peak in concurrent virtual users (1-25).
+        required: true
+        default: "10"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-staging-readiness
+  cancel-in-progress: false
+
+jobs:
+  readiness:
+    name: Deploy, RLS, Onboarding, And Load 2x
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: staging
+    env:
+      PRODUCTION_PROJECT_REF: nztnctrkmfrgclrnflfa
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
+      SUPABASE_PROJECT_REF: ${{ inputs.staging_project_ref }}
+      VITE_SUPABASE_URL: ${{ vars.STAGING_SUPABASE_URL }}
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.STAGING_SUPABASE_PUBLISHABLE_KEY }}
+      VITE_SUPABASE_PROJECT_ID: ${{ inputs.staging_project_ref }}
+      VITE_ENABLE_GOOGLE_AUTH: "false"
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.STAGING_SERVICE_ROLE_KEY }}
+      RLS_WORKSPACE_ID: ${{ vars.STAGING_RLS_WORKSPACE_ID }}
+      RLS_PROJECT_ID: ${{ vars.STAGING_RLS_PROJECT_ID }}
+      RLS_MEMBER_EMAIL: ${{ secrets.STAGING_RLS_MEMBER_EMAIL }}
+      RLS_MEMBER_PASSWORD: ${{ secrets.STAGING_RLS_MEMBER_PASSWORD }}
+      RLS_ADMIN_EMAIL: ${{ secrets.STAGING_RLS_ADMIN_EMAIL }}
+      RLS_ADMIN_PASSWORD: ${{ secrets.STAGING_RLS_ADMIN_PASSWORD }}
+      RLS_REQUIRE_INHERITED_ADMIN: "true"
+      READINESS_ENVIRONMENT: "staging"
+      E2E_MARKET_ONBOARDING: "true"
+      E2E_ONBOARDING_REPORT_PATH: artifacts/staging-onboarding.json
+      READINESS_ARTIFACT_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      LOAD_TEST_SUPABASE_URL: ${{ vars.STAGING_SUPABASE_URL }}
+      LOAD_TEST_ANON_KEY: ${{ vars.STAGING_SUPABASE_PUBLISHABLE_KEY }}
+      LOAD_TEST_EMAIL: ${{ secrets.STAGING_RLS_MEMBER_EMAIL }}
+      LOAD_TEST_PASSWORD: ${{ secrets.STAGING_RLS_MEMBER_PASSWORD }}
+      LOAD_TEST_WORKSPACE_ID: ${{ vars.STAGING_RLS_WORKSPACE_ID }}
+      LOAD_TEST_DURATION_SECONDS: "300"
+      LOAD_TEST_THINK_MS: "500"
+
+    steps:
+      - name: Checkout exact candidate commit
+        uses: actions/checkout@v4
+
+      - name: Validate isolated staging target
+        run: |
+          test -n "$SUPABASE_ACCESS_TOKEN" || (echo "SUPABASE_ACCESS_TOKEN is required" && exit 1)
+          test -n "$SUPABASE_DB_PASSWORD" || (echo "STAGING_DB_PASSWORD is required" && exit 1)
+          test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "STAGING_SERVICE_ROLE_KEY is required" && exit 1)
+          test -n "$VITE_SUPABASE_URL" || (echo "STAGING_SUPABASE_URL is required" && exit 1)
+          test -n "$VITE_SUPABASE_PUBLISHABLE_KEY" || (echo "STAGING_SUPABASE_PUBLISHABLE_KEY is required" && exit 1)
+          test "$SUPABASE_PROJECT_REF" != "$PRODUCTION_PROJECT_REF" || (echo "Staging workflow refuses production" && exit 1)
+          case "$VITE_SUPABASE_URL" in
+            *"$SUPABASE_PROJECT_REF"*) ;;
+            *) echo "STAGING_SUPABASE_URL does not match staging_project_ref"; exit 1 ;;
+          esac
+          case "${{ inputs.expected_peak_vus }}" in
+            ''|*[!0-9]*) echo "expected_peak_vus must be an integer"; exit 1 ;;
+          esac
+          test "${{ inputs.expected_peak_vus }}" -ge 1
+          test "${{ inputs.expected_peak_vus }}" -le 25
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Install Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Candidate quality gates
+        run: |
+          npm run lint -- --quiet
+          npx tsc --noEmit --pretty false
+          npm test
+          npm run build
+          npm run check:migration-safety
+          npm run check:secret-boundaries
+          npm run check:function-manifest
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v2
+        with:
+          version: 2.109.1
+
+      - name: Link isolated staging database
+        run: supabase link --project-ref "$SUPABASE_PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
+
+      - name: Apply schema and online indexes to staging
+        run: |
+          supabase db push --linked
+          for migration in supabase/online-migrations/[0-9]*.sql; do
+            supabase db query --linked --file "$migration" --output json
+          done
+          supabase db query --linked --file supabase/online-migrations/verify_backend_reliability_indexes.sql --output json
+
+      - name: Deploy exact backend function inventory to staging
+        run: |
+          node -e 'const m=require("./supabase/functions/deploy-manifest.json"); for (const name of m.expectedRemoteFunctions) console.log(name)' |
+          while read -r function_name; do
+            supabase functions deploy "$function_name" --project-ref "$SUPABASE_PROJECT_REF" --use-api
+          done
+          npm run check:function-drift
+
+      - name: Verify credential-based RLS and inherited Organization Admin
+        run: |
+          mkdir -p artifacts
+          node scripts/verify-rls-contracts.mjs | tee artifacts/staging-rls.json
+
+      - name: Verify fresh-user onboarding and first funnel
+        run: |
+          npx playwright test e2e/market-onboarding.spec.ts --project=chromium
+
+      - name: Ramp authenticated staging load
+        run: |
+          for vus in 1 5 10 20; do
+            LOAD_TEST_VUS="$vus" node scripts/load-test-backend.mjs | tee "artifacts/load-ramp-${vus}.json"
+          done
+
+      - name: Hold twice-peak authenticated load for 15 minutes
+        env:
+          LOAD_TEST_DURATION_SECONDS: "900"
+        run: |
+          twice_peak=$(( ${{ inputs.expected_peak_vus }} * 2 ))
+          LOAD_TEST_VUS="$twice_peak" node scripts/load-test-backend.mjs | tee artifacts/load-2x.json
+
+      - name: Publish readiness evidence summary
+        if: always()
+        run: |
+          echo "## Backend staging readiness" >> "$GITHUB_STEP_SUMMARY"
+          echo "- staging project: \`$SUPABASE_PROJECT_REF\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- expected peak: \`${{ inputs.expected_peak_vus }} VUs\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- twice-peak hold: \`$(( ${{ inputs.expected_peak_vus }} * 2 )) VUs / 15 min\`" >> "$GITHUB_STEP_SUMMARY"
+          for report in artifacts/staging-rls.json artifacts/staging-onboarding.json artifacts/load-2x.json; do
+            if test -f "$report"; then
+              echo "### $report" >> "$GITHUB_STEP_SUMMARY"
+              echo '```json' >> "$GITHUB_STEP_SUMMARY"
+              cat "$report" >> "$GITHUB_STEP_SUMMARY"
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+
+      - name: Upload immutable staging evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-staging-readiness-${{ github.sha }}-${{ github.run_id }}
+          path: |
+            artifacts/
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 30
