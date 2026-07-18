@@ -7,6 +7,7 @@ import {
   parseSyncWorkerOptions,
   shouldStopWorkerLoop,
   sourceSyncStaleMinutes,
+  workerJobTimeoutMs,
 } from "../../supabase/functions/sync-jobs/core";
 
 describe("sync jobs core", () => {
@@ -108,5 +109,22 @@ describe("sync jobs core", () => {
       availableAt: now.toISOString(),
       finishedAt: now.toISOString(),
     });
+  });
+
+  it("caps each downstream call inside the worker runtime budget", () => {
+    expect(
+      workerJobTimeoutMs({
+        startedAtMs: 0,
+        nowMs: 1_000,
+        maxRuntimeMs: 50_000,
+      }),
+    ).toBe(40_000);
+    expect(
+      workerJobTimeoutMs({
+        startedAtMs: 0,
+        nowMs: 38_000,
+        maxRuntimeMs: 50_000,
+      }),
+    ).toBe(5_000);
   });
 });

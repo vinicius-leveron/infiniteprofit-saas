@@ -13,6 +13,7 @@ import {
   failureRetryPlan,
   parseSyncWorkerOptions,
   shouldStopWorkerLoop,
+  workerJobTimeoutMs,
   type ClaimedSyncJob,
 } from "../sync-jobs/core.ts";
 
@@ -24,6 +25,8 @@ const corsHeaders = {
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const WORKER_LEASE_NAME = "primary";
+const WORKER_LEASE_SECONDS = 5 * 60;
 
 type SupabaseClientAny = ReturnType<typeof createClient<any, "public", any>>;
 
@@ -33,6 +36,8 @@ Deno.serve(async (req) => {
   }
 
   const traceId = req.headers.get("x-request-id") ?? crypto.randomUUID();
+  let leaseClient: SupabaseClientAny | null = null;
+  let leaseHolder: string | null = null;
 
   try {
     if (!isAutomationRequest(req)) {
@@ -44,6 +49,31 @@ Deno.serve(async (req) => {
     const options = parseSyncWorkerOptions(body);
     const workerName = `sync-worker-${crypto.randomUUID()}`;
     const sb = createClient(SUPABASE_URL, SERVICE_KEY);
+    const leaseAcquired = await acquireWorkerLease(sb, workerName);
+
+    if (!leaseAcquired) {
+      console.log(JSON.stringify({
+        event: "sync_worker_skipped",
+        trace_id: traceId,
+        worker: workerName,
+        reason: "lease_held",
+        duration_ms: Date.now() - startedAtMs,
+      }));
+      return json(
+        {
+          ok: true,
+          trace_id: traceId,
+          worker: workerName,
+          claimed: 0,
+          skipped: "lease_held",
+        },
+        200,
+        traceId,
+      );
+    }
+
+    leaseClient = sb;
+    leaseHolder = workerName;
 
     const { error: requeueError } = await sb.rpc("requeue_stale_sync_jobs", {
       max_age_minutes: options.staleRunningMinutes,
@@ -80,7 +110,16 @@ Deno.serve(async (req) => {
       }
 
       try {
-        const result = await processJob(sb, job, traceId);
+        const leaseRenewed = await renewWorkerLease(sb, workerName);
+        if (!leaseRenewed) {
+          throw new Error("Worker perdeu a lease exclusiva antes do job.");
+        }
+        const jobTimeoutMs = workerJobTimeoutMs({
+          startedAtMs,
+          nowMs: Date.now(),
+          maxRuntimeMs: options.maxRuntimeMs,
+        });
+        const result = await processJob(sb, job, traceId, jobTimeoutMs);
         await markSucceeded(sb, job.id, job.payload ?? {}, result);
         results.push({
           job_id: job.id,
@@ -131,6 +170,10 @@ Deno.serve(async (req) => {
       error: message,
     }));
     return json({ error: message, trace_id: traceId }, 500, traceId);
+  } finally {
+    if (leaseClient && leaseHolder) {
+      await releaseWorkerLease(leaseClient, leaseHolder);
+    }
   }
 });
 
@@ -138,12 +181,13 @@ async function processJob(
   sb: SupabaseClientAny,
   job: ClaimedSyncJob,
   traceId: string,
+  timeoutMs: number,
 ) {
   if (
     job.source === "aggregate" &&
     job.entity_type === "aggregate_project_dates"
   ) {
-    return await processAggregateJob(sb, job, traceId);
+    return await processAggregateJob(sb, job, traceId, timeoutMs);
   }
 
   if (job.source === "meta" && job.entity_type === "meta_account") {
@@ -163,6 +207,7 @@ async function processJob(
         date_end: job.date_end,
       },
       traceId,
+      timeoutMs,
     );
     const aggregate = await enqueueAggregateForJob(
       sb,
@@ -186,10 +231,11 @@ async function processJob(
         player_id: playerId,
         date_start: job.date_start,
         date_end: job.date_end,
-        max_runtime_ms: 70_000,
+        max_runtime_ms: timeoutMs,
         max_players: 1,
       },
       traceId,
+      timeoutMs,
     );
     const aggregate = await enqueueAggregateForJob(
       sb,
@@ -215,6 +261,7 @@ async function processJob(
         enqueue_analysis: false,
       },
       traceId,
+      timeoutMs,
     );
     return { source_result: compactResult(result) };
   }
@@ -228,6 +275,7 @@ async function processAggregateJob(
   sb: SupabaseClientAny,
   job: ClaimedSyncJob,
   traceId: string,
+  timeoutMs: number,
 ) {
   const dates = Array.isArray(job.payload?.dates)
     ? job.payload.dates.map((date) => String(date).slice(0, 10))
@@ -243,6 +291,7 @@ async function processAggregateJob(
         : {}),
     },
     traceId,
+    timeoutMs,
   );
   await assertDailyMetricsRows(sb, job.project_id, dates);
 
@@ -276,20 +325,82 @@ async function callFunction(
   name: string,
   body: Record<string, unknown>,
   traceId: string,
+  timeoutMs: number,
 ) {
-  const response = await fetch(`${SUPABASE_URL}/functions/v1/${name}`, {
-    method: "POST",
-    headers: {
-      ...buildAutomationHeaders(),
-      "x-request-id": traceId,
-    },
-    body: JSON.stringify(body),
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok || payload?.error) {
-    throw new Error(String(payload?.error ?? `HTTP ${response.status}`));
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    Math.max(1_000, timeoutMs),
+  );
+
+  try {
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/${name}`, {
+      method: "POST",
+      headers: {
+        ...buildAutomationHeaders(),
+        "x-request-id": traceId,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload?.error) {
+      throw new Error(String(payload?.error ?? `HTTP ${response.status}`));
+    }
+    return payload;
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(
+        `Timeout ao executar ${name} após ${Math.round(timeoutMs)}ms`,
+      );
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
-  return payload;
+}
+
+async function acquireWorkerLease(
+  sb: SupabaseClientAny,
+  workerName: string,
+) {
+  const { data, error } = await sb.rpc("try_acquire_sync_worker_lease", {
+    _lease_name: WORKER_LEASE_NAME,
+    _holder: workerName,
+    _lease_seconds: WORKER_LEASE_SECONDS,
+  });
+  if (error) throw new Error(error.message);
+  return data === true;
+}
+
+async function renewWorkerLease(
+  sb: SupabaseClientAny,
+  workerName: string,
+) {
+  const { data, error } = await sb.rpc("renew_sync_worker_lease", {
+    _lease_name: WORKER_LEASE_NAME,
+    _holder: workerName,
+    _lease_seconds: WORKER_LEASE_SECONDS,
+  });
+  if (error) throw new Error(error.message);
+  return data === true;
+}
+
+async function releaseWorkerLease(
+  sb: SupabaseClientAny,
+  workerName: string,
+) {
+  const { error } = await sb.rpc("release_sync_worker_lease", {
+    _lease_name: WORKER_LEASE_NAME,
+    _holder: workerName,
+  });
+  if (error) {
+    console.error(JSON.stringify({
+      event: "sync_worker_lease_release_failed",
+      worker: workerName,
+      error: error.message,
+    }));
+  }
 }
 
 async function assertDailyMetricsRows(

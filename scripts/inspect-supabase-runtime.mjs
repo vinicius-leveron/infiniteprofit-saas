@@ -126,6 +126,50 @@ const databaseCheckDefinitions = [
     `,
   ],
   [
+    "recent_cron_runs",
+    `
+      select
+        run.jobid,
+        job.jobname,
+        run.status,
+        run.start_time,
+        run.end_time,
+        pg_catalog.left(run.return_message, 300) as return_message
+      from cron.job_run_details run
+      join cron.job job on job.jobid = run.jobid
+      where job.jobname in (
+        'sync-scheduler-projects',
+        'sync-worker-projects',
+        'sync-watchdog-projects'
+      )
+        and run.start_time >= pg_catalog.now() - interval '15 minutes'
+      order by run.start_time desc
+      limit 30
+    `,
+  ],
+  [
+    "sync_worker_lease",
+    `
+      select
+        lease_name,
+        holder,
+        expires_at,
+        expires_at <= pg_catalog.now() as expired,
+        updated_at
+      from app_private.sync_worker_leases
+      order by lease_name
+    `,
+  ],
+  [
+    "sync_job_status",
+    `
+      select source, status, count(*) as jobs
+      from public.sync_jobs
+      group by source, status
+      order by source, status
+    `,
+  ],
+  [
     "critical_indexes",
     `
       select schemaname, tablename, indexname

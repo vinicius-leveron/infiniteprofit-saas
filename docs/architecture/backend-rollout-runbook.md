@@ -56,7 +56,11 @@ em produção.
 - `projects.sync_token` não está no grant de leitura do browser.
 - Member recebe webhook `null` e não acessa sync settings.
 - Owner/Admin recebe tokens apenas por contrato explícito.
-- Jobs têm dedupe determinística, claim com `SKIP LOCKED`, lease, retry e DLQ.
+- Jobs têm dedupe determinística, claim com `SKIP LOCKED`, lease global de
+  5 min, retry e DLQ.
+- O worker roda lote de 4, tem orçamento total de 50 s e limita cada chamada
+  downstream a 40 s. Se a lease estiver ocupada, o cron seguinte termina como
+  `lease_held` sem tocar na fila.
 - Scheduler cria no máximo 5.000 jobs por execução e grava em transações de até
   500 itens.
 - Leituras operacionais têm deadline de 8 s no cliente e `statement_timeout` no
@@ -65,10 +69,11 @@ em produção.
 
 ## Capacidade inicial
 
-O incidente mostrou Auth, REST e DB simultaneamente `UNHEALTHY`, portanto a
-primeira recuperação exige compute dedicado suficiente para respirar antes de
-construir índices. Medium é o ponto inicial recomendado para a janela de
-recuperação; reduzir só depois de 7 dias de telemetria verde.
+O incidente mostrou Auth, REST e DB simultaneamente indisponíveis por
+amplificação de consultas e workers sobrepostos. A recuperação deve primeiro
+pausar os produtores, estabilizar o banco e remover a amplificação. Upgrade de
+compute é uma decisão posterior, baseada no teste de carga e nos SLOs; não
+substitui correções de arquitetura.
 
 Reservar conexões para:
 
@@ -84,7 +89,8 @@ serverless usam pooler em transaction mode; migrations usam conexão direta.
 ## Ordem do release
 
 1. Pausar onboarding e sync manual.
-2. Aumentar compute mediante aprovação financeira.
+2. Aumentar compute, mediante aprovação financeira, somente se a capacidade
+   atual não recuperar os SLOs após pausar os produtores.
 3. Aguardar Auth, REST e DB `HEALTHY`.
 4. Executar `npm run ops:probe` três vezes.
 5. Criar backup/PITR e registrar o ponto de restauração.

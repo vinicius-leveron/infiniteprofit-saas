@@ -58,7 +58,10 @@ só aparecem nos contratos seguros para Owner/Admin. O gate
 - chave determinística de deduplicação;
 - claim com `FOR UPDATE SKIP LOCKED`;
 - batch atômico por RPC;
-- orçamento máximo por worker;
+- lease global de 5 min, renovada por job e liberada no `finally`, para impedir
+  sobreposição entre invocações do cron;
+- lote padrão de 4 jobs, orçamento de 50 s por worker e timeout de 40 s por
+  chamada downstream;
 - retry 5 min, 15 min, 60 min e 6 h;
 - dead letter após tentativas;
 - recovery de locks antigos;
@@ -103,12 +106,12 @@ contagem de clientes.
 
 Sequência:
 
-1. compute mínimo Small para estabilização;
+1. remover amplificação de consultas e sobreposição de workers;
 2. aplicar índices/read models/workers em lote;
 3. medir 24 h;
-4. testar 2x o pico previsto;
-5. usar Medium antes de onboarding em volume se Auth/REST ou I/O não mantiverem
-   os SLOs;
+4. testar 2x o pico previsto em staging;
+5. aumentar compute antes de onboarding em volume somente se Auth/REST, CPU,
+   memória, conexões ou I/O não mantiverem os SLOs;
 6. revisar mensalmente e antes de cada novo lote.
 
 O pool de PostgREST não deve consumir todas as conexões diretas; é necessário

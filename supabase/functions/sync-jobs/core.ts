@@ -218,6 +218,26 @@ export function shouldStopWorkerLoop(args: {
   );
 }
 
+export function workerJobTimeoutMs(args: {
+  startedAtMs: number;
+  nowMs: number;
+  maxRuntimeMs: number;
+  stopBufferMs?: number;
+  minJobTimeoutMs?: number;
+  maxJobTimeoutMs?: number;
+}) {
+  const stopBufferMs = args.stopBufferMs ?? 8_000;
+  const minJobTimeoutMs = args.minJobTimeoutMs ?? 5_000;
+  const maxJobTimeoutMs = args.maxJobTimeoutMs ?? 40_000;
+  const remainingMs =
+    args.maxRuntimeMs - (args.nowMs - args.startedAtMs) - stopBufferMs;
+
+  return Math.min(
+    Math.max(maxJobTimeoutMs, minJobTimeoutMs),
+    Math.max(minJobTimeoutMs, remainingMs),
+  );
+}
+
 export function retryDelayMinutes(attemptCount: number) {
   if (attemptCount <= 1) return 5;
   if (attemptCount === 2) return 15;
