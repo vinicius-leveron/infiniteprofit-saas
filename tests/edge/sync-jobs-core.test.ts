@@ -67,6 +67,12 @@ describe("sync jobs core", () => {
       maxRuntimeMs: 110_000,
       staleRunningMinutes: 1,
     });
+
+    expect(parseSyncWorkerOptions({})).toEqual({
+      batchSize: 4,
+      maxRuntimeMs: 50_000,
+      staleRunningMinutes: 15,
+    });
   });
 
   it("uses source-specific recent cadences without changing backfills", () => {

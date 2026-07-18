@@ -168,8 +168,8 @@ BEGIN
     'include_backfill', false
   );
   worker_body := jsonb_build_object(
-    'batch_size', 8,
-    'max_runtime_ms', 70000
+    'batch_size', 4,
+    'max_runtime_ms', 50000
   );
   watchdog_body := jsonb_build_object(
     'recent_days', bounded_days,

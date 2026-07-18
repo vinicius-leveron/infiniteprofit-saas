@@ -189,10 +189,10 @@ export function parseSyncSchedulerOptions(body: Record<string, unknown>) {
 
 export function parseSyncWorkerOptions(body: Record<string, unknown>) {
   return {
-    batchSize: boundedInt(body.batch_size ?? body.batchSize, 8, 1, 50),
+    batchSize: boundedInt(body.batch_size ?? body.batchSize, 4, 1, 50),
     maxRuntimeMs: boundedInt(
       body.max_runtime_ms ?? body.maxRuntimeMs,
-      70_000,
+      50_000,
       5_000,
       110_000,
     ),
