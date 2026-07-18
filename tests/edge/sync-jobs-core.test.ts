@@ -6,6 +6,7 @@ import {
   failureRetryPlan,
   parseSyncWorkerOptions,
   shouldStopWorkerLoop,
+  sourceSyncStaleMinutes,
 } from "../../supabase/functions/sync-jobs/core";
 
 describe("sync jobs core", () => {
@@ -66,6 +67,22 @@ describe("sync jobs core", () => {
       maxRuntimeMs: 110_000,
       staleRunningMinutes: 1,
     });
+  });
+
+  it("uses source-specific recent cadences without changing backfills", () => {
+    const recent = {
+      label: "recent" as const,
+      staleMinutes: 15,
+    };
+    const backfill = {
+      label: "week" as const,
+      staleMinutes: 12 * 60,
+    };
+
+    expect(sourceSyncStaleMinutes("vturb", recent)).toBe(15);
+    expect(sourceSyncStaleMinutes("meta", recent)).toBe(60);
+    expect(sourceSyncStaleMinutes("creative", recent)).toBe(6 * 60);
+    expect(sourceSyncStaleMinutes("meta", backfill)).toBe(12 * 60);
   });
 
   it("stops before the runtime limit and dead-letters exhausted jobs", () => {

@@ -17,6 +17,7 @@
     "check:function-drift": "node scripts/check-supabase-function-drift.mjs",
     "ops:load": "node scripts/load-test-backend.mjs",
     "ops:cron": "node scripts/manage-background-cron.mjs",
+    "ops:function-logs": "node scripts/inspect-supabase-function-logs.mjs",
     "ops:probe": "node scripts/probe-production.mjs",
     "ops:verify-rls": "node scripts/verify-rls-contracts.mjs",
     "qa:data": "node scripts/qa-data.mjs",

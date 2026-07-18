@@ -11,6 +11,7 @@ import {
 import {
   buildSyncWindows,
   parseSyncSchedulerOptions,
+  sourceSyncStaleMinutes,
   type SyncJobInput,
   type SyncJobSource,
   type SyncJobWindow,
@@ -260,7 +261,10 @@ function buildMetaJobs(
               window: window.label,
             },
           }),
-        options: { requeueSucceededAfterMinutes: window.staleMinutes },
+        options: {
+          requeueSucceededAfterMinutes:
+            sourceSyncStaleMinutes("meta", window),
+        },
       });
     }
   }
@@ -300,7 +304,10 @@ function buildVturbJobs(
               window: window.label,
             },
           }),
-        options: { requeueSucceededAfterMinutes: window.staleMinutes },
+        options: {
+          requeueSucceededAfterMinutes:
+            sourceSyncStaleMinutes("vturb", window),
+        },
       });
     }
   }
@@ -333,7 +340,10 @@ function buildCreativeJobs(
             enqueue_analysis: false,
           },
         }),
-      options: { requeueSucceededAfterMinutes: jobWindow.staleMinutes },
+      options: {
+        requeueSucceededAfterMinutes:
+          sourceSyncStaleMinutes("creative", jobWindow),
+      },
     });
   }
   return jobs;

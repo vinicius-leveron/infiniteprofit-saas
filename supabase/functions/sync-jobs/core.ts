@@ -128,6 +128,16 @@ export function buildSyncWindows(options: {
   return dedupeWindows(windows);
 }
 
+export function sourceSyncStaleMinutes(
+  source: SyncJobSource,
+  window: Pick<SyncJobWindow, "label" | "staleMinutes">,
+) {
+  if (window.label !== "recent") return window.staleMinutes;
+  if (source === "meta") return Math.max(window.staleMinutes, 60);
+  if (source === "creative") return Math.max(window.staleMinutes, 6 * 60);
+  return window.staleMinutes;
+}
+
 export function localDateWindow(
   days: number,
   now = new Date(),
