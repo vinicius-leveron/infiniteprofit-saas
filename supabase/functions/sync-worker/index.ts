@@ -158,6 +158,8 @@ Deno.serve(async (req) => {
       trace_id: traceId,
       worker: workerName,
       claimed: claimed.length,
+      succeeded: results.filter((result) => result.ok === true).length,
+      deferred: results.filter((result) => result.skipped).length,
       failed: results.filter((result) => result.error).length,
       duration_ms: Date.now() - startedAtMs,
     }));
