@@ -8,6 +8,7 @@ import {
   parseSyncWorkerOptions,
   shouldStopWorkerLoop,
   sourceSyncStaleMinutes,
+  syncJobFailurePlan,
   workerJobTimeoutMs,
 } from "../../supabase/functions/sync-jobs/core";
 
@@ -109,6 +110,35 @@ describe("sync jobs core", () => {
       status: "dead_letter",
       availableAt: now.toISOString(),
       finishedAt: now.toISOString(),
+    });
+  });
+
+  it("does not retry a provider capability error", () => {
+    const now = new Date("2026-07-17T20:00:00Z");
+    expect(
+      syncJobFailurePlan(
+        { attempt_count: 1, max_attempts: 5 },
+        "VTurb: This company does not have access to the public analytics API.",
+        now,
+      ),
+    ).toEqual({
+      status: "dead_letter",
+      availableAt: now.toISOString(),
+      finishedAt: now.toISOString(),
+      kind: "permanent",
+    });
+
+    expect(
+      syncJobFailurePlan(
+        { attempt_count: 1, max_attempts: 5 },
+        "VTurb provider timeout",
+        now,
+      ),
+    ).toEqual({
+      status: "queued",
+      availableAt: "2026-07-17T20:05:00.000Z",
+      finishedAt: null,
+      kind: "retryable",
     });
   });
 

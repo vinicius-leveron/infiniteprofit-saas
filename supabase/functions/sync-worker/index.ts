@@ -10,10 +10,10 @@ import {
   buildAggregateJobInput,
   dateRangeToDates,
   daysForDateRange,
-  failureRetryPlan,
   hasWorkerJobBudget,
   parseSyncWorkerOptions,
   shouldStopWorkerLoop,
+  syncJobFailurePlan,
   workerJobTimeoutMs,
   type ClaimedSyncJob,
 } from "../sync-jobs/core.ts";
@@ -143,12 +143,14 @@ Deno.serve(async (req) => {
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Erro inesperado no job";
-        await markFailedOrRetry(sb, job, message);
+        const failure = await markFailedOrRetry(sb, job, message);
         results.push({
           job_id: job.id,
           source: job.source,
           entity_type: job.entity_type,
           error: message,
+          failure_status: failure.status,
+          failure_kind: failure.kind,
         });
       }
     }
@@ -460,6 +462,8 @@ async function markSucceeded(
   previousPayload: Record<string, unknown>,
   result: Record<string, unknown>,
 ) {
+  const nextPayload = { ...previousPayload };
+  delete nextPayload.failure;
   const { error } = await sb
     .from("sync_jobs")
     .update({
@@ -469,7 +473,7 @@ async function markSucceeded(
       last_error: null,
       finished_at: new Date().toISOString(),
       payload: {
-        ...previousPayload,
+        ...nextPayload,
         last_result: compactResult(result),
       },
     })
@@ -482,7 +486,8 @@ async function markFailedOrRetry(
   job: ClaimedSyncJob,
   message: string,
 ) {
-  const plan = failureRetryPlan(job);
+  const plan = syncJobFailurePlan(job, message);
+  const failedAt = new Date().toISOString();
   const { error } = await sb
     .from("sync_jobs")
     .update({
@@ -492,9 +497,17 @@ async function markFailedOrRetry(
       locked_by: null,
       last_error: message.slice(0, 2000),
       finished_at: plan.finishedAt,
+      payload: {
+        ...(job.payload ?? {}),
+        failure: {
+          kind: plan.kind,
+          failed_at: failedAt,
+        },
+      },
     })
     .eq("id", job.id);
   if (error) throw new Error(error.message);
+  return plan;
 }
 
 async function requeueClaimedJob(

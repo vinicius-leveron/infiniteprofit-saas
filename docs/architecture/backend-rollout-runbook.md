@@ -202,6 +202,13 @@ Para executar, informar `VTURB_DLQ_RECOVERY_ACK` e `--execute`. O comando
 recusa erros desconhecidos e bindings órfãos, resolve janelas superseded e
 distribui as demais em grupos de quatro a cada dois minutos.
 
+Uma resposta explícita do provedor de que a conta não possui acesso à API
+pública é uma limitação permanente, não uma indisponibilidade transitória. O
+worker encerra esse job em `dead_letter` com
+`payload.failure.kind = permanent`; não reprocessar até o plano ou a permissão
+da integração ser corrigido. O gate operacional exige zero DLQ não
+classificada, e não zero pendências permanentes conhecidas.
+
 ## Abertura gradual
 
 Abrir clientes em lotes:

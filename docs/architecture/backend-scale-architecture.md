@@ -64,8 +64,11 @@ só aparecem nos contratos seguros para Owner/Admin. O gate
   chamada downstream;
 - catálogo não secreto da VTurb cacheado por Cliente por 6 h e requests do
   provedor limitados a 8 s, evitando um `/players/list` por player;
-- retry 5 min, 15 min, 60 min e 6 h;
-- dead letter após tentativas;
+- retry 5 min, 15 min, 60 min e 6 h para falhas transitórias;
+- dead letter após tentativas ou imediatamente quando o provedor confirmar uma
+  limitação permanente de capacidade;
+- falhas terminais recebem `payload.failure.kind = permanent` e não são
+  revividas pelo scheduler enquanto a integração não for corrigida;
 - recovery de locks antigos;
 - retenção de históricos terminados.
 
@@ -174,6 +177,7 @@ um limite rígido de 10 VUs por 120 segundos; testes maiores pertencem ao stagin
 - Member sem secrets, logs ou ações administrativas;
 - Org Admin com acesso herdado validado;
 - webhook canário sobrevive a indisponibilidade do banco;
-- zero mensagens na DLQ;
+- zero mensagens não classificadas na DLQ; limitações permanentes do provedor
+  podem permanecer como pendências operacionais explícitas;
 - restore de backup documentado e ensaiado;
 - dashboards e cálculos com regressões verdes.

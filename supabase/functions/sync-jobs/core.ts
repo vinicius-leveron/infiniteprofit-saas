@@ -272,6 +272,33 @@ export function failureRetryPlan(
   };
 }
 
+export function syncJobFailurePlan(
+  job: Pick<ClaimedSyncJob, "attempt_count" | "max_attempts">,
+  message: string,
+  now = new Date(),
+) {
+  if (isPermanentSyncJobFailure(message)) {
+    return {
+      status: "dead_letter" as const,
+      availableAt: now.toISOString(),
+      finishedAt: now.toISOString(),
+      kind: "permanent" as const,
+    };
+  }
+
+  return {
+    ...failureRetryPlan(job, now),
+    kind: "retryable" as const,
+  };
+}
+
+export function isPermanentSyncJobFailure(message: string) {
+  const normalized = String(message ?? "").trim().toLowerCase();
+  return normalized.includes(
+    "does not have access to the public analytics api",
+  );
+}
+
 export function uniqueSortedDates(values: Iterable<unknown>) {
   return [
     ...new Set(
