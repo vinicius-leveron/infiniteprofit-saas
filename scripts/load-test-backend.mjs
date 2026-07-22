@@ -317,7 +317,7 @@ async function fetchDatabaseSnapshot() {
                 from public.sync_jobs
                 where status = 'dead_letter'
                   and coalesce(payload -> 'failure' ->> 'kind', '')
-                    <> 'permanent'
+                    not in ('permanent', 'superseded')
               ) as unclassified_dead_letters
           `,
         }),

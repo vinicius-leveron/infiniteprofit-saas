@@ -92,9 +92,29 @@ Deno.serve(async (req) => {
     if (claimError) throw new Error(claimError.message);
 
     const claimed = (claimedRows ?? []) as ClaimedSyncJob[];
+    const suspendedVturbWorkspaces = await loadSuspendedVturbWorkspaces(
+      sb,
+      claimed,
+    );
     const results: Array<Record<string, unknown>> = [];
 
     for (const job of claimed) {
+      if (
+        job.source === "vturb" &&
+        suspendedVturbWorkspaces.has(job.workspace_id)
+      ) {
+        await markVturbJobSkippedForSuspension(sb, job);
+        results.push({
+          job_id: job.id,
+          source: job.source,
+          entity_type: job.entity_type,
+          skipped: "integration_suspended",
+          failure_status: "dead_letter",
+          failure_kind: "permanent",
+        });
+        continue;
+      }
+
       if (
         shouldStopWorkerLoop({
           startedAtMs,
@@ -144,6 +164,10 @@ Deno.serve(async (req) => {
         const message =
           error instanceof Error ? error.message : "Erro inesperado no job";
         const failure = await markFailedOrRetry(sb, job, message);
+        if (job.source === "vturb" && failure.kind === "permanent") {
+          await suspendWorkspaceVturbSync(sb, job.workspace_id, message);
+          suspendedVturbWorkspaces.add(job.workspace_id);
+        }
         results.push({
           job_id: job.id,
           source: job.source,
@@ -508,6 +532,72 @@ async function markFailedOrRetry(
     .eq("id", job.id);
   if (error) throw new Error(error.message);
   return plan;
+}
+
+async function loadSuspendedVturbWorkspaces(
+  sb: SupabaseClientAny,
+  jobs: ClaimedSyncJob[],
+) {
+  const workspaceIds = [
+    ...new Set(
+      jobs
+        .filter((job) => job.source === "vturb")
+        .map((job) => job.workspace_id),
+    ),
+  ];
+  if (workspaceIds.length === 0) return new Set<string>();
+
+  const { data, error } = await sb
+    .from("workspace_integrations")
+    .select("workspace_id")
+    .in("workspace_id", workspaceIds)
+    .not("vturb_sync_suspended_at", "is", null);
+  if (error) throw new Error(error.message);
+
+  return new Set(
+    (data ?? [])
+      .map((row: { workspace_id?: string | null }) => row.workspace_id ?? "")
+      .filter(Boolean),
+  );
+}
+
+async function suspendWorkspaceVturbSync(
+  sb: SupabaseClientAny,
+  workspaceId: string,
+  reason: string,
+) {
+  const { error } = await sb.rpc("suspend_workspace_vturb_sync", {
+    _workspace_id: workspaceId,
+    _reason: reason,
+  });
+  if (error) throw new Error(error.message);
+}
+
+async function markVturbJobSkippedForSuspension(
+  sb: SupabaseClientAny,
+  job: ClaimedSyncJob,
+) {
+  const failedAt = new Date().toISOString();
+  const { error } = await sb
+    .from("sync_jobs")
+    .update({
+      status: "dead_letter",
+      available_at: failedAt,
+      locked_at: null,
+      locked_by: null,
+      last_error: "Sync VTurb suspenso até a integração ser salva ou validada novamente.",
+      finished_at: failedAt,
+      payload: {
+        ...(job.payload ?? {}),
+        failure: {
+          kind: "permanent",
+          cause: "integration_suspended",
+          failed_at: failedAt,
+        },
+      },
+    })
+    .eq("id", job.id);
+  if (error) throw new Error(error.message);
 }
 
 async function requeueClaimedJob(

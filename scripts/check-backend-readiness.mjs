@@ -226,7 +226,8 @@ async function getDatabaseSnapshot(token, ref) {
         select pg_catalog.count(*)::integer
         from public.sync_jobs
         where status = 'dead_letter'
-          and coalesce(payload -> 'failure' ->> 'kind', '') <> 'permanent'
+          and coalesce(payload -> 'failure' ->> 'kind', '')
+            not in ('permanent', 'superseded')
       ) as unclassified_dead_letters,
       (
         select pg_catalog.count(*)::integer
@@ -234,6 +235,12 @@ async function getDatabaseSnapshot(token, ref) {
         where status = 'dead_letter'
           and payload -> 'failure' ->> 'kind' = 'permanent'
       ) as permanent_dead_letters,
+      (
+        select pg_catalog.count(*)::integer
+        from public.sync_jobs
+        where status = 'dead_letter'
+          and payload -> 'failure' ->> 'kind' = 'superseded'
+      ) as superseded_dead_letters,
       (
         select pg_catalog.count(*)::integer
         from critical_index expected

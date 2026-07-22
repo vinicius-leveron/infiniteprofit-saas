@@ -73,7 +73,9 @@ export function evaluateRuntime(snapshot, limits = READINESS_LIMITS) {
       Number(snapshot.unclassified_dead_letters ?? 0) === 0,
       `${Number(snapshot.unclassified_dead_letters ?? 0)} unclassified; ${
         Number(snapshot.permanent_dead_letters ?? 0)
-      } classified permanent`,
+      } classified permanent; ${
+        Number(snapshot.superseded_dead_letters ?? 0)
+      } classified superseded`,
     ),
     check(
       "critical_indexes",

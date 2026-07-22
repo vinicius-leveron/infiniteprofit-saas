@@ -67,8 +67,11 @@ só aparecem nos contratos seguros para Owner/Admin. O gate
 - retry 5 min, 15 min, 60 min e 6 h para falhas transitórias;
 - dead letter após tentativas ou imediatamente quando o provedor confirmar uma
   limitação permanente de capacidade;
-- falhas terminais recebem `payload.failure.kind = permanent` e não são
-  revividas pelo scheduler enquanto a integração não for corrigida;
+- falhas terminais recebem `payload.failure.kind = permanent` e abrem um
+  circuit breaker persistente em `workspace_integrations`; o worker encerra
+  jobs VTurb já pendentes sem chamar novamente o provedor;
+- o scheduler só volta a criar ou reviver jobs VTurb depois que um Admin salva
+  a credencial ou executa uma validação bem-sucedida da integração;
 - recovery de locks antigos;
 - retenção de históricos terminados.
 

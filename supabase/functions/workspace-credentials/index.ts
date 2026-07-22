@@ -104,6 +104,9 @@ async function upsertWorkspaceIntegration(
   if (vturbApiKey) {
     if (vturbApiKey.length > 1000) throw new Error("VTurb API key muito longa");
     payload.vturb_api_key = vturbApiKey;
+    payload.vturb_sync_suspended_at = null;
+    payload.vturb_sync_suspension_reason = null;
+    payload.vturb_validated_at = null;
   }
   if (gatewaySecret) {
     if (gatewaySecret.length > 1000) throw new Error("Gateway secret muito longo");

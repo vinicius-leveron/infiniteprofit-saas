@@ -132,7 +132,7 @@ describe("vturb pull batching", () => {
     })).toBe(true);
   });
 
-  it("filters automatic projects without players, keys, or with recent no-access failures", () => {
+  it("filters automatic projects without players, keys, or with suspended integrations", () => {
     const projects = [
       { id: "ready", workspace_id: "w1" },
       { id: "no-player", workspace_id: "w1" },
@@ -143,7 +143,7 @@ describe("vturb pull batching", () => {
     expect(filterSchedulableVturbProjects(projects, {
       projectIdsWithPlayers: ["ready", "no-key", "backoff"],
       workspaceIdsWithVturbKey: ["w1", "w3"],
-      backoffProjectIds: ["backoff"],
+      suspendedWorkspaceIds: ["w3"],
     })).toEqual([{ id: "ready", workspace_id: "w1" }]);
   });
 

@@ -25,7 +25,6 @@ const corsHeaders = {
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const VTURB_NO_ACCESS_BACKOFF_MS = 60 * 60 * 1000;
 const MAX_SCHEDULED_JOBS_PER_RUN = 5_000;
 
 type SupabaseClientAny = ReturnType<typeof createClient<any, "public", any>>;
@@ -57,7 +56,7 @@ type SchedulerCatalog = {
   metaAccountsByProject: Map<string, MetaAccountRow[]>;
   vturbPlayersByProject: Map<string, VturbPlayerRow[]>;
   workspacesWithVturbKey: Set<string>;
-  vturbBackoffProjectIds: Set<string>;
+  vturbSuspendedWorkspaceIds: Set<string>;
 };
 
 type ScheduledSource = "meta" | "vturb" | "creative";
@@ -144,8 +143,8 @@ Deno.serve(async (req) => {
       }
 
       if (!options.source || options.source === "vturb") {
-        if (catalog.vturbBackoffProjectIds.has(project.id)) {
-          result.vturb = { skipped: "backoff_public_analytics_api" };
+        if (catalog.vturbSuspendedWorkspaceIds.has(project.workspace_id)) {
+          result.vturb = { skipped: "integration_suspended" };
         } else {
           schedule(
             project.id,
@@ -307,6 +306,10 @@ function buildVturbJobs(
         options: {
           requeueSucceededAfterMinutes:
             sourceSyncStaleMinutes("vturb", window),
+          // A changed or successfully revalidated integration clears its
+          // persistent suspension. At that point the current window must be
+          // able to revive a terminal provider-capability job immediately.
+          reviveDeadLetter: true,
         },
       });
     }
@@ -412,7 +415,7 @@ async function loadSchedulerCatalog(
       metaAccountsByProject: new Map(),
       vturbPlayersByProject: new Map(),
       workspacesWithVturbKey: new Set(),
-      vturbBackoffProjectIds: new Set(),
+      vturbSuspendedWorkspaceIds: new Set(),
     };
   }
 
@@ -426,7 +429,6 @@ async function loadSchedulerCatalog(
     vturbBindingsResult,
     vturbPlayersResult,
     integrationsResult,
-    backoffResult,
   ] = await Promise.all([
     sb
       .from("project_meta_accounts")
@@ -446,19 +448,8 @@ async function loadSchedulerCatalog(
       .in("workspace_id", workspaceIds),
     sb
       .from("workspace_integrations")
-      .select("workspace_id, vturb_api_key")
+      .select("workspace_id, vturb_api_key, vturb_sync_suspended_at")
       .in("workspace_id", workspaceIds),
-    sb
-      .from("sync_runs")
-      .select("project_id")
-      .in("project_id", projectIds)
-      .eq("source", "vturb")
-      .eq("status", "failed")
-      .gte(
-        "started_at",
-        new Date(Date.now() - VTURB_NO_ACCESS_BACKOFF_MS).toISOString(),
-      )
-      .ilike("error_message", "%public analytics API%"),
   ]);
 
   for (const result of [
@@ -467,7 +458,6 @@ async function loadSchedulerCatalog(
     vturbBindingsResult,
     vturbPlayersResult,
     integrationsResult,
-    backoffResult,
   ]) {
     if (result.error) throw new Error(result.error.message);
   }
@@ -501,9 +491,10 @@ async function loadSchedulerCatalog(
         .filter((row: any) => Boolean(String(row.vturb_api_key ?? "").trim()))
         .map((row: any) => String(row.workspace_id)),
     ),
-    vturbBackoffProjectIds: new Set(
-      (backoffResult.data ?? [])
-        .map((row: any) => String(row.project_id ?? ""))
+    vturbSuspendedWorkspaceIds: new Set(
+      (integrationsResult.data ?? [])
+        .filter((row: any) => Boolean(row.vturb_sync_suspended_at))
+        .map((row: any) => String(row.workspace_id ?? ""))
         .filter(Boolean),
     ),
   };

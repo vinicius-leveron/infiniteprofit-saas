@@ -237,17 +237,17 @@ export function filterSchedulableVturbProjects<T extends SchedulableVturbProject
   options: {
     projectIdsWithPlayers: Iterable<string>;
     workspaceIdsWithVturbKey: Iterable<string>;
-    backoffProjectIds: Iterable<string>;
+    suspendedWorkspaceIds: Iterable<string>;
   },
 ) {
   const projectsWithPlayers = new Set(options.projectIdsWithPlayers);
   const workspacesWithVturbKey = new Set(options.workspaceIdsWithVturbKey);
-  const backoffProjects = new Set(options.backoffProjectIds);
+  const suspendedWorkspaces = new Set(options.suspendedWorkspaceIds);
 
   return projects.filter((project) =>
     projectsWithPlayers.has(project.id)
     && workspacesWithVturbKey.has(project.workspace_id)
-    && !backoffProjects.has(project.id)
+    && !suspendedWorkspaces.has(project.workspace_id)
   );
 }
 

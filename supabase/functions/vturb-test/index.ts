@@ -25,6 +25,7 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const workspaceId = stringOrNull(body.workspace_id);
     let apiKey = stringOrNull(body.api_key);
+    let storedWorkspaceClient: SupabaseClientAny | null = null;
 
     if (workspaceId) {
       const authHeader = req.headers.get("Authorization");
@@ -34,6 +35,7 @@ Deno.serve(async (req) => {
       const sb = createClient(SUPABASE_URL, SERVICE_KEY, {
         auth: { persistSession: false },
       });
+      storedWorkspaceClient = sb;
       await assertWorkspaceAdmin(sb, workspaceId, caller.userId);
 
       const { data: integration, error } = await sb
@@ -70,6 +72,19 @@ Deno.serve(async (req) => {
     }
 
     const players = await fetchPlayers(apiKey);
+
+    if (workspaceId && storedWorkspaceClient) {
+      const validatedAt = new Date().toISOString();
+      const { error: validationError } = await storedWorkspaceClient
+        .from("workspace_integrations")
+        .update({
+          vturb_validated_at: validatedAt,
+          vturb_sync_suspended_at: null,
+          vturb_sync_suspension_reason: null,
+        })
+        .eq("workspace_id", workspaceId);
+      if (validationError) throw new Error(validationError.message);
+    }
 
     return json({
       ok: true,

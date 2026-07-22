@@ -98,7 +98,15 @@ function auditSql() {
     classified as (
       select
         dead.id,
-        dead.last_error = ${sqlText(staleWorkerError)} as known_error,
+        coalesce(
+          dead.payload -> 'failure' ->> 'kind',
+          ''
+        ) as failure_kind,
+        dead.last_error = ${sqlText(staleWorkerError)}
+          and coalesce(
+            dead.payload -> 'failure' ->> 'kind',
+            ''
+          ) not in ('permanent', 'superseded') as known_error,
         exists (
           select 1
           from public.workspace_vturb_players player
@@ -124,6 +132,12 @@ function auditSql() {
     select
       (select pg_catalog.count(*) from dead)::bigint as total_dead_letters,
       pg_catalog.count(*) filter (
+        where failure_kind = 'permanent'
+      )::bigint as permanent_jobs,
+      pg_catalog.count(*) filter (
+        where failure_kind = 'superseded'
+      )::bigint as classified_superseded_jobs,
+      pg_catalog.count(*) filter (
         where known_error and binding_exists and superseded
       )::bigint as superseded_candidates,
       pg_catalog.count(*) filter (
@@ -133,10 +147,11 @@ function auditSql() {
           and current_window
       )::bigint as requeue_candidates,
       pg_catalog.count(*) filter (
-        where not known_error
+        where failure_kind not in ('permanent', 'superseded')
+          and not known_error
       )::bigint as unexpected_error_jobs,
       pg_catalog.count(*) filter (
-        where not binding_exists
+        where known_error and not binding_exists
       )::bigint as orphaned_binding_jobs,
       pg_catalog.count(*) filter (
         where known_error

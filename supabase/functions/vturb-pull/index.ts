@@ -14,6 +14,7 @@ import {
   shouldStopVturbPlayerLoop,
   summarizeVturbPlayerResults,
 } from "./core.ts";
+import { isPermanentSyncJobFailure } from "../sync-jobs/core.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -30,7 +31,6 @@ const VTURB_MAX_RATE_LIMIT_RETRIES = 3;
 const VTURB_DEFAULT_RETRY_AFTER_MS = 5000;
 const VTURB_MAX_RETRY_AFTER_MS = 60000;
 const VTURB_RUNNING_SYNC_TIMEOUT_MS = 5 * 60 * 1000;
-const VTURB_NO_ACCESS_BACKOFF_MS = 60 * 60 * 1000;
 const VTURB_AUTOMATIC_MIN_PROJECT_BUDGET_MS = 20 * 1000;
 const VTURB_REQUEST_TIMEOUT_MS = 8 * 1000;
 const VTURB_PROVIDER_STOP_BUFFER_MS = 5 * 1000;
@@ -297,10 +297,23 @@ Deno.serve(async (req) => {
           }
         }
 
+        const resultSummary = summarizeVturbPlayerResults(projectResults);
+        const permanentError = resultSummary.failed
+          .map((result) => String(result.error ?? ""))
+          .find((message) => isPermanentSyncJobFailure(message));
+
         if (projectSyncedAt) {
+          const integrationPatch: Record<string, unknown> = {
+            vturb_last_event_at: projectSyncedAt,
+          };
+          if (!permanentError) {
+            integrationPatch.vturb_validated_at = projectSyncedAt;
+            integrationPatch.vturb_sync_suspended_at = null;
+            integrationPatch.vturb_sync_suspension_reason = null;
+          }
           await sb
             .from("workspace_integrations")
-            .update({ vturb_last_event_at: projectSyncedAt })
+            .update(integrationPatch)
             .eq("workspace_id", project.workspace_id);
 
           await sb
@@ -309,11 +322,18 @@ Deno.serve(async (req) => {
             .eq("id", project.id);
         }
 
+        if (permanentError) {
+          await suspendWorkspaceVturbSync(
+            sb,
+            project.workspace_id,
+            permanentError,
+          );
+        }
+
         if (projectDatesTouched.size > 0 && !skipAggregate) {
           await triggerAggregateDaily(project.id, [...projectDatesTouched]);
         }
 
-        const resultSummary = summarizeVturbPlayerResults(projectResults);
         const batchDetails = {
           player_filter: targetPlayerId,
           selection_mode: playerBatch.selectionMode,
@@ -355,6 +375,9 @@ Deno.serve(async (req) => {
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : "Erro ao sincronizar VTurb";
+        if (isPermanentSyncJobFailure(message)) {
+          await suspendWorkspaceVturbSync(sb, project.workspace_id, message);
+        }
         results.push({ project_id: project.id, error: message });
         await finishSyncRun(sb, runId, {
           status: "failed",
@@ -711,7 +734,6 @@ async function loadSchedulableProjects(
     projectsResult,
     playerBindingsResult,
     integrationsResult,
-    noAccessRunsResult,
   ] = await Promise.all([
     sb
       .from("projects")
@@ -723,20 +745,12 @@ async function loadSchedulableProjects(
       .select("project_id"),
     sb
       .from("workspace_integrations")
-      .select("workspace_id, vturb_api_key"),
-    sb
-      .from("sync_runs")
-      .select("project_id")
-      .eq("source", "vturb")
-      .eq("status", "failed")
-      .gte("started_at", new Date(Date.now() - VTURB_NO_ACCESS_BACKOFF_MS).toISOString())
-      .ilike("error_message", "%public analytics API%"),
+      .select("workspace_id, vturb_api_key, vturb_sync_suspended_at"),
   ]);
 
   if (projectsResult.error) throw new Error(projectsResult.error.message);
   if (playerBindingsResult.error) throw new Error(playerBindingsResult.error.message);
   if (integrationsResult.error) throw new Error(integrationsResult.error.message);
-  if (noAccessRunsResult.error) throw new Error(noAccessRunsResult.error.message);
 
   return filterSchedulableVturbProjects((projectsResult.data ?? []) as ProjectContext[], {
     projectIdsWithPlayers: (playerBindingsResult.data ?? [])
@@ -746,8 +760,9 @@ async function loadSchedulableProjects(
       .filter((integration: any) => String(integration.vturb_api_key ?? "").trim())
       .map((integration: any) => String(integration.workspace_id ?? "").trim())
       .filter(Boolean),
-    backoffProjectIds: (noAccessRunsResult.data ?? [])
-      .map((run: any) => String(run.project_id ?? "").trim())
+    suspendedWorkspaceIds: (integrationsResult.data ?? [])
+      .filter((integration: any) => Boolean(integration.vturb_sync_suspended_at))
+      .map((integration: any) => String(integration.workspace_id ?? "").trim())
       .filter(Boolean),
   }).sort((left, right) => {
     const leftSyncedAt = Date.parse(left.last_synced_at ?? "");
@@ -757,6 +772,18 @@ async function loadSchedulableProjects(
     if (leftOrder !== rightOrder) return leftOrder - rightOrder;
     return left.id.localeCompare(right.id);
   });
+}
+
+async function suspendWorkspaceVturbSync(
+  sb: ReturnType<typeof createClient>,
+  workspaceId: string,
+  reason: string,
+) {
+  const { error } = await sb.rpc("suspend_workspace_vturb_sync", {
+    _workspace_id: workspaceId,
+    _reason: reason,
+  });
+  if (error) throw new Error(error.message);
 }
 
 async function getWorkspaceIntegrationOrThrow(

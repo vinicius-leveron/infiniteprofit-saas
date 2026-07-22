@@ -211,9 +211,12 @@ distribui as demais em grupos de quatro a cada dois minutos.
 Uma resposta explícita do provedor de que a conta não possui acesso à API
 pública é uma limitação permanente, não uma indisponibilidade transitória. O
 worker encerra esse job em `dead_letter` com
-`payload.failure.kind = permanent`; não reprocessar até o plano ou a permissão
-da integração ser corrigido. O gate operacional exige zero DLQ não
-classificada, e não zero pendências permanentes conhecidas.
+`payload.failure.kind = permanent` e preenche
+`workspace_integrations.vturb_sync_suspended_at`. Scheduler e worker não fazem
+novas chamadas desse Cliente enquanto a suspensão estiver ativa. Salvar a
+credencial ou validá-la com sucesso limpa a suspensão, e o scheduler pode
+reviver a janela atual. O gate operacional exige zero DLQ não classificada, e
+não zero pendências permanentes ou superseded conhecidas.
 
 ## Abertura gradual
 
