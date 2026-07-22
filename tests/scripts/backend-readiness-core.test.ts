@@ -211,6 +211,11 @@ describe("backend market readiness", () => {
 
     expect(evaluateOnboardingReport(onboarding, { now }).status).toBe("pass");
     expect(evaluateRlsReport(rls, { now }).status).toBe("pass");
+    expect(evaluateRlsReport({
+      ...rls,
+      environment: "production",
+      mode: "management_read_only_impersonation",
+    }, { now }).status).toBe("pass");
     expect(
       evaluateOnboardingReport({ ...onboarding, schema_version: 0 }, { now })
         .status,

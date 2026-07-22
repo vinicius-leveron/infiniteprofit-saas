@@ -194,7 +194,11 @@ npm run ops:verify-rls-db
 
 O gate alternativo verifica Member e Admin efetivos, redaction de webhooks,
 bloqueio de `sync_token` e negação de leitura direta das tabelas de
-credenciais. Ele não substitui o teste do fluxo de login.
+credenciais. Para provar herança da Organização sem alterar produção, ele
+remove qualquer membership explícita do Admin dentro de uma transação, executa
+os contratos como `authenticated` e faz rollback. Essa evidência pode fechar o
+gate de RLS em produção no modo `management_read_only_impersonation`, mas não
+substitui o teste do fluxo de login e onboarding em staging.
 
 ## Recuperação da DLQ VTurb
 

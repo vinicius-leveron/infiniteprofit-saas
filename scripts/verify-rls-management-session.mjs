@@ -23,38 +23,21 @@ const candidates = await runQuery(
         member.workspace_id,
         member.user_id as member_user_id,
         project.id as project_id,
-        coalesce(
-          (
-            select workspace_admin.user_id
-            from public.workspace_members workspace_admin
-            where workspace_admin.workspace_id = member.workspace_id
-              and workspace_admin.role in ('owner', 'admin')
-            order by
-              case workspace_admin.role
-                when 'owner' then 1
-                when 'admin' then 2
-                else 3
-              end,
-              workspace_admin.created_at
-            limit 1
-          ),
-          (
-            select organization_admin.user_id
-            from public.workspaces workspace
-            join public.organization_members organization_admin
-              on organization_admin.organization_id =
-                workspace.organization_id
-            where workspace.id = member.workspace_id
-              and organization_admin.role in ('owner', 'admin')
-            order by
-              case organization_admin.role
-                when 'owner' then 1
-                when 'admin' then 2
-                else 3
-              end,
-              organization_admin.created_at
-            limit 1
-          )
+        (
+          select organization_admin.user_id
+          from public.workspaces workspace
+          join public.organization_members organization_admin
+            on organization_admin.organization_id = workspace.organization_id
+          where workspace.id = member.workspace_id
+            and organization_admin.role in ('owner', 'admin')
+          order by
+            case organization_admin.role
+              when 'owner' then 1
+              when 'admin' then 2
+              else 3
+            end,
+            organization_admin.created_at
+          limit 1
         ) as admin_user_id,
         exists (
           select 1
@@ -99,7 +82,6 @@ if (!candidate) {
     "Nenhum Cliente com Member, Admin efetivo e Funil foi encontrado para o gate RLS.",
   );
 }
-
 for (const value of [
   candidate.workspace_id,
   candidate.member_user_id,
@@ -161,8 +143,9 @@ await assertPermissionDenied(
   "Member project sync settings",
 );
 
-const adminRows = await runAsAuthenticated(
+const adminRows = await runAsInheritedAuthenticated(
   candidate.admin_user_id,
+  candidate.workspace_id,
   `
     select
       auth.uid() = ${uuidLiteral(candidate.admin_user_id)} as claim_ok,
@@ -234,14 +217,29 @@ for (const [label, query] of directSecretQueries) {
     candidate.admin_user_id,
     query,
     `Admin direct ${label}`,
+    (userId, statement) =>
+      runAsInheritedAuthenticated(
+        userId,
+        candidate.workspace_id,
+        statement,
+      ),
   );
 }
 
 console.log(
   JSON.stringify(
     {
+      schema_version: 1,
+      environment: "production",
       ok: true,
       mode: "management_read_only_impersonation",
+      completed_at: new Date().toISOString(),
+      artifact_url:
+        process.env.READINESS_ARTIFACT_URL?.trim() || null,
+      member_redacted: true,
+      admin_inherited_access: true,
+      direct_credentials_denied: true,
+      sync_token_denied: true,
       candidate: {
         has_integration: candidate.has_integration === true,
         has_checkout: candidate.has_checkout === true,
@@ -252,6 +250,7 @@ console.log(
         "member webhook tokens redacted",
         "member project sync settings denied",
         "admin safe contracts available",
+        "organization admin inherited access",
         "direct credential tables denied to Member and Admin",
         "projects.sync_token denied to Member and Admin",
         "Meta access_token absent from safe contracts",
@@ -282,9 +281,37 @@ async function runAsAuthenticated(userId, statement) {
   );
 }
 
-async function assertPermissionDenied(userId, statement, label) {
+async function runAsInheritedAuthenticated(userId, workspaceId, statement) {
+  const claims = sqlText(
+    JSON.stringify({ sub: userId, role: "authenticated" }),
+  );
+  return await runQuery(
+    `
+      begin;
+      delete from public.workspace_members membership
+      where membership.workspace_id = ${uuidLiteral(workspaceId)}
+        and membership.user_id = ${uuidLiteral(userId)};
+      select pg_catalog.set_config(
+        'request.jwt.claims',
+        ${claims},
+        true
+      );
+      set local role authenticated;
+      ${statement};
+      rollback;
+    `,
+    { readOnly: false },
+  );
+}
+
+async function assertPermissionDenied(
+  userId,
+  statement,
+  label,
+  runner = runAsAuthenticated,
+) {
   try {
-    await runAsAuthenticated(userId, statement);
+    await runner(userId, statement);
   } catch (error) {
     if (isPermissionDenied(error)) return;
     throw new Error(`${label} falhou por motivo inesperado: ${safeMessage(error)}`);

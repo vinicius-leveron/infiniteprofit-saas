@@ -338,10 +338,15 @@ export function evaluateRlsReport(
   { now = new Date(), limits = READINESS_LIMITS } = {},
 ) {
   const fresh = isFresh(report?.completed_at, now, limits.evidenceMaxAgeDays);
+  const validEnvironment = report?.environment === "staging" ||
+    (
+      report?.environment === "production" &&
+      report?.mode === "management_read_only_impersonation"
+    );
   return check(
     "rls_contracts",
     report?.schema_version === 1 &&
-      report?.environment === "staging" &&
+      validEnvironment &&
       report?.ok === true &&
       fresh &&
       report?.member_redacted === true &&
@@ -349,7 +354,9 @@ export function evaluateRlsReport(
       report?.direct_credentials_denied === true &&
       report?.sync_token_denied === true &&
       Boolean(report?.artifact_url),
-    `fresh=${fresh}; member_redacted=${report?.member_redacted === true}; admin_inherited=${
+    `environment=${report?.environment ?? "missing"}; mode=${
+      report?.mode ?? "interactive"
+    }; fresh=${fresh}; member_redacted=${report?.member_redacted === true}; admin_inherited=${
       report?.admin_inherited_access === true
     }; direct_credentials_denied=${report?.direct_credentials_denied === true}`,
   );

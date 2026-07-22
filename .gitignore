@@ -12,6 +12,7 @@ dist
 dist-ssr
 playwright-report
 test-results
+artifacts
 .env
 .env.*
 !.env.example
