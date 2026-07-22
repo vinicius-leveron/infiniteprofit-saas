@@ -32,6 +32,8 @@ O comando consulta, sem mutação:
 - validade dos índices críticos;
 - idade do último autovacuum e proporção de tuplas mortas em `raw_events`;
 - frontend, Auth e PostgREST;
+- SMTP próprio, confirmação de email ativa e capacidade mínima configurada de
+  30 emails transacionais por hora;
 - histórico de 24 horas do workflow `backend-canary.yml`;
 - histórico de 24 horas do cron service-only `backend-internal-canary`;
 - SQS e DLQ, quando as URLs e credenciais AWS estiverem configuradas.

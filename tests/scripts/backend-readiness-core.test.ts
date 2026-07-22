@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  evaluateAuthEmailDelivery,
   evaluateCanaryRuns,
   evaluateExternalCanaryRuns,
   evaluateGatewayDrillReport,
@@ -16,6 +17,28 @@ import {
 const now = new Date("2026-07-18T12:00:00Z");
 
 describe("backend market readiness", () => {
+  it("requires custom SMTP capacity while preserving email confirmation", () => {
+    expect(evaluateAuthEmailDelivery({
+      smtp_host: "smtp.example.test",
+      smtp_user: "apikey",
+      smtp_admin_email: "noreply@example.test",
+      rate_limit_email_sent: 60,
+      mailer_autoconfirm: false,
+    }).status).toBe("pass");
+
+    expect(evaluateAuthEmailDelivery({
+      rate_limit_email_sent: 2,
+      mailer_autoconfirm: false,
+    }).status).toBe("hold");
+    expect(evaluateAuthEmailDelivery({
+      smtp_host: "smtp.example.test",
+      smtp_user: "apikey",
+      smtp_admin_email: "noreply@example.test",
+      rate_limit_email_sent: 60,
+      mailer_autoconfirm: true,
+    }).status).toBe("hold");
+  });
+
   it("holds when the runtime has connection pressure, locks, or unclassified DLQ", () => {
     const checks = evaluateRuntime({
       project_status: "ACTIVE_HEALTHY",

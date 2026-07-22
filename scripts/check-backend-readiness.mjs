@@ -13,6 +13,7 @@ import {
   SQSClient,
 } from "@aws-sdk/client-sqs";
 import {
+  evaluateAuthEmailDelivery,
   evaluateExternalCanaryRuns,
   evaluateGatewayDrillReport,
   evaluateInternalCanaryRuns,
@@ -63,9 +64,17 @@ if (!anonKey) {
   );
 }
 
-const [project, databaseSnapshot, probeReport, canaryRuns, sqsSnapshot] =
+const [
+  project,
+  authConfig,
+  databaseSnapshot,
+  probeReport,
+  canaryRuns,
+  sqsSnapshot,
+] =
   await Promise.all([
     getProject(accessToken, projectRef),
+    getAuthConfig(accessToken, projectRef),
     getDatabaseSnapshot(accessToken, projectRef),
     runLiveProbe({ appUrl, supabaseUrl, anonKey }),
     getCanaryRuns(),
@@ -79,6 +88,10 @@ const runtimeChecks = evaluateRuntime({
 const checks = [
   ...runtimeChecks,
   evaluateProbe(probeReport),
+  evaluateAuthEmailDelivery(authConfig, {
+    minimumEmailsPerHour:
+      positiveNumber(process.env.READINESS_MIN_AUTH_EMAILS_PER_HOUR) ?? 30,
+  }),
   evaluateExternalCanaryRuns(canaryRuns, { now }),
   evaluateInternalCanaryRuns(databaseSnapshot.backend_canary_runs, { now }),
   evaluateSqsSnapshot({
@@ -141,6 +154,22 @@ async function getProject(token, ref) {
   if (!response.ok) {
     throw new Error(
       `Supabase project status ${response.status}: ${
+        safeMessage(body?.message ?? body?.error ?? response.statusText)
+      }`,
+    );
+  }
+  return body ?? {};
+}
+
+async function getAuthConfig(token, ref) {
+  const response = await fetch(
+    `https://api.supabase.com/v1/projects/${ref}/config/auth`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(
+      `Supabase Auth config ${response.status}: ${
         safeMessage(body?.message ?? body?.error ?? response.statusText)
       }`,
     );

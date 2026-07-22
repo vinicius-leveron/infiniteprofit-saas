@@ -118,6 +118,29 @@ export function evaluateProbe(report, limits = READINESS_LIMITS) {
   );
 }
 
+export function evaluateAuthEmailDelivery(
+  config,
+  { minimumEmailsPerHour = 30 } = {},
+) {
+  const customSmtpConfigured = Boolean(
+    String(config?.smtp_host ?? "").trim() &&
+      String(config?.smtp_user ?? "").trim() &&
+      String(config?.smtp_admin_email ?? "").trim(),
+  );
+  const emailRateLimit = Number(config?.rate_limit_email_sent ?? 0);
+  const confirmationRequired = config?.mailer_autoconfirm !== true;
+
+  return check(
+    "auth_email_delivery",
+    customSmtpConfigured &&
+      confirmationRequired &&
+      emailRateLimit >= minimumEmailsPerHour,
+    `custom_smtp=${customSmtpConfigured}; confirmation_required=${
+      confirmationRequired
+    }; email_limit=${emailRateLimit}/${minimumEmailsPerHour} per hour`,
+  );
+}
+
 export function evaluateCanaryRuns(
   runs,
   {
