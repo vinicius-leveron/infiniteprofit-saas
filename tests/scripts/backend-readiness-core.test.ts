@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   evaluateCanaryRuns,
+  evaluateExternalCanaryRuns,
   evaluateGatewayDrillReport,
   evaluateInternalCanaryRuns,
   evaluateLoadReport,
@@ -72,6 +73,25 @@ describe("backend market readiness", () => {
       id: "internal_canary_24h",
       status: "hold",
     });
+  });
+
+  it("uses GitHub Actions as an independent recent pulse, not the continuous clock", () => {
+    const runs = Array.from({ length: 6 }, (_, index) => {
+      const createdAt = new Date(now.getTime() - (5 - index) * 60 * 60 * 1_000);
+      return {
+        created_at: createdAt.toISOString(),
+        updated_at: createdAt.toISOString(),
+        status: "completed",
+        conclusion: "success",
+      };
+    });
+
+    expect(evaluateExternalCanaryRuns(runs, { now }).status).toBe("pass");
+    expect(evaluateExternalCanaryRuns(runs.slice(1), { now }).status).toBe("hold");
+    expect(evaluateExternalCanaryRuns([
+      ...runs.slice(0, -1),
+      { ...runs.at(-1), conclusion: "failure" },
+    ], { now }).status).toBe("hold");
   });
 
   it("accepts only authenticated staging load at twice the expected peak", () => {

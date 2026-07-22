@@ -3,6 +3,8 @@ export const READINESS_LIMITS = Object.freeze({
   oldestReadyJobSeconds: 300,
   canaryIntervalMinutes: 15,
   canaryCoverageRatio: 0.9,
+  externalCanaryMinimumRuns: 6,
+  externalCanaryMaximumAgeMinutes: 120,
   evidenceMaxAgeDays: 30,
   authP95Ms: 2_000,
   restP95Ms: 800,
@@ -170,6 +172,42 @@ export function evaluateInternalCanaryRuns(runs, options = {}) {
     ...evaluateCanaryRuns(normalized, options),
     id: "internal_canary_24h",
   };
+}
+
+export function evaluateExternalCanaryRuns(
+  runs,
+  {
+    now = new Date(),
+    windowHours = 24,
+    limits = READINESS_LIMITS,
+  } = {},
+) {
+  const windowStart = now.getTime() - windowHours * 60 * 60 * 1_000;
+  const inWindow = (Array.isArray(runs) ? runs : [])
+    .filter((run) => {
+      const createdAt = Date.parse(run.created_at ?? "");
+      return Number.isFinite(createdAt) && createdAt >= windowStart;
+    })
+    .sort((left, right) =>
+      Date.parse(left.created_at) - Date.parse(right.created_at)
+    );
+  const failedRuns = inWindow.filter(
+    (run) => run.status !== "completed" || run.conclusion !== "success",
+  );
+  const newestAt = Date.parse(inWindow.at(-1)?.updated_at ?? "");
+  const recent = Number.isFinite(newestAt) &&
+    now.getTime() - newestAt <=
+      limits.externalCanaryMaximumAgeMinutes * 60 * 1_000;
+
+  return check(
+    "external_canary_24h",
+    inWindow.length >= limits.externalCanaryMinimumRuns &&
+      failedRuns.length === 0 &&
+      recent,
+    `${inWindow.length}/${limits.externalCanaryMinimumRuns} minimum independent runs; ${
+      failedRuns.length
+    } failed/incomplete; recent=${recent}`,
+  );
 }
 
 export function evaluateLoadReport(

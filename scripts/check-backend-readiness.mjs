@@ -13,7 +13,7 @@ import {
   SQSClient,
 } from "@aws-sdk/client-sqs";
 import {
-  evaluateCanaryRuns,
+  evaluateExternalCanaryRuns,
   evaluateGatewayDrillReport,
   evaluateInternalCanaryRuns,
   evaluateLoadReport,
@@ -79,7 +79,7 @@ const runtimeChecks = evaluateRuntime({
 const checks = [
   ...runtimeChecks,
   evaluateProbe(probeReport),
-  evaluateCanaryRuns(canaryRuns, { now }),
+  evaluateExternalCanaryRuns(canaryRuns, { now }),
   evaluateInternalCanaryRuns(databaseSnapshot.backend_canary_runs, { now }),
   evaluateSqsSnapshot({
     ...sqsSnapshot,
