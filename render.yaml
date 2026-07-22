@@ -14,7 +14,7 @@ services:
       - key: VITE_ENABLE_GOOGLE_AUTH
         value: "false"
       - key: VITE_ENABLE_PUBLIC_SIGNUP
-        value: "true"
+        value: "false"
     routes:
       - type: rewrite
         source: /*

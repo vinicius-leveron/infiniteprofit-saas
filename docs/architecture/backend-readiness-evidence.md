@@ -34,6 +34,8 @@ O comando consulta, sem mutação:
 - frontend, Auth e PostgREST;
 - SMTP próprio, confirmação de email ativa e capacidade mínima configurada de
   30 emails transacionais por hora;
+- senha mínima de 8 caracteres, usuários anônimos desativados e vinculação
+  manual de identidades desativada;
 - histórico de 24 horas do workflow `backend-canary.yml`;
 - histórico de 24 horas do cron service-only `backend-internal-canary`;
 - SQS e DLQ, quando as URLs e credenciais AWS estiverem configuradas.

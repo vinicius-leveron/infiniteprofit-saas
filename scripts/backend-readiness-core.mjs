@@ -141,6 +141,26 @@ export function evaluateAuthEmailDelivery(
   );
 }
 
+export function evaluateAuthSecurity(config) {
+  const passwordMinimum = Number(config?.password_min_length ?? 0);
+  const confirmationRequired = config?.mailer_autoconfirm !== true;
+  const anonymousUsersDisabled = config?.external_anonymous_users_enabled !== true;
+  const manualLinkingDisabled = config?.security_manual_linking_enabled !== true;
+
+  return check(
+    "auth_security",
+    passwordMinimum >= 8 &&
+      confirmationRequired &&
+      anonymousUsersDisabled &&
+      manualLinkingDisabled,
+    `password_min=${passwordMinimum}/8; confirmation_required=${
+      confirmationRequired
+    }; anonymous_disabled=${anonymousUsersDisabled}; manual_linking_disabled=${
+      manualLinkingDisabled
+    }`,
+  );
+}
+
 export function evaluateCanaryRuns(
   runs,
   {

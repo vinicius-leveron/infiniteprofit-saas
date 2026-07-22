@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   evaluateAuthEmailDelivery,
+  evaluateAuthSecurity,
   evaluateCanaryRuns,
   evaluateExternalCanaryRuns,
   evaluateGatewayDrillReport,
@@ -36,6 +37,29 @@ describe("backend market readiness", () => {
       smtp_admin_email: "noreply@example.test",
       rate_limit_email_sent: 60,
       mailer_autoconfirm: true,
+    }).status).toBe("hold");
+  });
+
+  it("requires safe baseline Auth settings", () => {
+    expect(evaluateAuthSecurity({
+      password_min_length: 8,
+      mailer_autoconfirm: false,
+      external_anonymous_users_enabled: false,
+      security_manual_linking_enabled: false,
+    }).status).toBe("pass");
+
+    expect(evaluateAuthSecurity({
+      password_min_length: 6,
+      mailer_autoconfirm: false,
+      external_anonymous_users_enabled: false,
+      security_manual_linking_enabled: false,
+    }).status).toBe("hold");
+
+    expect(evaluateAuthSecurity({
+      password_min_length: 8,
+      mailer_autoconfirm: false,
+      external_anonymous_users_enabled: true,
+      security_manual_linking_enabled: false,
     }).status).toBe("hold");
   });
 

@@ -14,6 +14,7 @@ import {
 } from "@aws-sdk/client-sqs";
 import {
   evaluateAuthEmailDelivery,
+  evaluateAuthSecurity,
   evaluateExternalCanaryRuns,
   evaluateGatewayDrillReport,
   evaluateInternalCanaryRuns,
@@ -92,6 +93,7 @@ const checks = [
     minimumEmailsPerHour:
       positiveNumber(process.env.READINESS_MIN_AUTH_EMAILS_PER_HOUR) ?? 30,
   }),
+  evaluateAuthSecurity(authConfig),
   evaluateExternalCanaryRuns(canaryRuns, { now }),
   evaluateInternalCanaryRuns(databaseSnapshot.backend_canary_runs, { now }),
   evaluateSqsSnapshot({

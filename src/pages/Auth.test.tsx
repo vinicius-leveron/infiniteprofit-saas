@@ -85,12 +85,13 @@ describe("Auth", () => {
     expect(screen.getByText(/owner@example.com/)).toBeInTheDocument();
   });
 
-  it("keeps public account creation enabled when production has no explicit flag", async () => {
+  it("keeps public account creation disabled when the flag is absent", async () => {
     vi.stubEnv("VITE_ENABLE_PUBLIC_SIGNUP", "");
     renderAuth();
 
     await waitFor(() => expect(mocks.getSession).toHaveBeenCalled());
-    expect(screen.getByRole("button", { name: "Criar conta" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Criar conta" })).not.toBeInTheDocument();
+    expect(screen.getByText("Novas contas são liberadas por convite.")).toBeInTheDocument();
   });
 
   it("hides public account creation when the feature flag is disabled", async () => {
