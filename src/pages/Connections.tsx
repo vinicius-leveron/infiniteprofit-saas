@@ -17,6 +17,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
+import { HublaImportDialog } from "@/components/hubla/HublaImportDialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -488,49 +489,66 @@ export default function Connections({ mode = "sources" }: { mode?: ConnectionsMo
           <SourceSection
             icon={<CreditCard className="h-5 w-5" />}
             title="Gateway"
-            description="Habilite o webhook persistido deste funil."
+            description="Receba novas vendas por webhook ou importe o histórico da Hubla."
             connected={Boolean(checkoutBinding?.enabled)}
           >
-            {!integration?.gateway_provider ? (
-              <MissingResource
-                message="Configure um gateway nas integrações do cliente antes de habilitá-lo no funil."
-                onAdd={isWorkspaceAdmin ? () => navigate(integrationsPath) : undefined}
-              />
-            ) : (
-              <div className="space-y-4">
-                <label className="flex min-h-11 items-center gap-3 text-sm font-medium">
-                  <Checkbox
-                    checked={checkoutEnabled}
-                    onCheckedChange={(checked) => setCheckoutEnabled(checked === true)}
-                    disabled={!isWorkspaceAdmin}
-                  />
-                  Habilitar {integration.gateway_provider} neste funil
-                </label>
-                {checkoutEnabled && checkoutBinding && isWorkspaceAdmin ? (
-                  <div className="rounded-lg border border-border/60 bg-muted/20 p-4">
-                    <p className="mb-3 text-sm text-muted-foreground">
-                      Este webhook já foi persistido e pode ser configurado no provedor.
+            <div className="space-y-4">
+              {!integration?.gateway_provider ? (
+                <MissingResource
+                  message="Configure um gateway nas integrações do cliente para receber novas vendas."
+                  onAdd={isWorkspaceAdmin ? () => navigate(integrationsPath) : undefined}
+                />
+              ) : (
+                <>
+                  <label className="flex min-h-11 items-center gap-3 text-sm font-medium">
+                    <Checkbox
+                      checked={checkoutEnabled}
+                      onCheckedChange={(checked) => setCheckoutEnabled(checked === true)}
+                      disabled={!isWorkspaceAdmin}
+                    />
+                    Habilitar {integration.gateway_provider} neste funil
+                  </label>
+                  {checkoutEnabled && checkoutBinding && isWorkspaceAdmin ? (
+                    <div className="rounded-lg border border-border/60 bg-muted/20 p-4">
+                      <p className="mb-3 text-sm text-muted-foreground">
+                        Este webhook já foi persistido e pode ser configurado no provedor.
+                      </p>
+                      <Button
+                        variant="outline"
+                        className="min-h-11 gap-2"
+                        onClick={() => {
+                          if (!gatewayWebhookUrl) return;
+                          void navigator.clipboard.writeText(gatewayWebhookUrl);
+                          toast.success("Webhook copiado");
+                        }}
+                      >
+                        <Copy className="h-4 w-4" />
+                        Copiar webhook
+                      </Button>
+                    </div>
+                  ) : checkoutEnabled && !checkoutBinding ? (
+                    <p className="text-sm text-muted-foreground">
+                      Salve as fontes para persistir e liberar a URL do webhook.
                     </p>
-                    <Button
-                      variant="outline"
-                      className="min-h-11 gap-2"
-                      onClick={() => {
-                        if (!gatewayWebhookUrl) return;
-                        void navigator.clipboard.writeText(gatewayWebhookUrl);
-                        toast.success("Webhook copiado");
-                      }}
-                    >
-                      <Copy className="h-4 w-4" />
-                      Copiar webhook
-                    </Button>
+                  ) : null}
+                </>
+              )}
+
+              {isWorkspaceAdmin && (!integration?.gateway_provider || integration.gateway_provider === "hubla") && project && (
+                <div className="flex flex-col items-start justify-between gap-3 rounded-lg border border-border/60 bg-muted/10 p-4 sm:flex-row sm:items-center">
+                  <div>
+                    <p className="text-sm font-medium">Histórico de vendas da Hubla</p>
+                    <p className="mt-1 text-xs leading-4 text-muted-foreground">
+                      Valide e importe CSV/XLSX retroativo sem alterar a configuração do webhook.
+                    </p>
                   </div>
-                ) : checkoutEnabled && !checkoutBinding ? (
-                  <p className="text-sm text-muted-foreground">
-                    Salve as fontes para persistir e liberar a URL do webhook.
-                  </p>
-                ) : null}
-              </div>
-            )}
+                  <HublaImportDialog
+                    projectId={project.id}
+                    onImported={() => load(false)}
+                  />
+                </div>
+              )}
+            </div>
           </SourceSection>
 
           {isWorkspaceAdmin && (

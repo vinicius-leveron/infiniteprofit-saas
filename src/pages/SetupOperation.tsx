@@ -17,6 +17,7 @@ import {
   Zap,
 } from "lucide-react";
 import { toast } from "sonner";
+import { HublaImportPicker } from "@/components/hubla/HublaImportPicker";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -30,6 +31,10 @@ import {
   type ActivationSource,
   type ActivationSyncSource,
 } from "@/lib/funnelActivation";
+import {
+  runHublaImport,
+  type PreparedHublaImport,
+} from "@/lib/hublaImport";
 import { listWorkspaceMetaAccountsSafe } from "@/lib/operationalReadApi";
 import type {
   SetupDraftV2,
@@ -40,7 +45,7 @@ import { cn } from "@/lib/utils";
 
 const SETUP_DRAFT_STORAGE_KEY = "infiniteprofit.setupOperationDraft";
 
-type SourceSetupStatus = "not_started" | "configured" | "skipped" | "error";
+type SourceSetupStatus = "not_started" | "prepared" | "configured" | "skipped" | "error";
 
 type DiscoveredMetaAccount = {
   accountId: string;
@@ -107,6 +112,7 @@ export default function SetupOperation() {
   const [vturbKey, setVturbKey] = useState("");
   const [playersText, setPlayersText] = useState("");
   const [hublaSecret, setHublaSecret] = useState("");
+  const [hublaHistory, setHublaHistory] = useState<PreparedHublaImport | null>(null);
 
   // Test states
   const [testingMetaKey, setTestingMetaKey] = useState<string | null>(null);
@@ -180,7 +186,9 @@ export default function SetupOperation() {
     ? "skipped"
     : hublaSecret.trim()
       ? "configured"
-      : "not_started";
+      : hublaHistory
+        ? "prepared"
+        : "not_started";
   const sourceStatuses: Record<SetupSource, SourceSetupStatus> = {
     meta: metaStatus,
     vturb: vturbStatus,
@@ -190,7 +198,7 @@ export default function SetupOperation() {
     (status) => status === "configured",
   );
   const sourcesDecided = Object.values(sourceStatuses).every(
-    (status) => status === "configured" || status === "skipped",
+    (status) => status === "prepared" || status === "configured" || status === "skipped",
   );
   const stepCompletion: Record<StepId, boolean> = {
     nome: canSubmit,
@@ -218,6 +226,7 @@ export default function SetupOperation() {
       setVturbTestResult(null);
     } else {
       setHublaSecret("");
+      setHublaHistory(null);
     }
   }
 
@@ -366,6 +375,7 @@ export default function SetupOperation() {
     setVturbKey("");
     setPlayersText(draft.playersText);
     setHublaSecret("");
+    setHublaHistory(null);
     setSkippedSources(draft.skippedSources);
     setMetaTestResults({});
     setVturbTestResult(null);
@@ -526,6 +536,25 @@ export default function SetupOperation() {
         );
         if (checkoutError) throw checkoutError;
         configuredSources.push("gateway");
+      }
+
+      if (hublaHistory) {
+        setSavingLabel("Validando seu histórico da Hubla");
+        const preview = await runHublaImport(project.id, hublaHistory.csv, true);
+        if (preview.imported === 0) {
+          throw new Error(
+            "O histórico da Hubla não contém vendas ou eventos reconhecíveis.",
+          );
+        }
+
+        setSavingLabel("Importando seu histórico da Hubla");
+        const imported = await runHublaImport(project.id, hublaHistory.csv, false);
+        if (imported.imported === 0) {
+          throw new Error("O histórico da Hubla não gerou eventos para este funil.");
+        }
+        if (!configuredSources.includes("gateway")) {
+          configuredSources.push("gateway");
+        }
       }
 
       const syncSources = configuredSources.filter(
@@ -978,6 +1007,33 @@ export default function SetupOperation() {
               O webhook será criado e poderá ser copiado somente depois que o funil
               estiver persistido.
             </p>
+            <div className="my-1 flex items-center gap-3" aria-hidden="true">
+              <span className="h-px flex-1 bg-border" />
+              <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                primeiro resultado
+              </span>
+              <span className="h-px flex-1 bg-border" />
+            </div>
+            <div className="rounded-xl border border-primary/20 bg-primary/[0.03] p-4">
+              <div className="mb-3">
+                <p className="text-sm font-medium">Já tem histórico na Hubla?</p>
+                <p className="mt-1 text-xs leading-4 text-muted-foreground">
+                  Importe agora para abrir o primeiro dashboard com vendas reais, sem esperar o próximo webhook.
+                </p>
+              </div>
+              <HublaImportPicker
+                value={hublaHistory}
+                onChange={(next) => {
+                  setHublaHistory(next);
+                  if (next) resumeSource("gateway");
+                }}
+                disabled={saving}
+                compact
+              />
+              <p className="mt-2 text-[11px] leading-4 text-muted-foreground">
+                O conteúdo fica somente nesta etapa e será validado antes da importação.
+              </p>
+            </div>
           </StepSection>
         )}
 
@@ -1018,11 +1074,16 @@ export default function SetupOperation() {
               <Review
                 label="Gateway"
                 value={
-                  hublaSecret.trim()
-                    ? "Secret configurado"
-                    : sourceStatusDescription(gatewayStatus)
+                  hublaSecret.trim() && hublaHistory
+                    ? "Webhook e histórico preparados"
+                    : hublaHistory
+                      ? `Histórico preparado · ${hublaHistory.fileName}`
+                      : hublaSecret.trim()
+                        ? "Secret configurado"
+                        : sourceStatusDescription(gatewayStatus)
                 }
                 status={gatewayStatus}
+                detail={hublaHistory ? "Será validado e importado ao criar" : undefined}
               />
             </div>
             <p className="text-xs text-muted-foreground">
@@ -1198,6 +1259,11 @@ function SourceStatus({ status }: { status: SourceSetupStatus }) {
       icon: CircleCheck,
       className: "text-green-600",
     },
+    prepared: {
+      label: "Pronto para validar",
+      icon: Clock3,
+      className: "text-blue-600",
+    },
     skipped: {
       label: "Adiado para depois",
       icon: Clock3,
@@ -1251,6 +1317,7 @@ function Review({ label, value, status, detail }: {
 function sourceStatusDescription(status: SourceSetupStatus) {
   if (status === "skipped") return "Fazer depois";
   if (status === "error") return "Precisa de atenção";
+  if (status === "prepared") return "Pronto para validar";
   if (status === "configured") return "Configurado";
   return "Ainda não configurado";
 }

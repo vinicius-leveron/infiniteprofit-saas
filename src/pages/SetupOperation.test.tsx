@@ -3,10 +3,11 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import SetupOperation from "./SetupOperation";
 
-const { fromMock, invokeMock, rpcMock } = vi.hoisted(() => ({
+const { fromMock, invokeMock, rpcMock, readHublaImportFileMock } = vi.hoisted(() => ({
   fromMock: vi.fn(),
   invokeMock: vi.fn(),
   rpcMock: vi.fn(),
+  readHublaImportFileMock: vi.fn(),
 }));
 
 const metaAccounts = [
@@ -60,6 +61,10 @@ vi.mock("@/integrations/supabase/client", () => ({
   },
 }));
 
+vi.mock("@/lib/hublaImportFile", () => ({
+  readHublaImportFile: readHublaImportFileMock,
+}));
+
 vi.mock("sonner", () => ({
   toast: {
     error: vi.fn(),
@@ -87,6 +92,10 @@ describe("SetupOperation Meta step", () => {
         error: null,
       }),
     }));
+    readHublaImportFileMock.mockResolvedValue({
+      csv: "ID da fatura;Status da fatura;Data de pagamento;Valor total\nfat-1;Aprovada;01/07/2026;R$ 200,00",
+      kind: "csv",
+    });
     invokeMock.mockImplementation(async (functionName: string, options?: { body?: Record<string, unknown> }) => {
       if (functionName === "meta-test" && options?.body?.action === "list_accounts") {
         return {
@@ -110,6 +119,19 @@ describe("SetupOperation Meta step", () => {
                 timezone: "America/New_York",
               },
             ],
+          },
+          error: null,
+        };
+      }
+      if (functionName === "hubla-csv-import") {
+        return {
+          data: {
+            ok: true,
+            imported: 1,
+            skipped: 0,
+            dates: ["2026-07-01"],
+            warnings: [],
+            headers: ["ID da fatura"],
           },
           error: null,
         };
@@ -330,6 +352,95 @@ describe("SetupOperation Meta step", () => {
       projectId: "project-new",
       configuredSources: [],
       skippedSources: ["meta", "vturb", "gateway"],
+      syncSources: [],
+      syncState: "complete",
+    });
+  });
+
+  it("imports a selected Hubla history after creating the funnel without persisting the file", async () => {
+    fromMock.mockImplementation((table: string) => {
+      if (table === "projects") {
+        return {
+          insert: vi.fn(() => ({
+            select: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({
+                data: { id: "project-hubla" },
+                error: null,
+              }),
+            })),
+          })),
+        };
+      }
+      return createMetaAccountsQuery();
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/setup-operation"]}>
+        <Routes>
+          <Route path="/setup-operation" element={<SetupOperation />} />
+          <Route
+            path="/funnels/:funnelId/activation"
+            element={<div>Experiência de ativação Hubla</div>}
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByLabelText("Nome"), {
+      target: { value: "Funil com histórico" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fontes opcionais" }));
+    const postponeButtons = screen.getAllByRole("button", { name: "Fazer depois" });
+    fireEvent.click(postponeButtons[0]);
+    fireEvent.click(postponeButtons[1]);
+
+    fireEvent.change(screen.getByLabelText(/Selecionar CSV ou XLSX da Hubla/i), {
+      target: { files: [new File(["conteúdo sigiloso"], "hubla.csv", { type: "text/csv" })] },
+    });
+
+    expect(await screen.findByText("hubla.csv")).toBeInTheDocument();
+    await waitFor(() => {
+      const draft = window.sessionStorage.getItem(
+        "infiniteprofit.setupOperationDraft.workspace-1",
+      ) ?? "";
+      expect(draft).not.toContain("fat-1");
+      expect(draft).not.toContain("conteúdo sigiloso");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Revisão" }));
+    expect(screen.getByText(/Histórico preparado · hubla.csv/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Criar funil" }));
+
+    expect(await screen.findByText("Experiência de ativação Hubla")).toBeInTheDocument();
+    expect(invokeMock).toHaveBeenNthCalledWith(
+      1,
+      "hubla-csv-import",
+      expect.objectContaining({
+        body: expect.objectContaining({
+          project_id: "project-hubla",
+          dry_run: true,
+        }),
+      }),
+    );
+    expect(invokeMock).toHaveBeenCalledWith(
+      "hubla-csv-import",
+      expect.objectContaining({
+        body: expect.objectContaining({
+          project_id: "project-hubla",
+          dry_run: false,
+        }),
+      }),
+    );
+
+    const storedPlan = JSON.parse(
+      window.sessionStorage.getItem(
+        "infiniteprofit.funnelActivation.project-hubla",
+      ) ?? "{}",
+    );
+    expect(storedPlan).toMatchObject({
+      projectId: "project-hubla",
+      configuredSources: ["gateway"],
+      skippedSources: ["meta", "vturb"],
       syncSources: [],
       syncState: "complete",
     });
