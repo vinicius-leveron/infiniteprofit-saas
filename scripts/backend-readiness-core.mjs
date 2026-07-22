@@ -6,6 +6,7 @@ export const READINESS_LIMITS = Object.freeze({
   externalCanaryMinimumRuns: 6,
   externalCanaryMaximumAgeMinutes: 120,
   evidenceMaxAgeDays: 30,
+  backupMaximumAgeHours: 30,
   authP95Ms: 2_000,
   restP95Ms: 800,
   maximumErrorRate: 0.01,
@@ -158,6 +159,34 @@ export function evaluateAuthSecurity(config) {
     }; anonymous_disabled=${anonymousUsersDisabled}; manual_linking_disabled=${
       manualLinkingDisabled
     }`,
+  );
+}
+
+export function evaluateDatabaseBackups(
+  snapshot,
+  { now = new Date(), limits = READINESS_LIMITS } = {},
+) {
+  const completed = (Array.isArray(snapshot?.backups) ? snapshot.backups : [])
+    .filter((backup) => backup?.status === "COMPLETED")
+    .map((backup) => ({
+      ...backup,
+      timestamp: Date.parse(backup?.inserted_at ?? ""),
+    }))
+    .filter((backup) => Number.isFinite(backup.timestamp))
+    .sort((left, right) => right.timestamp - left.timestamp);
+  const latest = completed[0];
+  const ageHours = latest
+    ? Math.max(0, (now.getTime() - latest.timestamp) / (60 * 60 * 1_000))
+    : Infinity;
+  const healthy = snapshot?.walg_enabled === true &&
+    ageHours <= limits.backupMaximumAgeHours;
+
+  return check(
+    "database_backup",
+    healthy,
+    `walg=${snapshot?.walg_enabled === true}; completed=${completed.length}; latest_age=${
+      Number.isFinite(ageHours) ? `${ageHours.toFixed(1)}h` : "missing"
+    }; pitr=${snapshot?.pitr_enabled === true}`,
   );
 }
 

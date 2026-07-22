@@ -36,6 +36,7 @@ O comando consulta, sem mutação:
   30 emails transacionais por hora;
 - senha mínima de 8 caracteres, usuários anônimos desativados e vinculação
   manual de identidades desativada;
+- backup físico concluído nas últimas 30 horas;
 - histórico de 24 horas do workflow `backend-canary.yml`;
 - histórico de 24 horas do cron service-only `backend-internal-canary`;
 - SQS e DLQ, quando as URLs e credenciais AWS estiverem configuradas.

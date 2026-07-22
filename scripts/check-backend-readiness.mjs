@@ -15,6 +15,7 @@ import {
 import {
   evaluateAuthEmailDelivery,
   evaluateAuthSecurity,
+  evaluateDatabaseBackups,
   evaluateExternalCanaryRuns,
   evaluateGatewayDrillReport,
   evaluateInternalCanaryRuns,
@@ -68,6 +69,7 @@ if (!anonKey) {
 const [
   project,
   authConfig,
+  backupSnapshot,
   databaseSnapshot,
   probeReport,
   canaryRuns,
@@ -76,6 +78,7 @@ const [
   await Promise.all([
     getProject(accessToken, projectRef),
     getAuthConfig(accessToken, projectRef),
+    getDatabaseBackups(accessToken, projectRef),
     getDatabaseSnapshot(accessToken, projectRef),
     runLiveProbe({ appUrl, supabaseUrl, anonKey }),
     getCanaryRuns(),
@@ -94,6 +97,7 @@ const checks = [
       positiveNumber(process.env.READINESS_MIN_AUTH_EMAILS_PER_HOUR) ?? 30,
   }),
   evaluateAuthSecurity(authConfig),
+  evaluateDatabaseBackups(backupSnapshot, { now }),
   evaluateExternalCanaryRuns(canaryRuns, { now }),
   evaluateInternalCanaryRuns(databaseSnapshot.backend_canary_runs, { now }),
   evaluateSqsSnapshot({
@@ -172,6 +176,22 @@ async function getAuthConfig(token, ref) {
   if (!response.ok) {
     throw new Error(
       `Supabase Auth config ${response.status}: ${
+        safeMessage(body?.message ?? body?.error ?? response.statusText)
+      }`,
+    );
+  }
+  return body ?? {};
+}
+
+async function getDatabaseBackups(token, ref) {
+  const response = await fetch(
+    `https://api.supabase.com/v1/projects/${ref}/database/backups`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(
+      `Supabase backups ${response.status}: ${
         safeMessage(body?.message ?? body?.error ?? response.statusText)
       }`,
     );

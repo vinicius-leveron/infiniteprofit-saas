@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   evaluateAuthEmailDelivery,
   evaluateAuthSecurity,
+  evaluateDatabaseBackups,
   evaluateCanaryRuns,
   evaluateExternalCanaryRuns,
   evaluateGatewayDrillReport,
@@ -61,6 +62,30 @@ describe("backend market readiness", () => {
       external_anonymous_users_enabled: true,
       security_manual_linking_enabled: false,
     }).status).toBe("hold");
+  });
+
+  it("requires a recent completed physical backup", () => {
+    expect(evaluateDatabaseBackups({
+      walg_enabled: true,
+      pitr_enabled: false,
+      backups: [{
+        status: "COMPLETED",
+        inserted_at: new Date(now.getTime() - 2 * 60 * 60 * 1_000).toISOString(),
+      }],
+    }, { now }).status).toBe("pass");
+
+    expect(evaluateDatabaseBackups({
+      walg_enabled: true,
+      backups: [{
+        status: "COMPLETED",
+        inserted_at: new Date(now.getTime() - 31 * 60 * 60 * 1_000).toISOString(),
+      }],
+    }, { now }).status).toBe("hold");
+
+    expect(evaluateDatabaseBackups({
+      walg_enabled: false,
+      backups: [],
+    }, { now }).status).toBe("hold");
   });
 
   it("holds when the runtime has connection pressure, locks, or unclassified DLQ", () => {
