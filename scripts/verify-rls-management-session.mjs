@@ -226,6 +226,23 @@ for (const [label, query] of directSecretQueries) {
   );
 }
 
+const restoredMembershipRows = await runQuery(
+  `
+    select exists (
+      select 1
+      from public.workspace_members membership
+      where membership.workspace_id = ${uuidLiteral(candidate.workspace_id)}
+        and membership.user_id = ${uuidLiteral(candidate.admin_user_id)}
+    ) as explicit_membership_restored
+  `,
+  { readOnly: true },
+);
+if (restoredMembershipRows[0]?.explicit_membership_restored !== true) {
+  throw new Error(
+    "O rollback do teste de acesso herdado não restaurou a membership explícita.",
+  );
+}
+
 console.log(
   JSON.stringify(
     {
@@ -251,6 +268,7 @@ console.log(
         "member project sync settings denied",
         "admin safe contracts available",
         "organization admin inherited access",
+        "temporary membership removal rolled back",
         "direct credential tables denied to Member and Admin",
         "projects.sync_token denied to Member and Admin",
         "Meta access_token absent from safe contracts",
