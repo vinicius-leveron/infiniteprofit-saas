@@ -17,6 +17,22 @@ export const READINESS_LIMITS = Object.freeze({
   rawEventsDeadTupleRatio: 0.2,
 });
 
+export const OPERATIONAL_READINESS_CHECK_IDS = Object.freeze([
+  "control_plane",
+  "connection_headroom",
+  "lock_waits",
+  "background_cron",
+  "sync_queue",
+  "sync_dlq",
+  "critical_indexes",
+  "raw_events_maintenance",
+  "live_probe",
+  "auth_security",
+  "database_backup",
+  "external_canary_24h",
+  "rls_contracts",
+]);
+
 export function evaluateRuntime(snapshot, limits = READINESS_LIMITS) {
   const maxConnections = Number(snapshot.max_connections ?? 0);
   const totalConnections = Number(snapshot.total_connections ?? 0);
@@ -477,6 +493,22 @@ export function readinessSummary(checks, generatedAt = new Date()) {
       .filter((item) => item.status !== "pass")
       .map((item) => item.id),
     checks,
+  };
+}
+
+export function operationalReadinessSummary(
+  checks,
+  requiredIds = OPERATIONAL_READINESS_CHECK_IDS,
+) {
+  const byId = new Map(
+    (Array.isArray(checks) ? checks : []).map((item) => [item.id, item]),
+  );
+  const holds = requiredIds.filter((id) => byId.get(id)?.status !== "pass");
+  return {
+    decision: holds.length === 0 ? "ready" : "hold",
+    required: requiredIds.length,
+    passed: requiredIds.length - holds.length,
+    holds,
   };
 }
 

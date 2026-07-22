@@ -41,6 +41,11 @@ O comando consulta, sem mutação:
 - histórico de 24 horas do cron service-only `backend-internal-canary`;
 - SQS e DLQ, quando as URLs e credenciais AWS estiverem configuradas.
 
+O workflow `backend-operational-readiness.yml` repete essa auditoria a cada
+seis horas. Ele falha quando qualquer contrato operacional obrigatório deixa
+de passar e mantém o relatório completo, inclusive os gates de mercado ainda
+em `hold`, como artefato por 30 dias.
+
 O cron interno é a evidência contínua canônica: exige cobertura de pelo menos
 90% dos intervalos de 15 minutos, sem falhas e sem lacunas. O GitHub Actions é
 uma verificação independente; como o agendador externo pode atrasar ou omitir

@@ -13,6 +13,7 @@ import {
   evaluateRlsReport,
   evaluateRuntime,
   evaluateSqsSnapshot,
+  operationalReadinessSummary,
   readinessSummary,
 } from "../../scripts/backend-readiness-core.mjs";
 
@@ -308,6 +309,25 @@ describe("backend market readiness", () => {
       passed: 1,
       total: 2,
       holds: ["two"],
+    });
+  });
+
+  it("fails operational readiness when a required check is missing or held", () => {
+    expect(operationalReadinessSummary([
+      { id: "control_plane", status: "pass", evidence: "ok" },
+      { id: "live_probe", status: "pass", evidence: "ok" },
+    ], ["control_plane", "live_probe"])).toMatchObject({
+      decision: "ready",
+      passed: 2,
+      holds: [],
+    });
+
+    expect(operationalReadinessSummary([
+      { id: "control_plane", status: "hold", evidence: "degraded" },
+    ], ["control_plane", "live_probe"])).toMatchObject({
+      decision: "hold",
+      passed: 0,
+      holds: ["control_plane", "live_probe"],
     });
   });
 });

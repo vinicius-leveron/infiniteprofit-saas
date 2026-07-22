@@ -1,0 +1,88 @@
+name: Backend Operational Readiness
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "13 */6 * * *"
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: backend-operational-readiness
+  cancel-in-progress: true
+
+jobs:
+  readiness:
+    name: Production Runtime, Auth, Backup, And RLS
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+      VITE_SUPABASE_URL: https://nztnctrkmfrgclrnflfa.supabase.co
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
+      PROBE_APP_URL: https://infiniteprofit-saas.onrender.com
+      GITHUB_TOKEN: ${{ github.token }}
+      READINESS_GITHUB_REPOSITORY: ${{ github.repository }}
+      READINESS_ARTIFACT_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      GATEWAY_QUEUE_URL: ${{ vars.GATEWAY_QUEUE_URL }}
+      GATEWAY_DLQ_URL: ${{ vars.GATEWAY_DLQ_URL }}
+
+    steps:
+      - name: Checkout monitored commit
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Validate monitoring credentials
+        run: |
+          test -n "$SUPABASE_ACCESS_TOKEN" || (echo "SUPABASE_ACCESS_TOKEN is required" && exit 1)
+          test -n "$SUPABASE_PROJECT_REF" || (echo "SUPABASE_PROJECT_REF is required" && exit 1)
+          test -n "$VITE_SUPABASE_PUBLISHABLE_KEY" || (echo "SUPABASE_PUBLISHABLE_KEY is required" && exit 1)
+          test "$SUPABASE_PROJECT_REF" = "nztnctrkmfrgclrnflfa" || (echo "Production project ref mismatch" && exit 1)
+
+      - name: Verify production RLS contracts safely
+        env:
+          RLS_MANAGEMENT_SESSION_ACK: ${{ vars.SUPABASE_PROJECT_REF }}
+        run: |
+          mkdir -p artifacts
+          node scripts/verify-rls-management-session.mjs | tee artifacts/production-rls.json
+
+      - name: Evaluate operational and market readiness
+        env:
+          READINESS_RLS_REPORT: artifacts/production-rls.json
+        run: node scripts/check-backend-readiness.mjs --enforce-operational | tee artifacts/backend-readiness.json
+
+      - name: Publish readiness summary
+        if: always()
+        run: |
+          echo "## Backend operational readiness" >> "$GITHUB_STEP_SUMMARY"
+          if test -f artifacts/backend-readiness.json; then
+            echo "- Operational: \`$(jq -r '.operational.decision' artifacts/backend-readiness.json)\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Market: \`$(jq -r '.decision' artifacts/backend-readiness.json)\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Market holds: \`$(jq -r '.holds | join(", ")' artifacts/backend-readiness.json)\`" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- No readiness report was produced." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload immutable readiness evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-operational-readiness-${{ github.sha }}-${{ github.run_id }}
+          path: artifacts
+          if-no-files-found: warn
+          retention-days: 30

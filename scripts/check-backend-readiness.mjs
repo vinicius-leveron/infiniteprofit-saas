@@ -27,6 +27,7 @@ import {
   evaluateRuntime,
   evaluateSqsSnapshot,
   missingEvidenceCheck,
+  operationalReadinessSummary,
   readinessSummary,
 } from "./backend-readiness-core.mjs";
 
@@ -49,6 +50,7 @@ const appUrl = (
   "https://infiniteprofit-saas.onrender.com"
 ).replace(/\/$/, "");
 const enforce = process.argv.includes("--enforce");
+const enforceOperational = process.argv.includes("--enforce-operational");
 const now = new Date();
 
 const accessToken =
@@ -138,8 +140,10 @@ const checks = [
 ];
 
 const report = readinessSummary(checks, now);
+const operational = operationalReadinessSummary(checks);
 console.log(JSON.stringify({
   ...report,
+  operational,
   target: {
     project_ref: projectRef,
     app_host: new URL(appUrl).host,
@@ -148,7 +152,10 @@ console.log(JSON.stringify({
   live_probe: probeReport,
 }, null, 2));
 
-if (enforce && report.decision !== "ready") {
+if (
+  (enforce && report.decision !== "ready") ||
+  (enforceOperational && operational.decision !== "ready")
+) {
   process.exitCode = 1;
 }
 
