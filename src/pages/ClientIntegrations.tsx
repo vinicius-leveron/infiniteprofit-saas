@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  AlertTriangle,
   CheckCircle2,
   KeyRound,
   Loader2,
@@ -7,6 +8,7 @@ import {
   Plus,
   RefreshCw,
   Save,
+  ShieldCheck,
   ShoppingBag,
   Trash2,
   Video,
@@ -45,13 +47,23 @@ import {
 import { toast } from "sonner";
 
 type GatewayProvider = "hotmart" | "hubla" | "kiwify";
-type IntegrationEditor = "meta" | "vturb" | "gateway" | null;
+type IntegrationEditor =
+  | "meta"
+  | "meta-credential"
+  | "vturb"
+  | "gateway"
+  | null;
 
 interface IntegrationRow {
   workspace_id: string;
   vturb_last_event_at: string | null;
   gateway_provider: GatewayProvider | null;
   gateway_last_event_at: string | null;
+  has_meta_credential: boolean;
+  meta_sync_suspended_at: string | null;
+  meta_sync_suspension_reason: string | null;
+  meta_validated_at: string | null;
+  meta_credential_updated_at: string | null;
 }
 
 interface MetaAccount {
@@ -112,11 +124,31 @@ function formatLastActivity(value: string | null) {
   }).format(new Date(value))}`;
 }
 
+async function functionErrorMessage(error: unknown, fallback: string) {
+  const context =
+    error && typeof error === "object" && "context" in error
+      ? (error as { context?: unknown }).context
+      : null;
+  if (context instanceof Response) {
+    try {
+      const payload = await context.clone().json();
+      const message = String(payload?.error ?? "").trim();
+      if (message) return message;
+    } catch {
+      // The caller still receives the stable fallback below.
+    }
+  }
+  return error instanceof Error && error.message
+    ? error.message
+    : fallback;
+}
+
 export default function ClientIntegrations() {
   const { user } = useAuth();
   const { client, clientId, canManage } = useAdminClient();
   const [integration, setIntegration] = useState<IntegrationRow | null>(null);
   const [metaAccounts, setMetaAccounts] = useState<MetaAccount[]>([]);
+  const [metaFunnelUseCount, setMetaFunnelUseCount] = useState(0);
   const [vturbPlayers, setVturbPlayers] = useState<VturbPlayer[]>([]);
   const [gatewayUseCount, setGatewayUseCount] = useState(0);
   const [loading, setLoading] = useState(Boolean(clientId));
@@ -130,6 +162,9 @@ export default function ClientIntegrations() {
   const [discoveredMeta, setDiscoveredMeta] = useState<DiscoveredMetaAccount[]>([]);
   const [discoveringMeta, setDiscoveringMeta] = useState(false);
   const [testingMetaId, setTestingMetaId] = useState<string | null>(null);
+  const [metaCredentialError, setMetaCredentialError] = useState<string | null>(
+    null,
+  );
 
   const [vturbApiKey, setVturbApiKey] = useState("");
   const [refreshingVturb, setRefreshingVturb] = useState(false);
@@ -175,7 +210,7 @@ export default function ClientIntegrations() {
           metaIds.length
             ? supabase
                 .from("project_meta_accounts")
-                .select("meta_account_id")
+                .select("project_id, meta_account_id")
                 .in("meta_account_id", metaIds)
             : Promise.resolve({ data: [], error: null }),
           playerIds.length
@@ -206,6 +241,13 @@ export default function ClientIntegrations() {
           ...account,
           boundProjectCount: metaCounts.get(account.id) ?? 0,
         })),
+      );
+      setMetaFunnelUseCount(
+        new Set(
+          (metaBindingResult.data ?? [])
+            .map((binding) => binding.project_id)
+            .filter(Boolean),
+        ).size,
       );
       setVturbPlayers(
         typedPlayers.map((player) => ({
@@ -249,6 +291,12 @@ export default function ClientIntegrations() {
     setMetaToken("");
     setDiscoveredMeta([]);
     setEditor("meta");
+  }
+
+  function openMetaCredential() {
+    setMetaToken("");
+    setMetaCredentialError(null);
+    setEditor("meta-credential");
   }
 
   function openVturb() {
@@ -318,7 +366,7 @@ export default function ClientIntegrations() {
       const accountId = metaAccountId.trim().startsWith("act_")
         ? metaAccountId.trim()
         : `act_${metaAccountId.trim()}`;
-      const { error } = await supabase.functions.invoke("workspace-credentials", {
+      const { data, error } = await supabase.functions.invoke("workspace-credentials", {
         body: {
           action: "upsert_meta_account",
           workspace_id: clientId,
@@ -328,13 +376,78 @@ export default function ClientIntegrations() {
           label: metaLabel.trim() || null,
         },
       });
-      if (error) throw error;
+      if (data?.ok === false) {
+        throw new Error(data.error ?? "A credencial Meta não consegue ler investimento.");
+      }
+      if (error) {
+        throw new Error(
+          await functionErrorMessage(
+            error,
+            "A credencial Meta não consegue ler investimento.",
+          ),
+        );
+      }
       setEditor(null);
       await loadIntegrations();
-      toast.success("Conta Meta salva");
+      toast.success(
+        data?.sync?.queued
+          ? "Conta Meta salva. Sincronização dos últimos 7 dias iniciada."
+          : "Conta Meta salva",
+      );
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Falha ao salvar a conta Meta.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function replaceMetaCredential() {
+    if (!clientId || !canManage || !metaToken.trim()) return;
+    setSaving(true);
+    setMetaCredentialError(null);
+    try {
+      const { data, error } = await supabase.functions.invoke(
+        "workspace-credentials",
+        {
+          body: {
+            action: "replace_meta_credential",
+            workspace_id: clientId,
+            access_token: metaToken.trim(),
+          },
+        },
+      );
+      if (data?.ok === false) {
+        throw new Error(
+          data.error ?? "A nova credencial não foi aceita pela Meta.",
+        );
+      }
+      if (error) {
+        throw new Error(
+          await functionErrorMessage(
+            error,
+            "A nova credencial não foi aceita pela Meta.",
+          ),
+        );
+      }
+
+      setMetaToken("");
+      setEditor(null);
+      await loadIntegrations();
+      const accountCount = Number(
+        data?.credential?.accounts_updated ?? metaAccounts.length,
+      );
+      toast.success(
+        `Credencial validada em ${accountCount} ${
+          accountCount === 1 ? "conta" : "contas"
+        }. Atualização iniciada.`,
+      );
+    } catch (error) {
+      setMetaCredentialError(
+        error instanceof Error
+          ? error.message
+          : "Falha ao substituir a credencial Meta.",
       );
     } finally {
       setSaving(false);
@@ -509,22 +622,95 @@ export default function ClientIntegrations() {
                     <Megaphone className="h-5 w-5" aria-hidden="true" />
                   </span>
                   <div>
-                    <CardTitle className="text-lg leading-7">Meta Ads</CardTitle>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <CardTitle className="text-lg leading-7">Meta Ads</CardTitle>
+                      <StatusPill
+                        label={
+                          metaAccounts.length === 0
+                            ? "Não configurada"
+                            : integration?.meta_sync_suspended_at
+                              ? "Requer ação"
+                              : integration?.meta_validated_at
+                                ? "Conectada"
+                                : "Validação pendente"
+                        }
+                        tone={
+                          metaAccounts.length === 0
+                            ? "neutral"
+                            : integration?.meta_sync_suspended_at
+                              ? "danger"
+                              : integration?.meta_validated_at
+                                ? "success"
+                                : "warning"
+                        }
+                      />
+                    </div>
                     <CardDescription>
-                      Tokens e contas de anúncio disponíveis para os funis.
+                      Uma credencial compartilhada para todas as contas e funis deste cliente.
                     </CardDescription>
                   </div>
                 </div>
                 {canManage && (
-                  <Button className="min-h-11 gap-2" onClick={openNewMeta}>
-                    <Plus className="h-4 w-4" aria-hidden="true" />
-                    Adicionar conta
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    {metaAccounts.length > 0 && (
+                      <Button
+                        className="min-h-11 gap-2"
+                        onClick={openMetaCredential}
+                      >
+                        <KeyRound className="h-4 w-4" aria-hidden="true" />
+                        {integration?.meta_sync_suspended_at
+                          ? "Atualizar credencial"
+                          : "Trocar credencial"}
+                      </Button>
+                    )}
+                    <Button
+                      variant={metaAccounts.length > 0 ? "outline" : "default"}
+                      className="min-h-11 gap-2"
+                      onClick={openNewMeta}
+                    >
+                      <Plus className="h-4 w-4" aria-hidden="true" />
+                      Adicionar conta
+                    </Button>
+                  </div>
                 )}
               </div>
             </CardHeader>
             <Separator />
             <CardContent className="p-5 md:p-6">
+              {integration?.meta_sync_suspended_at && (
+                <div
+                  className="mb-5 rounded-xl border border-destructive/25 bg-destructive/5 p-4"
+                  role="alert"
+                >
+                  <div className="flex gap-3">
+                    <AlertTriangle
+                      className="mt-0.5 h-5 w-5 shrink-0 text-destructive"
+                      aria-hidden="true"
+                    />
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-destructive">
+                        A Meta parou de atualizar
+                      </p>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {integration.meta_sync_suspension_reason ??
+                          "Substitua a credencial para reativar as contas e iniciar a recuperação automática."}
+                      </p>
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        As tentativas automáticas estão pausadas para evitar erros repetidos.
+                      </p>
+                      {canManage && (
+                        <Button
+                          size="sm"
+                          className="mt-3 min-h-10"
+                          onClick={openMetaCredential}
+                        >
+                          Atualizar credencial
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
               {metaAccounts.length === 0 ? (
                 <div className="rounded-lg border border-dashed p-6 text-center">
                   <KeyRound className="mx-auto h-6 w-6 text-muted-foreground" aria-hidden="true" />
@@ -534,8 +720,31 @@ export default function ClientIntegrations() {
                   </p>
                 </div>
               ) : (
-                <div className="divide-y rounded-lg border">
-                  {metaAccounts.map((account) => (
+                <>
+                  <dl className="mb-5 grid gap-3 rounded-xl bg-muted/40 p-4 sm:grid-cols-3">
+                    <div>
+                      <dt className="text-xs text-muted-foreground">Credencial</dt>
+                      <dd className="mt-1 text-sm font-medium">
+                        {integration?.meta_validated_at
+                          ? "Validada para todas as contas"
+                          : "Aguardando validação compartilhada"}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs text-muted-foreground">Contas</dt>
+                      <dd className="mt-1 text-sm font-medium">
+                        {metaAccounts.length} configuradas
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs text-muted-foreground">Uso</dt>
+                      <dd className="mt-1 text-sm font-medium">
+                        {formatUseCount(metaFunnelUseCount)}
+                      </dd>
+                    </div>
+                  </dl>
+                  <div className="divide-y rounded-lg border">
+                    {metaAccounts.map((account) => (
                     <div
                       key={account.id}
                       className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between"
@@ -545,7 +754,18 @@ export default function ClientIntegrations() {
                           <p className="truncate text-sm font-medium">
                             {account.label || account.account_id}
                           </p>
-                          <StatusPill label="Configurada" tone="success" />
+                          <StatusPill
+                            label={
+                              integration?.meta_sync_suspended_at
+                                ? "Pausada"
+                                : "Configurada"
+                            }
+                            tone={
+                              integration?.meta_sync_suspended_at
+                                ? "danger"
+                                : "success"
+                            }
+                          />
                         </div>
                         <p className="mt-1 text-xs text-muted-foreground">
                           {account.account_id} · {formatUseCount(account.boundProjectCount)}
@@ -591,8 +811,9 @@ export default function ClientIntegrations() {
                         </div>
                       )}
                     </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                </>
               )}
             </CardContent>
           </Card>
@@ -743,41 +964,165 @@ export default function ClientIntegrations() {
         </div>
       </AsyncState>
 
+      <Sheet
+        open={editor === "meta-credential"}
+        onOpenChange={(open) => {
+          if (!open) {
+            setMetaCredentialError(null);
+            setMetaToken("");
+            setEditor(null);
+          }
+        }}
+      >
+        <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
+          <SheetHeader>
+            <SheetTitle>Atualizar credencial Meta</SheetTitle>
+            <SheetDescription>
+              Uma única troca valida e atualiza todas as contas deste cliente.
+            </SheetDescription>
+          </SheetHeader>
+
+          <div className="space-y-5 py-6">
+            <div className="rounded-xl border bg-muted/35 p-4">
+              <div className="flex gap-3">
+                <ShieldCheck
+                  className="mt-0.5 h-5 w-5 shrink-0 text-primary"
+                  aria-hidden="true"
+                />
+                <div>
+                  <p className="text-sm font-semibold">
+                    Impacto desta alteração
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    O token será validado em {metaAccounts.length}{" "}
+                    {metaAccounts.length === 1 ? "conta" : "contas"} usadas por{" "}
+                    {metaFunnelUseCount}{" "}
+                    {metaFunnelUseCount === 1 ? "funil" : "funis"}.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="meta-shared-token">Novo token de acesso</Label>
+              <Input
+                id="meta-shared-token"
+                type="password"
+                autoComplete="off"
+                value={metaToken}
+                onChange={(event) => {
+                  setMetaToken(event.target.value);
+                  setMetaCredentialError(null);
+                }}
+                placeholder="EAAB…"
+                aria-describedby="meta-shared-token-help"
+                aria-invalid={Boolean(metaCredentialError)}
+              />
+              <p
+                id="meta-shared-token-help"
+                className="text-xs leading-5 text-muted-foreground"
+              >
+                Use preferencialmente um token de System User ou longa duração
+                com ads_read, e acesso a todas as contas acima.
+              </p>
+            </div>
+
+            {metaCredentialError && (
+              <div
+                className="rounded-xl border border-destructive/25 bg-destructive/5 p-4"
+                role="alert"
+              >
+                <div className="flex gap-3">
+                  <AlertTriangle
+                    className="mt-0.5 h-5 w-5 shrink-0 text-destructive"
+                    aria-hidden="true"
+                  />
+                  <div>
+                    <p className="text-sm font-semibold text-destructive">
+                      Não foi possível atualizar
+                    </p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {metaCredentialError}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-3">
+              {[
+                "Validar acesso e leitura de investimento em todas as contas.",
+                "Substituir a credencial de forma atômica, sem atualização parcial.",
+                "Reativar as filas e atualizar 3 dias imediatamente.",
+                "Recuperar 30 dias de histórico em segundo plano.",
+              ].map((step) => (
+                <div key={step} className="flex gap-3 text-sm">
+                  <CheckCircle2
+                    className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
+                    aria-hidden="true"
+                  />
+                  <span>{step}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <SheetFooter>
+            <Button
+              className="min-h-11 gap-2"
+              disabled={saving || !metaToken.trim()}
+              onClick={() => void replaceMetaCredential()}
+            >
+              {saving ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+              )}
+              {saving ? "Validando todas as contas…" : "Validar e atualizar"}
+            </Button>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
+
       <Sheet open={editor === "meta"} onOpenChange={(open) => !open && setEditor(null)}>
         <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
           <SheetHeader>
             <SheetTitle>{metaId ? "Configurar conta Meta" : "Adicionar conta Meta"}</SheetTitle>
             <SheetDescription>
-              O token é usado somente para salvar ou validar a conta e não volta a ser exibido.
+              {metaId
+                ? "Edite o nome da conta. A credencial é administrada uma única vez no card da Meta."
+                : "Use uma credencial com acesso à conta. O token não volta a ser exibido."}
             </SheetDescription>
           </SheetHeader>
           <div className="space-y-5 py-6">
-            <div className="space-y-2">
-              <Label htmlFor="meta-token">Token de acesso</Label>
-              <Input
-                id="meta-token"
-                type="password"
-                autoComplete="off"
-                value={metaToken}
-                onChange={(event) => setMetaToken(event.target.value)}
-                placeholder={metaId ? "Deixe vazio para manter o token atual" : "EAAB…"}
-              />
-            </div>
             {!metaId && (
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-11 w-full gap-2"
-                disabled={!metaToken.trim() || discoveringMeta}
-                onClick={() => void discoverMetaAccounts()}
-              >
-                {discoveringMeta ? (
-                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                ) : (
-                  <RefreshCw className="h-4 w-4" aria-hidden="true" />
-                )}
-                Buscar contas acessíveis
-              </Button>
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="meta-token">Token de acesso</Label>
+                  <Input
+                    id="meta-token"
+                    type="password"
+                    autoComplete="off"
+                    value={metaToken}
+                    onChange={(event) => setMetaToken(event.target.value)}
+                    placeholder="EAAB…"
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11 w-full gap-2"
+                  disabled={!metaToken.trim() || discoveringMeta}
+                  onClick={() => void discoverMetaAccounts()}
+                >
+                  {discoveringMeta ? (
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                  )}
+                  Buscar contas acessíveis
+                </Button>
+              </>
             )}
             {discoveredMeta.length > 0 && (
               <div className="space-y-2">

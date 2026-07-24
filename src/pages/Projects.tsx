@@ -6,6 +6,7 @@ import {
   BarChart3,
   Calendar,
   FileSpreadsheet,
+  FileUp,
   HeartPulse,
   Loader2,
   Plug,
@@ -64,6 +65,9 @@ export default function Projects() {
   const newFunnelPath = client
     ? `/clients/${client.id}/funnels/new`
     : "/setup-operation";
+  const importFunnelPath = client
+    ? `/clients/${client.id}/funnels/import`
+    : "/clients";
 
   useEffect(() => {
     if (!authLoading && !userId) navigate("/auth", { replace: true });
@@ -186,10 +190,20 @@ export default function Projects() {
             </p>
           </div>
           {isWorkspaceAdmin && (
-            <Button onClick={() => navigate(newFunnelPath)} className="min-h-11 gap-2">
-              <Plus className="h-4 w-4" />
-              Novo funil
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                onClick={() => navigate(importFunnelPath)}
+                className="min-h-11 gap-2"
+              >
+                <FileUp className="h-4 w-4" />
+                Importar planilha
+              </Button>
+              <Button onClick={() => navigate(newFunnelPath)} className="min-h-11 gap-2">
+                <Plus className="h-4 w-4" />
+                Novo funil
+              </Button>
+            </div>
           )}
         </header>
 
@@ -212,10 +226,20 @@ export default function Projects() {
               Crie o primeiro funil e escolha quais fontes de dados deseja conectar agora.
             </p>
             {isWorkspaceAdmin && (
-              <Button onClick={() => navigate(newFunnelPath)} className="mt-5 gap-2">
-                <Plus className="h-4 w-4" />
-                Criar primeiro funil
-              </Button>
+              <div className="mt-5 flex flex-wrap justify-center gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => navigate(importFunnelPath)}
+                  className="min-h-11 gap-2"
+                >
+                  <FileUp className="h-4 w-4" />
+                  Importar planilha
+                </Button>
+                <Button onClick={() => navigate(newFunnelPath)} className="min-h-11 gap-2">
+                  <Plus className="h-4 w-4" />
+                  Criar primeiro funil
+                </Button>
+              </div>
             )}
           </div>
         ) : (

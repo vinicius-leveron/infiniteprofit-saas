@@ -2,6 +2,14 @@
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { buildAutomationHeaders, isAutomationRequest } from "../_shared/automation.ts";
+import {
+  isPermanentMetaCredentialError,
+  metaCredentialErrorFromResponse,
+} from "../_shared/meta-credentials.ts";
+import {
+  parseMetaInsightLevels,
+  type MetaInsightLevel,
+} from "./core.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -31,8 +39,6 @@ type MetaAccountBinding = {
   label: string | null;
 };
 
-type MetaInsightLevel = "account" | "campaign" | "adset" | "ad";
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -50,6 +56,13 @@ Deno.serve(async (req) => {
     const days = Math.min(Math.max(Number(body.days) || 7, 1), 90);
     const skipAggregate = caller.kind === "service" && body.skip_aggregate === true;
     const skipCreative = caller.kind === "service" && body.skip_creative === true;
+    const levels = parseMetaInsightLevels(
+      body.levels,
+      caller.kind === "service",
+    );
+    const syncProfile = caller.kind === "service"
+      ? stringOrNull(body.sync_profile)
+      : null;
 
     if (caller.kind === "user" && !targetProjectId) {
       return json({ error: "project_id é obrigatório para sync manual" }, 400);
@@ -72,7 +85,12 @@ Deno.serve(async (req) => {
         projectId: project.id,
         source: "meta",
         initiatedBy: caller.kind === "user" ? caller.userId : null,
-        details: { days, account_filter: targetAccountId },
+        details: {
+          days,
+          account_filter: targetAccountId,
+          levels,
+          sync_profile: syncProfile,
+        },
       });
 
       try {
@@ -92,6 +110,7 @@ Deno.serve(async (req) => {
               account,
               days,
               skipAggregate,
+              levels,
             );
             latestProjectSync = new Date().toISOString();
             projectResults.push({
@@ -116,6 +135,14 @@ Deno.serve(async (req) => {
               account_id: normalizeMetaAccountId(account.account_id),
               error: message,
             });
+            if (isPermanentMetaCredentialError(error)) {
+              await suspendWorkspaceMetaSync(
+                sb,
+                project.workspace_id,
+                message,
+              );
+              break;
+            }
           }
         }
 
@@ -142,6 +169,8 @@ Deno.serve(async (req) => {
           details: {
             days,
             account_filter: targetAccountId,
+            levels,
+            sync_profile: syncProfile,
             results: projectResults,
           },
           errorMessage: failed.length
@@ -153,7 +182,12 @@ Deno.serve(async (req) => {
         results.push({ project_id: project.id, error: message });
         await finishSyncRun(sb, runId, {
           status: "failed",
-          details: { days, account_filter: targetAccountId },
+          details: {
+            days,
+            account_filter: targetAccountId,
+            levels,
+            sync_profile: syncProfile,
+          },
           errorMessage: message,
         });
       }
@@ -166,12 +200,31 @@ Deno.serve(async (req) => {
   }
 });
 
+async function suspendWorkspaceMetaSync(
+  sb: ReturnType<typeof createClient>,
+  workspaceId: string,
+  reason: string,
+) {
+  const { error } = await sb.rpc("suspend_workspace_meta_sync", {
+    _workspace_id: workspaceId,
+    _reason: reason,
+  });
+  if (error) {
+    console.error(JSON.stringify({
+      event: "meta_sync_suspend_failed",
+      workspace_id: workspaceId,
+      error: error.message,
+    }));
+  }
+}
+
 async function pullForAccount(
   sb: ReturnType<typeof createClient>,
   project: ProjectContext,
   account: MetaAccountBinding,
   days: number,
   skipAggregate: boolean,
+  levels: MetaInsightLevel[],
 ) {
   const { sinceStr, untilStr } = inclusiveLocalDateRange(days);
   const accountId = normalizeMetaAccountId(account.account_id);
@@ -185,7 +238,7 @@ async function pullForAccount(
     legacy: 0,
   };
 
-  for (const level of ["account", "campaign", "adset", "ad"] as MetaInsightLevel[]) {
+  for (const level of levels) {
     const insights = await fetchInsights(accountId, account.access_token, level, sinceStr, untilStr);
     if (level === "ad" && insights.length > 0) {
       const creativeIdByAdId = await fetchCreativeIdsForAds(account.access_token, insights.map((insight) => String(insight?.ad_id ?? "")));
@@ -241,23 +294,29 @@ async function fetchInsights(
   url.searchParams.set("time_increment", "1");
   url.searchParams.set("time_range", JSON.stringify({ since: sinceStr, until: untilStr }));
   url.searchParams.set("fields", fieldsForLevel(level, true));
-  url.searchParams.set("access_token", accessToken);
   url.searchParams.set("limit", "500");
 
   const insights: any[] = [];
   let nextUrl: string | null = url.toString();
+  let firstPage = true;
   while (nextUrl) {
-    const response = await fetch(nextUrl);
+    const response = await fetch(nextUrl, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      const text = await response.text();
-      if (level === "ad" && nextUrl === url.toString()) {
+      if (level === "ad" && firstPage) {
         return await fetchInsightsFallback(accountId, accessToken, level, sinceStr, untilStr);
       }
-      throw new Error(`Meta API ${response.status}: ${text.slice(0, 300)}`);
+      throw metaCredentialErrorFromResponse(
+        response.status,
+        data,
+        accessToken,
+      );
     }
-    const data = await response.json();
     if (Array.isArray(data?.data)) insights.push(...data.data);
-    nextUrl = typeof data?.paging?.next === "string" ? data.paging.next : null;
+    nextUrl = cleanMetaGraphUrl(data?.paging?.next);
+    firstPage = false;
   }
   return insights;
 }
@@ -274,20 +333,24 @@ async function fetchInsightsFallback(
   url.searchParams.set("time_increment", "1");
   url.searchParams.set("time_range", JSON.stringify({ since: sinceStr, until: untilStr }));
   url.searchParams.set("fields", fieldsForLevel(level, false));
-  url.searchParams.set("access_token", accessToken);
   url.searchParams.set("limit", "500");
 
   const insights: any[] = [];
   let nextUrl: string | null = url.toString();
   while (nextUrl) {
-    const response = await fetch(nextUrl);
+    const response = await fetch(nextUrl, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`Meta API ${response.status}: ${text.slice(0, 300)}`);
+      throw metaCredentialErrorFromResponse(
+        response.status,
+        data,
+        accessToken,
+      );
     }
-    const data = await response.json();
     if (Array.isArray(data?.data)) insights.push(...data.data);
-    nextUrl = typeof data?.paging?.next === "string" ? data.paging.next : null;
+    nextUrl = cleanMetaGraphUrl(data?.paging?.next);
   }
   return insights;
 }
@@ -361,8 +424,9 @@ async function fetchCreativeIdsForAds(accessToken: string, adIds: string[]) {
     const url = new URL("https://graph.facebook.com/v21.0/");
     url.searchParams.set("ids", batch.join(","));
     url.searchParams.set("fields", "id,creative{id}");
-    url.searchParams.set("access_token", accessToken);
-    const response = await fetch(url);
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
     if (!response.ok) {
       continue;
     }
@@ -375,6 +439,17 @@ async function fetchCreativeIdsForAds(accessToken: string, adIds: string[]) {
     }
   }
   return results;
+}
+
+function cleanMetaGraphUrl(value: unknown) {
+  if (typeof value !== "string" || !value) return null;
+  try {
+    const url = new URL(value);
+    url.searchParams.delete("access_token");
+    return url.toString();
+  } catch {
+    return null;
+  }
 }
 
 async function triggerCreativeSync(

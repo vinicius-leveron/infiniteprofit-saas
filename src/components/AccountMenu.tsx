@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { ChevronUp, Command, LogOut } from "lucide-react";
+import { ChevronUp, Command, LifeBuoy, LogOut } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import {
   createAppNavigation,
@@ -99,6 +99,12 @@ export function AccountMenu({
     onOpenCommand();
   };
 
+  const openHelp = () => {
+    setMobileOpen(false);
+    onNavigate?.();
+    navigate("/help");
+  };
+
   const signOut = async () => {
     setMobileOpen(false);
     onNavigate?.();
@@ -161,6 +167,14 @@ export function AccountMenu({
               </section>
             ))}
             <div className="my-2 h-px bg-border/60" />
+            <button
+              type="button"
+              onClick={openHelp}
+              className="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <LifeBuoy className="h-4 w-4" />
+              <span>Ajuda e suporte</span>
+            </button>
             <button
               type="button"
               onClick={openCommand}
@@ -249,6 +263,13 @@ export function AccountMenu({
           </div>
         ))}
         <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onSelect={openHelp}
+          className="min-h-10 gap-3"
+        >
+          <LifeBuoy className="h-4 w-4 text-muted-foreground" />
+          Ajuda e suporte
+        </DropdownMenuItem>
         <DropdownMenuItem onSelect={openCommand} className="min-h-10 gap-3">
           <Command className="h-4 w-4 text-muted-foreground" />
           Buscar comandos

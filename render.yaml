@@ -2,7 +2,7 @@ services:
   - type: web
     name: infiniteprofit-saas
     runtime: static
-    buildCommand: npm ci && npm run build
+    buildCommand: npm ci && VITE_APP_RELEASE=$RENDER_GIT_COMMIT npm run build
     staticPublishPath: ./dist
     envVars:
       - key: VITE_SUPABASE_URL
@@ -15,6 +15,14 @@ services:
         value: "false"
       - key: VITE_ENABLE_PUBLIC_SIGNUP
         value: "false"
+      - key: VITE_APP_PUBLIC_URL
+        value: https://infiniteprofit-saas.onrender.com
+      - key: VITE_SUPPORT_EMAIL
+        value: suporte@infiniteprofit.com.br
+      - key: VITE_LEGAL_ENTITY_NAME
+        value: Infinite Profit
+      - key: VITE_APP_ENVIRONMENT
+        value: production
     routes:
       - type: rewrite
         source: /*
@@ -55,3 +63,29 @@ services:
         value: /usr/bin/ffmpeg
       - key: FFPROBE_PATH
         value: /usr/bin/ffprobe
+  - type: worker
+    name: infiniteprofit-gateway-queue-consumer
+    runtime: docker
+    dockerfilePath: ./workers/gateway-queue-consumer/Dockerfile
+    dockerContext: .
+    envVars:
+      - key: SUPABASE_URL
+        value: https://nztnctrkmfrgclrnflfa.supabase.co
+      - key: AUTOMATION_KEY
+        sync: false
+      - key: GATEWAY_QUEUE_URL
+        sync: false
+      - key: AWS_REGION
+        value: us-east-1
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: GATEWAY_QUEUE_BATCH_SIZE
+        value: "5"
+      - key: GATEWAY_QUEUE_WAIT_TIME_SECONDS
+        value: "20"
+      - key: GATEWAY_QUEUE_DELIVERY_TIMEOUT_MS
+        value: "25000"
+      - key: GATEWAY_QUEUE_HEARTBEAT_INTERVAL_MS
+        value: "60000"

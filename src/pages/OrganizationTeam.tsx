@@ -25,6 +25,7 @@ import { Separator } from "@/components/ui/separator";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorkspace, type OrganizationRole } from "@/hooks/useWorkspace";
+import { runTeamAccess } from "@/lib/teamAccess";
 import { toast } from "sonner";
 
 interface DirectMember {
@@ -59,6 +60,8 @@ export default function OrganizationTeam() {
     currentOrganizationRole === "admin" ||
     organization?.role === "owner" ||
     organization?.role === "admin";
+  const canInviteOwner =
+    currentOrganizationRole === "owner" || organization?.role === "owner";
 
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [invites, setInvites] = useState<AdminInvite[]>([]);
@@ -69,6 +72,11 @@ export default function OrganizationTeam() {
   const [inviting, setInviting] = useState(false);
   const [renewingId, setRenewingId] = useState<string | null>(null);
   const [revokingId, setRevokingId] = useState<string | null>(null);
+  const [busyUserId, setBusyUserId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!canInviteOwner && role === "owner") setRole("admin");
+  }, [canInviteOwner, role]);
 
   const loadTeam = useCallback(async () => {
     if (!organization?.id) return;
@@ -87,7 +95,7 @@ export default function OrganizationTeam() {
           .order("created_at", { ascending: true }),
         supabase
           .from("organization_invites")
-          .select("id, email, role, token, expires_at, accepted_at, revoked_at")
+          .select("id, email, role, token, expires_at, accepted_at, revoked_at, delivery_status, delivery_error, last_sent_at, send_count")
           .eq("organization_id", organization.id)
           .order("created_at", { ascending: false }),
         supabase.rpc("list_organization_access_directory", {
@@ -116,6 +124,7 @@ export default function OrganizationTeam() {
             accessOrigin: "organization",
             email: identity?.email,
             fullName: identity?.full_name,
+            inherited: false,
           };
         }),
       );
@@ -140,20 +149,24 @@ export default function OrganizationTeam() {
   }, [loadTeam, organization?.id]);
 
   async function createInvite() {
-    if (!user || !organization?.id || !canManage || !email.trim()) return;
+    if (!organization?.id || !canManage || !email.trim()) return;
     setInviting(true);
     try {
-      const { error } = await supabase.from("organization_invites").insert({
-        organization_id: organization.id,
+      const result = await runTeamAccess({
+        scope_type: "organization",
+        scope_id: organization.id,
+        action: "create_invite",
         email: email.trim().toLowerCase(),
         role,
-        created_by: user.id,
       });
-      if (error) throw error;
       setEmail("");
       setRole("admin");
       await loadTeam();
-      toast.success("Convite criado");
+      if (result.delivery?.status === "sent") {
+        toast.success("Convite enviado por email");
+      } else {
+        toast.warning("Convite criado, mas o email falhou. Use reenviar.");
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Falha ao criar convite.");
     } finally {
@@ -164,16 +177,18 @@ export default function OrganizationTeam() {
   async function renewInvite(invite: AdminInvite) {
     setRenewingId(invite.id);
     try {
-      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-      const { error } = await supabase
-        .from("organization_invites")
-        .update({ expires_at: expiresAt, revoked_at: null })
-        .eq("id", invite.id);
-      if (error) throw error;
+      const result = await runTeamAccess({
+        scope_type: "organization",
+        scope_id: organization!.id,
+        action: "resend_invite",
+        invite_id: invite.id,
+      });
       await loadTeam();
-      const url = `${window.location.origin}/accept-invite?kind=organization&token=${invite.token}`;
-      await navigator.clipboard.writeText(url);
-      toast.success("Convite renovado e link copiado");
+      if (result.delivery?.status === "sent") {
+        toast.success("Convite reenviado por email");
+      } else {
+        toast.error("O email não foi enviado. Tente novamente.");
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Falha ao renovar convite.");
     } finally {
@@ -184,11 +199,12 @@ export default function OrganizationTeam() {
   async function revokeInvite(invite: AdminInvite) {
     setRevokingId(invite.id);
     try {
-      const { error } = await supabase
-        .from("organization_invites")
-        .update({ revoked_at: new Date().toISOString() })
-        .eq("id", invite.id);
-      if (error) throw error;
+      await runTeamAccess({
+        scope_type: "organization",
+        scope_id: organization!.id,
+        action: "revoke_invite",
+        invite_id: invite.id,
+      });
       await loadTeam();
       toast.success("Convite revogado");
     } catch (error) {
@@ -201,6 +217,45 @@ export default function OrganizationTeam() {
   async function copyInvite(url: string) {
     await navigator.clipboard.writeText(url);
     toast.success("Link copiado");
+  }
+
+  async function updateMemberRole(member: TeamMember, nextRole: string) {
+    if (!organization?.id || nextRole === member.role) return;
+    setBusyUserId(member.userId);
+    try {
+      await runTeamAccess({
+        scope_type: "organization",
+        scope_id: organization.id,
+        action: "update_member_role",
+        user_id: member.userId,
+        role: nextRole,
+      });
+      await loadTeam();
+      toast.success("Papel atualizado");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Falha ao atualizar papel.");
+    } finally {
+      setBusyUserId(null);
+    }
+  }
+
+  async function removeMember(member: TeamMember) {
+    if (!organization?.id) return;
+    setBusyUserId(member.userId);
+    try {
+      await runTeamAccess({
+        scope_type: "organization",
+        scope_id: organization.id,
+        action: "remove_member",
+        user_id: member.userId,
+      });
+      await loadTeam();
+      toast.success("Acesso removido");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Falha ao remover acesso.");
+    } finally {
+      setBusyUserId(null);
+    }
   }
 
   const status = useMemo(() => {
@@ -239,6 +294,12 @@ export default function OrganizationTeam() {
             members={members}
             currentUser={user}
             emptyMessage="Nenhum administrador encontrado."
+            canManage={canManage}
+            canGrantOwner={canInviteOwner}
+            availableRoles={["owner", "admin"]}
+            busyUserId={busyUserId}
+            onUpdateRole={(member, nextRole) => void updateMemberRole(member, nextRole)}
+            onRemove={(member) => void removeMember(member)}
           />
         </section>
 
@@ -247,7 +308,7 @@ export default function OrganizationTeam() {
             <CardHeader className="p-5 md:p-6">
               <CardTitle className="text-lg leading-7">Convidar administrador</CardTitle>
               <CardDescription>
-                Apenas owners podem conceder acesso no nível da organização.
+                Owners podem conceder Owner; Admins administram apenas o papel Admin.
               </CardDescription>
             </CardHeader>
             <Separator />
@@ -281,7 +342,7 @@ export default function OrganizationTeam() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="admin">Admin</SelectItem>
-                      <SelectItem value="owner">Owner</SelectItem>
+                      {canInviteOwner && <SelectItem value="owner">Owner</SelectItem>}
                     </SelectContent>
                   </Select>
                 </div>
@@ -318,6 +379,7 @@ export default function OrganizationTeam() {
             invites={invites}
             kind="organization"
             canManage={canManage}
+            canManageOwner={canInviteOwner}
             onCopy={(url) => void copyInvite(url)}
             onRenew={(invite) => void renewInvite(invite)}
             onRevoke={(invite) => void revokeInvite(invite)}

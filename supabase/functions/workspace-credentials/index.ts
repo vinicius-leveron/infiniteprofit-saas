@@ -1,6 +1,18 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import {
+  listAccessibleMetaAdAccounts,
+  MetaCredentialError,
+  missingMetaAccountIds,
+  normalizeMetaAccountId,
+  validateMetaInsightsAccess,
+} from "../_shared/meta-credentials.ts";
+import {
+  enqueueSyncJobBatch,
+  type EnqueueSyncJobResult,
+} from "../_shared/sync-jobs.ts";
+import { localDateWindow } from "../sync-jobs/core.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -18,6 +30,8 @@ class HttpError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly code: string | null = null,
+    readonly details: Record<string, unknown> | null = null,
   ) {
     super(message);
     this.name = "HttpError";
@@ -55,8 +69,30 @@ Deno.serve(async (req) => {
     }
 
     if (body.action === "upsert_meta_account") {
-      const result = await upsertMetaAccount(admin, body, workspaceId, caller.userId);
-      return json({ ok: true, meta_account: result });
+      const result = await upsertMetaAccount(
+        admin,
+        body,
+        workspaceId,
+        caller.userId,
+      );
+      return json({
+        ok: true,
+        meta_account: result.account,
+        sync: result.sync,
+      });
+    }
+
+    if (body.action === "replace_meta_credential") {
+      const result = await replaceMetaCredential(
+        admin,
+        body,
+        workspaceId,
+        caller.userId,
+      );
+      return json({
+        ok: true,
+        credential: result,
+      });
     }
 
     if (body.action === "delete_meta_account") {
@@ -71,11 +107,38 @@ Deno.serve(async (req) => {
 
     return json({ error: "Invalid action" }, 400);
   } catch (error) {
-    console.error("workspace-credentials error", error);
-    return json(
-      { error: error instanceof Error ? error.message : "Erro inesperado" },
-      error instanceof HttpError ? error.status : 500,
-    );
+    if (error instanceof MetaCredentialError) {
+      console.warn(JSON.stringify({
+        event: "meta_credential_rejected",
+        code: error.code,
+        provider_code: error.providerCode,
+        provider_subcode: error.providerSubcode,
+      }));
+      return json({
+        ok: false,
+        error: error.message,
+        code: error.code,
+      }, 422);
+    }
+
+    const status = error instanceof HttpError
+      ? error.status
+      : 500;
+    console.error(JSON.stringify({
+      event: "workspace_credentials_failed",
+      status,
+      error: error instanceof Error ? error.message : "Erro inesperado",
+    }));
+    return json({
+      ok: false,
+      error: error instanceof Error ? error.message : "Erro inesperado",
+      ...(error instanceof HttpError && error.code
+        ? { code: error.code }
+        : {}),
+      ...(error instanceof HttpError && error.details
+        ? { details: error.details }
+        : {}),
+    }, status);
   }
 });
 
@@ -162,6 +225,9 @@ async function upsertMetaAccount(
   if (!accessToken) {
     throw new Error("access_token obrigatorio");
   }
+  if (nextToken) {
+    await validateMetaInsightsAccess(accountId, nextToken);
+  }
 
   const accountPayload = {
     account_id: accountId,
@@ -177,7 +243,19 @@ async function upsertMetaAccount(
       .select("id, account_id, label")
       .single();
     if (error) throw new Error(error.message);
-    return data;
+    if (nextToken) {
+      await refreshWorkspaceMetaCredentialState(
+        admin,
+        workspaceId,
+        userId,
+      );
+    }
+    return {
+      account: data,
+      sync: nextToken
+        ? await enqueueMetaCredentialRefresh(admin, workspaceId, data)
+        : null,
+    };
   }
 
   const { data, error } = await admin
@@ -190,8 +268,271 @@ async function upsertMetaAccount(
     .select("id, account_id, label")
     .single();
   if (error) throw new Error(error.message);
+  if (nextToken) {
+    await refreshWorkspaceMetaCredentialState(
+      admin,
+      workspaceId,
+      userId,
+    );
+  }
 
-  return data;
+  return {
+    account: data,
+    sync: nextToken
+      ? await enqueueMetaCredentialRefresh(admin, workspaceId, data)
+      : null,
+  };
+}
+
+async function refreshWorkspaceMetaCredentialState(
+  admin: SupabaseClientAny,
+  workspaceId: string,
+  userId: string,
+) {
+  const { error } = await admin.rpc(
+    "refresh_workspace_meta_credential_state",
+    {
+      _workspace_id: workspaceId,
+      _actor_id: userId,
+    },
+  );
+  if (error) throw new Error(error.message);
+}
+
+async function replaceMetaCredential(
+  admin: SupabaseClientAny,
+  body: Record<string, unknown>,
+  workspaceId: string,
+  userId: string,
+) {
+  const accessToken = stringOrNull(body.access_token);
+  if (!accessToken) {
+    throw new HttpError("Informe o novo token Meta.", 400, "meta_token_required");
+  }
+  if (accessToken.length > 2000) {
+    throw new HttpError("Token Meta inválido.", 400, "meta_token_invalid");
+  }
+
+  const { data: configuredRows, error: configuredError } = await admin
+    .from("workspace_meta_accounts")
+    .select("id, account_id, label")
+    .eq("workspace_id", workspaceId)
+    .order("created_at", { ascending: true });
+  if (configuredError) throw new Error(configuredError.message);
+
+  const configuredAccounts = (configuredRows ?? []) as Array<{
+    id: string;
+    account_id: string;
+    label: string | null;
+  }>;
+  if (configuredAccounts.length === 0) {
+    throw new HttpError(
+      "Este cliente ainda não possui contas Meta cadastradas.",
+      409,
+      "meta_accounts_missing",
+    );
+  }
+
+  const accessibleAccounts = await listAccessibleMetaAdAccounts(accessToken);
+  const missingAccountIds = missingMetaAccountIds(
+    configuredAccounts.map((account) => account.account_id),
+    accessibleAccounts.map((account) => account.account_id),
+  );
+  if (missingAccountIds.length > 0) {
+    const labelsById = new Map(
+      configuredAccounts.map((account) => [
+        normalizeMetaAccountId(account.account_id),
+        account.label,
+      ]),
+    );
+    const missingAccounts = missingAccountIds.map((accountId) => ({
+      account_id: accountId,
+      label: labelsById.get(accountId) ?? null,
+    }));
+    throw new HttpError(
+      `O token não possui acesso a ${missingAccountIds.length} ${
+        missingAccountIds.length === 1 ? "conta vinculada" : "contas vinculadas"
+      }. Revise os ativos no Meta Business antes de continuar.`,
+      422,
+      "meta_account_access_missing",
+      { missing_accounts: missingAccounts },
+    );
+  }
+
+  await Promise.all(
+    configuredAccounts.map((account) =>
+      validateMetaInsightsAccess(account.account_id, accessToken)
+    ),
+  );
+
+  const validatedAt = new Date().toISOString();
+  const { data: updatedAccounts, error: replaceError } = await admin.rpc(
+    "replace_workspace_meta_credential",
+    {
+      _workspace_id: workspaceId,
+      _access_token: accessToken,
+      _validated_at: validatedAt,
+      _actor_id: userId,
+    },
+  );
+  if (replaceError) throw new Error(replaceError.message);
+
+  const refreshes = [];
+  for (const account of configuredAccounts) {
+    refreshes.push(
+      await enqueueMetaCredentialRefresh(admin, workspaceId, account),
+    );
+  }
+
+  const jobs = refreshes.flatMap((refresh) => refresh.jobs);
+  return {
+    accounts_updated: Number(updatedAccounts ?? configuredAccounts.length),
+    accounts_validated: configuredAccounts.length,
+    validated_at: validatedAt,
+    sync: {
+      queued: jobs.some((job) =>
+        job.status === "inserted" || job.status === "updated"
+      ),
+      jobs_total: jobs.length,
+      jobs_started: jobs.filter((job) =>
+        job.status === "inserted" || job.status === "updated"
+      ).length,
+    },
+  };
+}
+
+async function enqueueMetaCredentialRefresh(
+  admin: SupabaseClientAny,
+  workspaceId: string,
+  account: { id: string; account_id: string },
+) {
+  try {
+    const { data: bindings, error } = await admin
+      .from("project_meta_accounts")
+      .select("project_id")
+      .eq("meta_account_id", account.id);
+    if (error) throw new Error(error.message);
+
+    const projectIds = [
+      ...new Set(
+        (bindings ?? [])
+          .map((binding: { project_id?: string | null }) =>
+            binding.project_id ?? ""
+          )
+          .filter(Boolean),
+      ),
+    ];
+    if (projectIds.length === 0) {
+      return {
+        queued: false,
+        reason: "no_bound_funnels",
+        jobs: [] as EnqueueSyncJobResult[],
+      };
+    }
+
+    const recentWindow = localDateWindow(3);
+    const refreshWindow = localDateWindow(30);
+    const jobs = await enqueueSyncJobBatch(
+      admin,
+      projectIds.flatMap((projectId) => [
+        {
+          job: {
+            workspaceId,
+            projectId,
+            source: "meta" as const,
+            entityType: "meta_account" as const,
+            entityId: `${account.account_id}:fast`,
+            dateStart: recentWindow.dateStart,
+            dateEnd: recentWindow.dateEnd,
+            priority: 0,
+            maxAttempts: 5,
+            payload: {
+              workspace_meta_account_id: account.id,
+              account_id: account.account_id,
+              reason: "credential_updated",
+              sync_profile: "fast",
+              levels: ["account"],
+            },
+          },
+          options: {
+            requeueSucceededAfterMinutes: 0,
+            reviveDeadLetter: true,
+          },
+        },
+        {
+          job: {
+            workspaceId,
+            projectId,
+            source: "meta" as const,
+            entityType: "meta_account" as const,
+            entityId: account.account_id,
+            dateStart: recentWindow.dateStart,
+            dateEnd: recentWindow.dateEnd,
+            priority: 1,
+            maxAttempts: 5,
+            payload: {
+              workspace_meta_account_id: account.id,
+              account_id: account.account_id,
+              reason: "credential_updated",
+              sync_profile: "detail",
+              levels: ["campaign", "adset", "ad"],
+            },
+          },
+          options: {
+            requeueSucceededAfterMinutes: 0,
+            reviveDeadLetter: true,
+          },
+        },
+        {
+          job: {
+            workspaceId,
+            projectId,
+            source: "meta" as const,
+            entityType: "meta_account" as const,
+            entityId: `${account.account_id}:credential-refresh`,
+            dateStart: refreshWindow.dateStart,
+            dateEnd: refreshWindow.dateEnd,
+            priority: 2,
+            maxAttempts: 5,
+            payload: {
+              workspace_meta_account_id: account.id,
+              account_id: account.account_id,
+              reason: "credential_updated",
+              sync_profile: "credential_backfill",
+              levels: ["account", "campaign", "adset", "ad"],
+            },
+          },
+          options: {
+            requeueSucceededAfterMinutes: 0,
+            reviveDeadLetter: true,
+          },
+        },
+      ]),
+    );
+
+    return {
+      queued: jobs.some((job) =>
+        job.status === "inserted" || job.status === "updated"
+      ),
+      reason: null,
+      jobs,
+    };
+  } catch (error) {
+    const message = error instanceof Error
+      ? error.message
+      : "Falha ao enfileirar sincronização";
+    console.error(JSON.stringify({
+      event: "meta_credential_refresh_enqueue_failed",
+      workspace_id: workspaceId,
+      meta_account_id: account.id,
+      error: message,
+    }));
+    return {
+      queued: false,
+      reason: "enqueue_failed",
+      jobs: [] as EnqueueSyncJobResult[],
+    };
+  }
 }
 
 async function deleteMetaAccount(
@@ -312,12 +653,6 @@ function normalizeGatewayProvider(value: unknown) {
     throw new Error("gateway_provider invalido");
   }
   return provider;
-}
-
-function normalizeMetaAccountId(value: unknown) {
-  const accountId = stringOrNull(value);
-  if (!accountId) return null;
-  return accountId.startsWith("act_") ? accountId : `act_${accountId}`;
 }
 
 function stringOrNull(value: unknown) {

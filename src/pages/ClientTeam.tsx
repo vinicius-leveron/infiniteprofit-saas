@@ -26,6 +26,7 @@ import { Separator } from "@/components/ui/separator";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import type { WorkspaceRole } from "@/hooks/useWorkspace";
+import { runTeamAccess } from "@/lib/teamAccess";
 import { toast } from "sonner";
 
 interface DirectMember {
@@ -61,6 +62,7 @@ export default function ClientTeam() {
   const [inviting, setInviting] = useState(false);
   const [renewingId, setRenewingId] = useState<string | null>(null);
   const [revokingId, setRevokingId] = useState<string | null>(null);
+  const [busyUserId, setBusyUserId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!canInviteOwner && role === "owner") setRole("admin");
@@ -83,7 +85,7 @@ export default function ClientTeam() {
           .order("created_at", { ascending: true }),
         supabase
           .from("workspace_invites")
-          .select("id, email, role, token, expires_at, accepted_at, revoked_at")
+          .select("id, email, role, token, expires_at, accepted_at, revoked_at, delivery_status, delivery_error, last_sent_at, send_count")
           .eq("workspace_id", clientId)
           .order("created_at", { ascending: false }),
         supabase.rpc("list_workspace_access_directory", {
@@ -111,6 +113,7 @@ export default function ClientTeam() {
               accessOrigin: entry.access_origin,
               email: entry.email,
               fullName: entry.full_name,
+              inherited: entry.access_origin === "organization",
             })),
       );
       setInvites((inviteRows ?? []) as AdminInvite[]);
@@ -132,20 +135,24 @@ export default function ClientTeam() {
   }, [clientId, loadTeam]);
 
   async function createInvite() {
-    if (!user || !clientId || !canManage || !email.trim()) return;
+    if (!clientId || !canManage || !email.trim()) return;
     setInviting(true);
     try {
-      const { error } = await supabase.from("workspace_invites").insert({
-        workspace_id: clientId,
+      const result = await runTeamAccess({
+        scope_type: "workspace",
+        scope_id: clientId,
+        action: "create_invite",
         email: email.trim().toLowerCase(),
         role,
-        created_by: user.id,
       });
-      if (error) throw error;
       setEmail("");
       setRole("member");
       await loadTeam();
-      toast.success("Convite criado");
+      if (result.delivery?.status === "sent") {
+        toast.success("Convite enviado por email");
+      } else {
+        toast.warning("Convite criado, mas o email falhou. Use reenviar.");
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Falha ao criar convite.");
     } finally {
@@ -156,16 +163,18 @@ export default function ClientTeam() {
   async function renewInvite(invite: AdminInvite) {
     setRenewingId(invite.id);
     try {
-      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-      const { error } = await supabase
-        .from("workspace_invites")
-        .update({ expires_at: expiresAt, revoked_at: null })
-        .eq("id", invite.id);
-      if (error) throw error;
+      const result = await runTeamAccess({
+        scope_type: "workspace",
+        scope_id: clientId!,
+        action: "resend_invite",
+        invite_id: invite.id,
+      });
       await loadTeam();
-      const url = `${window.location.origin}/accept-invite?kind=workspace&token=${invite.token}`;
-      await navigator.clipboard.writeText(url);
-      toast.success("Convite renovado e link copiado");
+      if (result.delivery?.status === "sent") {
+        toast.success("Convite reenviado por email");
+      } else {
+        toast.error("O email não foi enviado. Tente novamente.");
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Falha ao renovar convite.");
     } finally {
@@ -176,11 +185,12 @@ export default function ClientTeam() {
   async function revokeInvite(invite: AdminInvite) {
     setRevokingId(invite.id);
     try {
-      const { error } = await supabase
-        .from("workspace_invites")
-        .update({ revoked_at: new Date().toISOString() })
-        .eq("id", invite.id);
-      if (error) throw error;
+      await runTeamAccess({
+        scope_type: "workspace",
+        scope_id: clientId!,
+        action: "revoke_invite",
+        invite_id: invite.id,
+      });
       await loadTeam();
       toast.success("Convite revogado");
     } catch (error) {
@@ -193,6 +203,45 @@ export default function ClientTeam() {
   async function copyInvite(url: string) {
     await navigator.clipboard.writeText(url);
     toast.success("Link copiado");
+  }
+
+  async function updateMemberRole(member: TeamMember, nextRole: string) {
+    if (!clientId || nextRole === member.role) return;
+    setBusyUserId(member.userId);
+    try {
+      await runTeamAccess({
+        scope_type: "workspace",
+        scope_id: clientId,
+        action: "update_member_role",
+        user_id: member.userId,
+        role: nextRole,
+      });
+      await loadTeam();
+      toast.success("Papel atualizado");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Falha ao atualizar papel.");
+    } finally {
+      setBusyUserId(null);
+    }
+  }
+
+  async function removeMember(member: TeamMember) {
+    if (!clientId) return;
+    setBusyUserId(member.userId);
+    try {
+      await runTeamAccess({
+        scope_type: "workspace",
+        scope_id: clientId,
+        action: "remove_member",
+        user_id: member.userId,
+      });
+      await loadTeam();
+      toast.success("Acesso removido");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Falha ao remover acesso.");
+    } finally {
+      setBusyUserId(null);
+    }
   }
 
   const status = useMemo(() => {
@@ -229,6 +278,11 @@ export default function ClientTeam() {
             members={members}
             currentUser={user}
             emptyMessage="Nenhum membro encontrado para este cliente."
+            canManage={canManage}
+            canGrantOwner={canInviteOwner}
+            busyUserId={busyUserId}
+            onUpdateRole={(member, nextRole) => void updateMemberRole(member, nextRole)}
+            onRemove={(member) => void removeMember(member)}
           />
         </section>
 
@@ -310,6 +364,7 @@ export default function ClientTeam() {
             invites={invites}
             kind="workspace"
             canManage={canManage}
+            canManageOwner={canInviteOwner}
             onCopy={(url) => void copyInvite(url)}
             onRenew={(invite) => void renewInvite(invite)}
             onRevoke={(invite) => void revokeInvite(invite)}

@@ -58,6 +58,7 @@ test.describe("staging market onboarding", () => {
       await page.getByRole("button", { name: "Criar cliente e continuar" })
         .click();
       await expect(page).toHaveURL(/\/clients\/[^/]+\/funnels\/new$/);
+      const clientId = new URL(page.url()).pathname.split("/")[2];
 
       await page.getByLabel("Nome").fill(`Funil Market ${unique}`);
       await page.getByRole("button", { name: "Fontes opcionais" }).click();
@@ -67,8 +68,13 @@ test.describe("staging market onboarding", () => {
         vturb: `vturb-${unique}`,
         gateway: `gateway-${unique}`,
       };
+      await page.getByRole("button", { name: /Meta Ads/i }).click();
       await page.getByLabel("Access token Meta").fill(secrets.meta);
+      await page.getByRole("button", { name: "Voltar às fontes" }).click();
+      await page.getByRole("button", { name: /VTurb/i }).click();
       await page.getByLabel("API key").fill(secrets.vturb);
+      await page.getByRole("button", { name: "Voltar às fontes" }).click();
+      await page.getByRole("button", { name: /Gateway/i }).click();
       await page.getByLabel("Token/secret do webhook").fill(secrets.gateway);
 
       const draftBeforeReload = await page.evaluate(() =>
@@ -79,28 +85,58 @@ test.describe("staging market onboarding", () => {
       expect(draftBeforeReload).not.toContain(secrets.gateway);
 
       await page.reload();
+      await page.getByRole("button", { name: /Meta Ads/i }).click();
       await expect(page.getByLabel("Access token Meta")).toHaveValue("");
+      await page.getByRole("button", { name: "Voltar às fontes" }).click();
+      await page.getByRole("button", { name: /VTurb/i }).click();
       await expect(page.getByLabel("API key")).toHaveValue("");
+      await page.getByRole("button", { name: "Voltar às fontes" }).click();
+      await page.getByRole("button", { name: /Gateway/i }).click();
       await expect(page.getByLabel("Token/secret do webhook")).toHaveValue("");
+      await page.getByRole("button", { name: "Voltar às fontes" }).click();
 
-      const postponeButtons = page.getByRole("button", {
-        name: "Fazer depois",
+      const hublaCsv =
+        "ID da fatura;Status da fatura;Data de pagamento;Valor total\n" +
+        `fat-${unique};Aprovada;01/07/2026;R$ 200,00`;
+      await page.getByRole("button", { name: /Histórico Hubla/i }).click();
+      await page.getByLabel(/Selecionar CSV ou XLSX da Hubla/i).setInputFiles({
+        name: `hubla-${unique}.csv`,
+        mimeType: "text/csv",
+        buffer: Buffer.from(hublaCsv),
       });
-      await expect(postponeButtons).toHaveCount(3);
-      for (let index = 0; index < 3; index += 1) {
-        await postponeButtons.first().click();
-      }
+      await expect(page.getByText(`hubla-${unique}.csv`)).toBeVisible();
+      const draftWithHubla = await page.evaluate(() =>
+        Object.values(sessionStorage).join("\n")
+      );
+      expect(draftWithHubla).not.toContain(`fat-${unique}`);
+      await page.getByRole("button", { name: "Voltar às fontes" }).click();
 
-      await page.getByRole("button", { name: "Próximo" }).click();
+      await page.getByRole("button", { name: "Revisar e criar funil" }).click();
       await expect(page.getByRole("heading", { name: "Revisão" })).toBeVisible();
       await page.getByRole("button", { name: "Criar funil" }).click();
 
       await expect(page).toHaveURL(/\/funnels\/[^/]+\/activation$/);
+      const funnelId = new URL(page.url()).pathname.split("/")[2];
       await expect(
         page.getByRole("heading", {
-          name: "Seu funil está pronto para começar",
+          name: "Seu primeiro resultado chegou",
         }),
+      ).toBeVisible({ timeout: 20_000 });
+      await page.getByRole("button", { name: "Ver meu primeiro resultado" }).click();
+      await expect(page).toHaveURL(
+        new RegExp(`/dashboard\\?project=${funnelId}`),
+      );
+
+      await page.goto(`/clients/${clientId}/team`);
+      await expect(page.getByRole("heading", { name: "Equipe" })).toBeVisible();
+      await expect(page.getByLabel(/token|secret|api key/i)).toHaveCount(0);
+
+      await page.goto(`/funnels/${funnelId}/sharing`);
+      await expect(
+        page.getByRole("heading", { name: "Compartilhamento" }),
       ).toBeVisible();
+      await page.getByRole("button", { name: "Criar link público" }).click();
+      await expect(page.getByText("Acesso do cliente")).toBeVisible();
 
       mkdirSync(dirname(reportPath), { recursive: true });
       writeFileSync(reportPath, JSON.stringify({
@@ -110,6 +146,11 @@ test.describe("staging market onboarding", () => {
         login: true,
         bootstrap_account: true,
         first_funnel: true,
+        hubla_history: true,
+        first_signal: true,
+        first_dashboard: true,
+        team_viewed: true,
+        sharing_created: true,
         activation_redirect: true,
         secrets_not_persisted: true,
         artifact_url: artifactUrl,

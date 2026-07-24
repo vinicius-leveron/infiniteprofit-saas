@@ -55,6 +55,9 @@ jobs:
       LOAD_TEST_REQUIRE_DATABASE_HEALTH: "true"
       LOAD_TEST_DURATION_SECONDS: "300"
       LOAD_TEST_THINK_MS: "500"
+      APP_PUBLIC_URL: ${{ vars.STAGING_APP_PUBLIC_URL }}
+      RESEND_API_KEY: ${{ secrets.STAGING_RESEND_API_KEY }}
+      RESEND_FROM_EMAIL: ${{ vars.STAGING_RESEND_FROM_EMAIL }}
 
     steps:
       - name: Checkout exact candidate commit
@@ -72,6 +75,9 @@ jobs:
           test -n "$RLS_MEMBER_PASSWORD" || (echo "STAGING_RLS_MEMBER_PASSWORD is required" && exit 1)
           test -n "$RLS_ADMIN_EMAIL" || (echo "STAGING_RLS_ADMIN_EMAIL is required" && exit 1)
           test -n "$RLS_ADMIN_PASSWORD" || (echo "STAGING_RLS_ADMIN_PASSWORD is required" && exit 1)
+          test -n "$APP_PUBLIC_URL" || (echo "STAGING_APP_PUBLIC_URL is required" && exit 1)
+          test -n "$RESEND_API_KEY" || (echo "STAGING_RESEND_API_KEY is required" && exit 1)
+          test -n "$RESEND_FROM_EMAIL" || (echo "STAGING_RESEND_FROM_EMAIL is required" && exit 1)
           test "$SUPABASE_PROJECT_REF" != "$PRODUCTION_PROJECT_REF" || (echo "Staging workflow refuses production" && exit 1)
           case "$VITE_SUPABASE_URL" in
             *"$SUPABASE_PROJECT_REF"*) ;;
@@ -128,7 +134,10 @@ jobs:
         run: |
           supabase secrets set \
             AUTOMATION_KEY="$STAGING_AUTOMATION_KEY" \
-            CANARY_APP_URL="https://infiniteprofit-saas.onrender.com" \
+            CANARY_APP_URL="$APP_PUBLIC_URL" \
+            APP_PUBLIC_URL="$APP_PUBLIC_URL" \
+            RESEND_API_KEY="$RESEND_API_KEY" \
+            RESEND_FROM_EMAIL="$RESEND_FROM_EMAIL" \
             --project-ref "$SUPABASE_PROJECT_REF"
 
       - name: Deploy exact backend function inventory to staging

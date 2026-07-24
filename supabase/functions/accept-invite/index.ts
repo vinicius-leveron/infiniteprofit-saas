@@ -66,8 +66,14 @@ Deno.serve(async (req) => {
 
     return json({ ok: true, action, kind, id });
   } catch (error) {
-    console.error("accept-invite error", error);
-    return json({ error: error instanceof Error ? error.message : "Erro inesperado" }, 500);
+    const safeMessage = sanitizeOperationalError(
+      error instanceof Error ? error.message : "Erro inesperado",
+    );
+    console.error(JSON.stringify({
+      event: "accept_invite_failed",
+      error: safeMessage,
+    }));
+    return json({ error: safeMessage }, 500);
   }
 });
 
@@ -267,6 +273,14 @@ function normalizeAction(value: unknown): InviteAction {
 
 function firstRelation<T>(value: T | T[] | null): T | null {
   return Array.isArray(value) ? value[0] ?? null : value;
+}
+
+function sanitizeOperationalError(value: string) {
+  return value
+    .replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, "Bearer [redacted]")
+    .replace(/[?&](token|secret|key|code)=[^&\s]+/gi, "$1=[redacted]")
+    .replace(/[A-Fa-f0-9]{32,}/g, "[redacted]")
+    .slice(0, 500);
 }
 
 function stringOrNull(value: unknown) {

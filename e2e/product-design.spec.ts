@@ -30,7 +30,7 @@ test.describe("product design quality gates", () => {
   }
 
   test("persistent account states pass the serious accessibility gate", async ({ page }) => {
-    for (const path of ["/reset-password", "/accept-invite"]) {
+    for (const path of ["/reset-password", "/accept-invite", "/help", "/terms", "/privacy"]) {
       await page.goto(path);
       await expect(page.locator("h1")).toBeVisible();
       const results = await new AxeBuilder({ page })

@@ -19,10 +19,17 @@ test.describe("setup wizard smoke", () => {
     await expect(page.getByRole("heading", { name: "Novo funil" })).toBeVisible();
     await page.getByLabel("Nome").fill(projectName);
     await page.getByRole("button", { name: "Fontes opcionais" }).click();
+    await page.getByRole("button", { name: /Meta Ads/i }).click();
     await page.getByLabel("Access token Meta").fill(metaToken);
+    await page.getByRole("button", { name: "Voltar às fontes" }).click();
+    await page.getByRole("button", { name: /VTurb/i }).click();
     await page.getByPlaceholder("Cole a API key da VTurb").fill(vturbKey);
     await page.getByPlaceholder("Selecione acima ou cole um player ID por linha").fill("player-qa-1");
+    await page.getByRole("button", { name: "Voltar às fontes" }).click();
+    await page.getByRole("button", { name: /Gateway/i }).click();
     await page.getByPlaceholder("Cole o secret da Hubla").fill(gatewaySecret);
+    await page.getByRole("button", { name: "Voltar às fontes" }).click();
+    await page.getByRole("button", { name: /Histórico Hubla/i }).click();
     await page.getByLabel(/Selecionar CSV ou XLSX da Hubla/i).setInputFiles({
       name: "hubla-qa.csv",
       mimeType: "text/csv",
@@ -32,7 +39,10 @@ test.describe("setup wizard smoke", () => {
 
     await page.reload();
 
+    await page.getByRole("button", { name: /Gateway/i }).click();
     await expect(page.getByPlaceholder("Cole o secret da Hubla")).toHaveValue("");
+    await page.getByRole("button", { name: "Voltar às fontes" }).click();
+    await page.getByRole("button", { name: /VTurb/i }).click();
     await expect(page.getByPlaceholder("Cole a API key da VTurb")).toHaveValue("");
     await expect(page.getByPlaceholder("Selecione acima ou cole um player ID por linha")).toHaveValue("player-qa-1");
     await expect(page.getByText("hubla-qa.csv")).toHaveCount(0);
@@ -40,6 +50,7 @@ test.describe("setup wizard smoke", () => {
     await page.getByRole("button", { name: "Nome" }).click();
     await expect(page.getByLabel("Nome")).toHaveValue(projectName);
     await page.getByRole("button", { name: "Fontes opcionais" }).click();
+    await page.getByRole("button", { name: /Meta Ads/i }).click();
     await expect(page.getByLabel("Access token Meta")).toHaveValue("");
 
     const persistedDrafts = await page.evaluate(() =>

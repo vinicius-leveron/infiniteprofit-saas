@@ -190,6 +190,13 @@ test.describe("contextual navigation shell", () => {
     if (testInfo.project.name === "mobile-chrome") {
       await page.keyboard.press("Escape");
     }
+    await expect(
+      page.getByRole("heading", {
+        name: "Seu funil está pronto para receber o primeiro sinal",
+      }),
+    ).toBeVisible();
+    await expect(page.getByText(/carregar outro CSV/i)).toHaveCount(0);
+
     const results = await new AxeBuilder({ page })
       .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
       .analyze();

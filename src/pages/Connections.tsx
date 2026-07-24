@@ -31,6 +31,8 @@ import {
 } from "@/lib/operationalReadApi";
 import { getProjectMetaBindingChanges } from "@/lib/projectMetaBindings";
 import { cn } from "@/lib/utils";
+import { trackProductEvent } from "@/lib/productEvents";
+import { publicConfig } from "@/lib/publicConfig";
 
 type ConnectionsMode = "sources" | "sharing";
 type GatewayProvider = "hotmart" | "hubla" | "kiwify";
@@ -286,6 +288,12 @@ export default function Connections({ mode = "sources" }: { mode?: ConnectionsMo
         created_by: user.id,
       } as never);
       if (error) throw error;
+      trackProductEvent({
+        eventName: "share_created",
+        workspaceId: project.workspace_id,
+        projectId: project.id,
+        properties: { has_expiration: false },
+      });
       toast.success("Link público criado");
       await load(false);
     } catch (error) {
@@ -707,7 +715,7 @@ function SharingList({
         {links.map((link) => {
           const expired = Boolean(link.expires_at && new Date(link.expires_at).getTime() < Date.now());
           const status = expired ? "Expirado" : link.enabled ? "Ativo" : "Desativado";
-          const shareUrl = `${window.location.origin}/share/${link.token}`;
+          const shareUrl = `${publicConfig.appUrl}/share/${link.token}`;
           return (
             <div
               key={link.id}

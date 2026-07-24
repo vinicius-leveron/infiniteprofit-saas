@@ -30,6 +30,14 @@ export type SyncJobWindow = {
   label: "recent" | "week" | "month";
 };
 
+export type MetaSyncProfile = {
+  name: "fast" | "detail" | "backfill";
+  levels: Array<"account" | "campaign" | "adset" | "ad">;
+  staleMinutes: number;
+  priorityOffset: number;
+  entitySuffix: string | null;
+};
+
 export type ClaimedSyncJob = {
   id: string;
   workspace_id: string;
@@ -133,9 +141,42 @@ export function sourceSyncStaleMinutes(
   window: Pick<SyncJobWindow, "label" | "staleMinutes">,
 ) {
   if (window.label !== "recent") return window.staleMinutes;
-  if (source === "meta") return Math.max(window.staleMinutes, 60);
+  if (source === "meta") return Math.max(window.staleMinutes, 15);
   if (source === "creative") return Math.max(window.staleMinutes, 6 * 60);
   return window.staleMinutes;
+}
+
+export function metaSyncProfilesForWindow(
+  window: Pick<SyncJobWindow, "label" | "staleMinutes">,
+): MetaSyncProfile[] {
+  if (window.label !== "recent") {
+    return [{
+      name: "backfill",
+      levels: ["account", "campaign", "adset", "ad"],
+      staleMinutes: window.staleMinutes,
+      priorityOffset: 0,
+      entitySuffix: null,
+    }];
+  }
+
+  return [
+    {
+      name: "fast",
+      levels: ["account"],
+      // The scheduler runs every five minutes. A five-minute threshold yields
+      // an observed cadence of roughly five to ten minutes.
+      staleMinutes: 5,
+      priorityOffset: -5,
+      entitySuffix: "fast",
+    },
+    {
+      name: "detail",
+      levels: ["campaign", "adset", "ad"],
+      staleMinutes: sourceSyncStaleMinutes("meta", window),
+      priorityOffset: 0,
+      entitySuffix: null,
+    },
+  ];
 }
 
 export function localDateWindow(
@@ -294,9 +335,22 @@ export function syncJobFailurePlan(
 
 export function isPermanentSyncJobFailure(message: string) {
   const normalized = String(message ?? "").trim().toLowerCase();
-  return normalized.includes(
+  return [
     "does not have access to the public analytics api",
-  );
+    "error validating access token",
+    "session has expired",
+    "access token has expired",
+    "invalid oauth access token",
+    "ads_management or ads_read permission",
+    "requires ads_management",
+    "requires ads_read",
+    "conceda ads_read",
+    "credencial não consegue ler investimento",
+    "credencial não tem acesso a esta conta",
+    "\"code\":190",
+    "token meta expirado",
+    "token meta inválido",
+  ].some((marker) => normalized.includes(marker));
 }
 
 export function uniqueSortedDates(values: Iterable<unknown>) {

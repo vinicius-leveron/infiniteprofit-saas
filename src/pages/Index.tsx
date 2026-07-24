@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useOutletContext, useSearchParams } from "react-router-dom";
 import { format, formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { CsvUpload } from "@/components/CsvUpload";
+import { HublaImportDialog } from "@/components/hubla/HublaImportDialog";
 import { OverviewPanel } from "@/components/OverviewPanel";
 import { TrafficPanel } from "@/components/TrafficPanel";
 import { FunnelPanel } from "@/components/FunnelPanel";
@@ -28,7 +28,9 @@ import { writeLastDashboardPreference } from "@/lib/lastDashboard";
 import { applyMetaAccountFilter } from "@/lib/metaAccountFilter";
 import {
   getProjectSyncSettingsSafe,
+  listSourceHealthSignals,
   listWorkspaceMetaAccountsSafe,
+  type SourceHealthSignalRow,
 } from "@/lib/operationalReadApi";
 import {
   Select,
@@ -45,7 +47,6 @@ import { useWorkspace } from "@/hooks/useWorkspace";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
-  ArrowLeft,
   BarChart3,
   Radio,
   Target,
@@ -59,8 +60,10 @@ import {
   Megaphone,
   Map,
   FileText,
+  AlertTriangle,
 } from "lucide-react";
 import { toast } from "sonner";
+import { trackProductEvent } from "@/lib/productEvents";
 
 type Tab = "geral" | "trafego" | "funil" | "bumps" | "anuncios" | "atribuicao" | "relatorio" | "diagnostico" | "simulador";
 
@@ -103,6 +106,8 @@ const Index = () => {
   const [sheetUrl, setSheetUrl] = useState<string | null>(null);
   const [syncToken, setSyncToken] = useState<string | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+  const [metaSourceSignal, setMetaSourceSignal] =
+    useState<SourceHealthSignalRow | null>(null);
   const [syncingNow, setSyncingNow] = useState(false);
   const [projectSource, setProjectSource] = useState<"csv" | "sheet" | "api">("csv");
   const [rawApiRows, setRawApiRows] = useState<DailyRow[]>([]);
@@ -126,6 +131,7 @@ const Index = () => {
 
   // Ref para captura PDF
   const dashboardRef = useRef<HTMLDivElement>(null);
+  const dashboardOpenTracked = useRef(new Set<string>());
 
   interface ProjectMetaBindingRow {
     meta_account_id: string;
@@ -145,6 +151,27 @@ const Index = () => {
       dashboardTab: tab,
     });
   }, [currentProjectId, projectWorkspaceId, tab, userId]);
+
+  useEffect(() => {
+    if (
+      !currentProjectId ||
+      !projectWorkspaceId ||
+      rows === null ||
+      dashboardOpenTracked.current.has(currentProjectId)
+    ) {
+      return;
+    }
+    dashboardOpenTracked.current.add(currentProjectId);
+    trackProductEvent({
+      eventName: "first_dashboard_opened",
+      workspaceId: projectWorkspaceId,
+      projectId: currentProjectId,
+      properties: {
+        source: projectSource,
+        has_data: rows.length > 0,
+      },
+    });
+  }, [currentProjectId, projectSource, projectWorkspaceId, rows]);
 
   useEffect(() => {
     if (!currentProjectId) {
@@ -221,7 +248,8 @@ const Index = () => {
         setLastSyncedAt(data.last_synced_at ?? null);
 
         if (src === "api") {
-          const [{ data: metrics }, { data: bindings }] = await Promise.all([
+          const [{ data: metrics }, { data: bindings }, sourceSignals] =
+            await Promise.all([
             supabase
               .from("daily_metrics")
               .select("*")
@@ -230,8 +258,23 @@ const Index = () => {
             supabase
               .from("project_meta_accounts")
               .select("meta_account_id")
-              .eq("project_id", data.id)
+              .eq("project_id", data.id),
+            listSourceHealthSignals(data.workspace_id),
           ]);
+          const metaSignal =
+            sourceSignals.find(
+              (signal) =>
+                signal.project_id === data.id && signal.source === "meta",
+            ) ?? null;
+          const hasMetaBindings = (bindings ?? []).length > 0;
+          setMetaSourceSignal(metaSignal);
+          setLastSyncedAt(
+            metaSignal?.configured
+              ? metaSignal.last_success_at
+              : hasMetaBindings
+                ? null
+                : data.last_synced_at ?? null,
+          );
           let accs: Array<{ account_id: string; label: string | null }> = [];
           const accountIds = ((bindings ?? []) as ProjectMetaBindingRow[]).map((binding) => binding.meta_account_id);
           if (accountIds.length > 0 && data.workspace_id) {
@@ -247,10 +290,12 @@ const Index = () => {
           setMetaAccounts(accs);
           setCsvText("");
         } else if (data.csv_content) {
+          setMetaSourceSignal(null);
           const parsed = parseCsv(data.csv_content);
           setRows(parsed.rows);
           setCsvText(data.csv_content);
         } else {
+          setMetaSourceSignal(null);
           setRows([]);
           setCsvText("");
         }
@@ -261,7 +306,8 @@ const Index = () => {
   const reloadProject = async () => {
     if (!currentProjectId) return;
     if (projectSource === "api") {
-      const [metricsResult, bindingsResult] = await Promise.all([
+      const workspaceId = projectWorkspaceId ?? currentWorkspace?.id;
+      const [metricsResult, bindingsResult, sourceSignals] = await Promise.all([
         supabase
           .from("daily_metrics")
           .select("*")
@@ -270,7 +316,10 @@ const Index = () => {
         supabase
           .from("project_meta_accounts")
           .select("meta_account_id")
-          .eq("project_id", currentProjectId)
+          .eq("project_id", currentProjectId),
+        workspaceId
+          ? listSourceHealthSignals(workspaceId)
+          : Promise.resolve([]),
       ]);
       if (metricsResult.error) throw metricsResult.error;
       if (bindingsResult.error) throw bindingsResult.error;
@@ -278,7 +327,6 @@ const Index = () => {
       const bindings = bindingsResult.data;
       let accs: Array<{ account_id: string; label: string | null }> = [];
       const accountIds = ((bindings ?? []) as ProjectMetaBindingRow[]).map((binding) => binding.meta_account_id);
-      const workspaceId = projectWorkspaceId ?? currentWorkspace?.id;
       if (accountIds.length > 0 && workspaceId) {
         const accountRows = await listWorkspaceMetaAccountsSafe(workspaceId);
         const selectedAccountIds = new Set(accountIds);
@@ -290,13 +338,16 @@ const Index = () => {
       setRawApiRows(apiRows);
       setRows(apiRows);
       setMetaAccounts(accs);
-      const { data: proj, error: projectError } = await supabase
-        .from("projects")
-        .select("last_synced_at")
-        .eq("id", currentProjectId)
-        .maybeSingle();
-      if (projectError) throw projectError;
-      if (proj) setLastSyncedAt(proj.last_synced_at ?? null);
+      const metaSignal =
+        sourceSignals.find(
+          (signal) =>
+            signal.project_id === currentProjectId &&
+            signal.source === "meta",
+        ) ?? null;
+      setMetaSourceSignal(metaSignal);
+      setLastSyncedAt(
+        metaSignal?.configured ? metaSignal.last_success_at : null,
+      );
       return;
     }
     const { data, error } = await supabase
@@ -352,16 +403,6 @@ const Index = () => {
     } finally {
       setSyncingNow(false);
     }
-  };
-
-  const handleFile = (text: string, name: string) => {
-    const parsed = parseCsv(text);
-    setRows(parsed.rows);
-    setFileName(name);
-    setCsvText(text);
-    setProjectName(name.replace(/\.[^.]+$/, ""));
-    setCurrentProjectId(null);
-    setProjectWorkspaceId(null);
   };
 
   const handleSave = async (name: string) => {
@@ -441,28 +482,29 @@ const Index = () => {
     return <DashboardSkeleton />;
   }
 
-  if (!rows) {
-    return (
-      <main className="min-h-screen">
-        <div className="max-w-[900px] mx-auto px-4 pt-6">
-          <Button variant="ghost" size="sm" onClick={() => navigate("/projects")} className="gap-2">
-            <ArrowLeft className="w-4 h-4" />
-            Voltar para projetos
-          </Button>
-        </div>
-        <CsvUpload onFile={handleFile} />
-        <CommandPalette
-          open={commandPaletteOpen}
-          onOpenChange={setCommandPaletteOpen}
-        />
-      </main>
-    );
-  }
+  if (!rows) return <DashboardSkeleton />;
 
   const periodLabel =
     selectedDateRange.from && selectedDateRange.to
       ? `${formatDateKey(selectedDateRange.from)} → ${formatDateKey(selectedDateRange.to)} · ${filtered.length} dias com dados`
       : "Sem dados no período";
+  const metaFailureIsLatest = Boolean(
+    metaSourceSignal?.configured &&
+      (
+        metaSourceSignal.critical_count > 0 ||
+        (
+          metaSourceSignal.last_error_at &&
+          (
+            !metaSourceSignal.last_success_at ||
+            new Date(metaSourceSignal.last_error_at).getTime() >
+              new Date(metaSourceSignal.last_success_at).getTime()
+          )
+        )
+      ),
+  );
+  const metaIsSyncing =
+    metaSourceSignal?.sync_status === "queued" ||
+    metaSourceSignal?.sync_status === "running";
 
   const handlePeriodChange = (p: Period) => {
     setPeriod(p);
@@ -505,9 +547,25 @@ const Index = () => {
             </h1>
             <p className="text-xs text-muted-foreground">
               {periodLabel}
-              {lastSyncedAt && (
+              {metaFailureIsLatest && currentProjectId ? (
+                <button
+                  type="button"
+                  className="ml-1.5 inline-flex items-center gap-1 font-medium text-destructive hover:underline"
+                  onClick={() => navigate(`/funnels/${currentProjectId}/health`)}
+                >
+                  <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
+                  · Meta requer ação
+                </button>
+              ) : metaIsSyncing ? (
+                <span className="ml-1.5 text-blue-600 dark:text-blue-300">
+                  · Meta sincronizando
+                </span>
+              ) : lastSyncedAt && (
                 <span className="ml-1.5">
-                  · Sync {formatDistanceToNow(new Date(lastSyncedAt), { locale: ptBR })}
+                  · {projectSource === "api" && metaSourceSignal?.configured
+                    ? "Meta "
+                    : "Sync "}
+                  {formatDistanceToNow(new Date(lastSyncedAt), { locale: ptBR })}
                 </span>
               )}
             </p>
@@ -598,14 +656,55 @@ const Index = () => {
           </div>
         </div>
 
-        {filtered.length === 0 ? (
+        {rows.length === 0 && projectSource === "api" && currentProjectId ? (
+          <div className="section-card py-14 text-center">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+              <Radio className="h-6 w-6" />
+            </div>
+            <h3 className="mt-5 text-lg font-semibold text-foreground">
+              {isWorkspaceAdmin
+                ? "Seu funil está pronto para receber o primeiro sinal"
+                : "Aguardando a primeira sincronização"}
+            </h3>
+            <p className="mx-auto mt-2 max-w-lg text-sm leading-5 text-muted-foreground">
+              {isWorkspaceAdmin
+                ? "Conecte uma fonte, importe o histórico da Hubla ou revise a saúde do funil. Assim que houver um sinal confiável, o dashboard será preenchido automaticamente."
+                : "Um administrador ainda está conectando as fontes deste funil. Você pode acompanhar o status permitido sem acessar credenciais ou ações operacionais."}
+            </p>
+            <div className="mt-6 flex flex-wrap justify-center gap-2">
+              {isWorkspaceAdmin && (
+                <>
+                  <Button
+                    className="min-h-11 gap-2"
+                    onClick={() => navigate(`/funnels/${currentProjectId}/sources`)}
+                  >
+                    <Settings2 className="h-4 w-4" />
+                    Conectar fonte
+                  </Button>
+                  <HublaImportDialog
+                    projectId={currentProjectId}
+                    onImported={() => reloadProject()}
+                  />
+                </>
+              )}
+              <Button
+                variant="outline"
+                className="min-h-11 gap-2"
+                onClick={() => navigate(`/funnels/${currentProjectId}/health`)}
+              >
+                <Stethoscope className="h-4 w-4" />
+                Ver saúde
+              </Button>
+            </div>
+          </div>
+        ) : filtered.length === 0 ? (
           <div className="section-card text-center py-20">
             <div className="w-14 h-14 rounded-full bg-secondary/60 flex items-center justify-center mx-auto mb-4">
               <BarChart3 className="w-6 h-6 text-muted-foreground" />
             </div>
             <h3 className="font-semibold text-foreground mb-1">Nenhum dia no período</h3>
             <p className="text-sm text-muted-foreground mb-4">
-              Tente ajustar o período ou carregar outro CSV
+              Tente ajustar o período para visualizar os dados disponíveis.
             </p>
             <Button variant="outline" size="sm" onClick={() => handlePeriodChange("all")}>
               Mostrar tudo

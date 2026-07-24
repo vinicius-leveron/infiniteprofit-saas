@@ -18,6 +18,7 @@ import {
   type ClaimedSyncJob,
 } from "../sync-jobs/core.ts";
 import { vturbResultError } from "../vturb-pull/core.ts";
+import { metaPullResultError } from "../_shared/meta-credentials.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -92,13 +93,30 @@ Deno.serve(async (req) => {
     if (claimError) throw new Error(claimError.message);
 
     const claimed = (claimedRows ?? []) as ClaimedSyncJob[];
-    const suspendedVturbWorkspaces = await loadSuspendedVturbWorkspaces(
-      sb,
-      claimed,
-    );
+    const [suspendedMetaWorkspaces, suspendedVturbWorkspaces] =
+      await Promise.all([
+        loadSuspendedMetaWorkspaces(sb, claimed),
+        loadSuspendedVturbWorkspaces(sb, claimed),
+      ]);
     const results: Array<Record<string, unknown>> = [];
 
     for (const job of claimed) {
+      if (
+        (job.source === "meta" || job.source === "creative") &&
+        suspendedMetaWorkspaces.has(job.workspace_id)
+      ) {
+        await markMetaJobSkippedForSuspension(sb, job);
+        results.push({
+          job_id: job.id,
+          source: job.source,
+          entity_type: job.entity_type,
+          skipped: "meta_credential_suspended",
+          failure_status: "dead_letter",
+          failure_kind: "permanent",
+        });
+        continue;
+      }
+
       if (
         job.source === "vturb" &&
         suspendedVturbWorkspaces.has(job.workspace_id)
@@ -164,6 +182,13 @@ Deno.serve(async (req) => {
         const message =
           error instanceof Error ? error.message : "Erro inesperado no job";
         const failure = await markFailedOrRetry(sb, job, message);
+        if (
+          (job.source === "meta" || job.source === "creative") &&
+          failure.kind === "permanent"
+        ) {
+          await suspendWorkspaceMetaSync(sb, job.workspace_id, message);
+          suspendedMetaWorkspaces.add(job.workspace_id);
+        }
         if (job.source === "vturb" && failure.kind === "permanent") {
           await suspendWorkspaceVturbSync(sb, job.workspace_id, message);
           suspendedVturbWorkspaces.add(job.workspace_id);
@@ -243,12 +268,21 @@ async function processJob(
         skip_creative: true,
         project_id: job.project_id,
         account_id: accountId,
+        days: daysForDateRange(job.date_start, job.date_end),
+        levels: Array.isArray(job.payload?.levels)
+          ? job.payload.levels
+          : undefined,
+        sync_profile: typeof job.payload?.sync_profile === "string"
+          ? job.payload.sync_profile
+          : undefined,
         date_start: job.date_start,
         date_end: job.date_end,
       },
       traceId,
       timeoutMs,
     );
+    const sourceError = metaPullResultError(result);
+    if (sourceError) throw new Error(sourceError);
     const aggregate = await enqueueAggregateForJob(
       sb,
       job,
@@ -561,6 +595,45 @@ async function loadSuspendedVturbWorkspaces(
   );
 }
 
+async function loadSuspendedMetaWorkspaces(
+  sb: SupabaseClientAny,
+  jobs: ClaimedSyncJob[],
+) {
+  const workspaceIds = [
+    ...new Set(
+      jobs
+        .filter((job) => job.source === "meta" || job.source === "creative")
+        .map((job) => job.workspace_id),
+    ),
+  ];
+  if (workspaceIds.length === 0) return new Set<string>();
+
+  const { data, error } = await sb
+    .from("workspace_integrations")
+    .select("workspace_id")
+    .in("workspace_id", workspaceIds)
+    .not("meta_sync_suspended_at", "is", null);
+  if (error) throw new Error(error.message);
+
+  return new Set(
+    (data ?? [])
+      .map((row: { workspace_id?: string | null }) => row.workspace_id ?? "")
+      .filter(Boolean),
+  );
+}
+
+async function suspendWorkspaceMetaSync(
+  sb: SupabaseClientAny,
+  workspaceId: string,
+  reason: string,
+) {
+  const { error } = await sb.rpc("suspend_workspace_meta_sync", {
+    _workspace_id: workspaceId,
+    _reason: reason,
+  });
+  if (error) throw new Error(error.message);
+}
+
 async function suspendWorkspaceVturbSync(
   sb: SupabaseClientAny,
   workspaceId: string,
@@ -570,6 +643,34 @@ async function suspendWorkspaceVturbSync(
     _workspace_id: workspaceId,
     _reason: reason,
   });
+  if (error) throw new Error(error.message);
+}
+
+async function markMetaJobSkippedForSuspension(
+  sb: SupabaseClientAny,
+  job: ClaimedSyncJob,
+) {
+  const failedAt = new Date().toISOString();
+  const { error } = await sb
+    .from("sync_jobs")
+    .update({
+      status: "dead_letter",
+      available_at: failedAt,
+      locked_at: null,
+      locked_by: null,
+      last_error:
+        "Sync Meta suspenso até a credencial compartilhada ser substituída.",
+      finished_at: failedAt,
+      payload: {
+        ...(job.payload ?? {}),
+        failure: {
+          kind: "permanent",
+          cause: "meta_credential_suspended",
+          failed_at: failedAt,
+        },
+      },
+    })
+    .eq("id", job.id);
   if (error) throw new Error(error.message);
 }
 

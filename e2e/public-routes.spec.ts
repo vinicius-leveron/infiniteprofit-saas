@@ -19,6 +19,14 @@ test.describe("public and auth boundaries", () => {
     await expect(page.getByText(/Conexões|Workspace Settings|Sincronizar Meta|Sincronizar VTurb/)).toHaveCount(0);
   });
 
+  test("support and preliminary legal pages stay public", async ({ page }) => {
+    for (const path of ["/help", "/terms", "/privacy"]) {
+      await page.goto(path);
+      await expect(page.locator("h1")).toBeVisible();
+      await expect(page).not.toHaveURL(/\/auth/);
+    }
+  });
+
   test("valid public share is read-only", async ({ page }) => {
     test.skip(!hasPublicShareEnv(), "Set E2E_PUBLIC_SHARE_TOKEN to run public share smoke test.");
 

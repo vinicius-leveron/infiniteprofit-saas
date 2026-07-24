@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   creativeQueueAlerts,
+  latestFailedSyncRuns,
   type CreativeJobRow,
   type CreativeWorkerHeartbeatRow,
 } from "../../supabase/functions/generate-alerts/core";
@@ -86,5 +87,30 @@ describe("creative queue alerts", () => {
     );
 
     expect(alerts.find((alert) => alert.type === "stale_running_job")?.details?.workers).toEqual(["worker-a"]);
+  });
+
+  it("clears a source failure after a newer successful sync", () => {
+    expect(
+      latestFailedSyncRuns([
+        {
+          source: "meta",
+          status: "failed",
+          error_message: "token expirado",
+          created_at: "2026-06-18T10:00:00.000Z",
+        },
+        {
+          source: "meta",
+          status: "succeeded",
+          error_message: null,
+          created_at: "2026-06-18T11:00:00.000Z",
+        },
+        {
+          source: "vturb",
+          status: "failed",
+          error_message: "sem acesso",
+          created_at: "2026-06-18T11:30:00.000Z",
+        },
+      ]).map((run) => run.source),
+    ).toEqual(["vturb"]);
   });
 });

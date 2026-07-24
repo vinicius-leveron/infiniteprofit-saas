@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Auth from "./Auth";
+import { publicConfig } from "@/lib/publicConfig";
 
 const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
@@ -74,7 +75,7 @@ describe("Auth", () => {
       password: "password-123",
       options: {
         emailRedirectTo:
-          `${window.location.origin}/auth?next=${encodeURIComponent("/clients")}`,
+          `${publicConfig.appUrl}/auth?next=${encodeURIComponent("/clients")}`,
       },
     });
 

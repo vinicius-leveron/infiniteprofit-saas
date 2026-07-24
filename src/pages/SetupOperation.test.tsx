@@ -151,6 +151,7 @@ describe("SetupOperation Meta step", () => {
       target: { value: "Funil teste" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Fontes opcionais" }));
+    fireEvent.click(screen.getByRole("button", { name: /Meta Ads/i }));
 
     expect(await screen.findByText("Conta Alpha")).toBeInTheDocument();
     expect(screen.getByText("Conta Beta")).toBeInTheDocument();
@@ -196,10 +197,8 @@ describe("SetupOperation Meta step", () => {
     await waitFor(() => {
       expect(screen.queryByText(/suas contas continuam marcadas/i)).not.toBeInTheDocument();
     });
-    const postponeButtons = screen.getAllByRole("button", { name: "Fazer depois" });
-    fireEvent.click(postponeButtons[1]);
-    fireEvent.click(postponeButtons[2]);
-    fireEvent.click(screen.getByRole("button", { name: "Revisão" }));
+    fireEvent.click(screen.getByRole("button", { name: "Voltar às fontes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Revisar e criar funil" }));
     expect(screen.getByText("3 conta(s) selecionada(s)")).toBeInTheDocument();
   });
 
@@ -211,6 +210,7 @@ describe("SetupOperation Meta step", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Fontes opcionais" }));
+    fireEvent.click(screen.getByRole("button", { name: /Meta Ads/i }));
     fireEvent.change(screen.getByLabelText("Access token Meta"), { target: { value: "token-unico" } });
     fireEvent.click(screen.getByRole("button", { name: "Buscar contas" }));
     fireEvent.click(await screen.findByText("Conta Gamma"));
@@ -249,8 +249,13 @@ describe("SetupOperation Meta step", () => {
     fireEvent.click(screen.getByRole("button", { name: /Nome/ }));
     expect(await screen.findByDisplayValue("Funil legado")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Fontes opcionais" }));
+    fireEvent.click(screen.getByRole("button", { name: /Meta Ads/i }));
     expect(screen.getByLabelText("Access token Meta")).toHaveValue("");
+    fireEvent.click(screen.getByRole("button", { name: "Voltar às fontes" }));
+    fireEvent.click(screen.getByRole("button", { name: /VTurb/i }));
     expect(screen.getByLabelText("API key")).toHaveValue("");
+    fireEvent.click(screen.getByRole("button", { name: "Voltar às fontes" }));
+    fireEvent.click(screen.getByRole("button", { name: /Gateway/i }));
     expect(screen.getByLabelText("Token/secret do webhook")).toHaveValue("");
 
     await waitFor(() => {
@@ -277,12 +282,17 @@ describe("SetupOperation Meta step", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Fontes opcionais" }));
+    fireEvent.click(screen.getByRole("button", { name: /Meta Ads/i }));
     fireEvent.change(screen.getByLabelText("Access token Meta"), {
       target: { value: "meta-super-secret" },
     });
+    fireEvent.click(screen.getByRole("button", { name: "Voltar às fontes" }));
+    fireEvent.click(screen.getByRole("button", { name: /VTurb/i }));
     fireEvent.change(screen.getByLabelText("API key"), {
       target: { value: "vturb-super-secret" },
     });
+    fireEvent.click(screen.getByRole("button", { name: "Voltar às fontes" }));
+    fireEvent.click(screen.getByRole("button", { name: /Gateway/i }));
     fireEvent.change(screen.getByLabelText("Token/secret do webhook"), {
       target: { value: "gateway-super-secret" },
     });
@@ -331,10 +341,7 @@ describe("SetupOperation Meta step", () => {
       target: { value: "Funil sem fontes" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Fontes opcionais" }));
-    screen
-      .getAllByRole("button", { name: "Fazer depois" })
-      .forEach((button) => fireEvent.click(button));
-    fireEvent.click(screen.getByRole("button", { name: "Revisão" }));
+    fireEvent.click(screen.getByRole("button", { name: "Revisar e criar funil" }));
     fireEvent.click(screen.getByRole("button", { name: "Criar funil" }));
 
     expect(await screen.findByText("Experiência de ativação")).toBeInTheDocument();
@@ -390,9 +397,7 @@ describe("SetupOperation Meta step", () => {
       target: { value: "Funil com histórico" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Fontes opcionais" }));
-    const postponeButtons = screen.getAllByRole("button", { name: "Fazer depois" });
-    fireEvent.click(postponeButtons[0]);
-    fireEvent.click(postponeButtons[1]);
+    fireEvent.click(screen.getByRole("button", { name: /Histórico Hubla/i }));
 
     fireEvent.change(screen.getByLabelText(/Selecionar CSV ou XLSX da Hubla/i), {
       target: { files: [new File(["conteúdo sigiloso"], "hubla.csv", { type: "text/csv" })] },
@@ -407,13 +412,13 @@ describe("SetupOperation Meta step", () => {
       expect(draft).not.toContain("conteúdo sigiloso");
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Revisão" }));
+    fireEvent.click(screen.getByRole("button", { name: "Histórico preparado" }));
+    fireEvent.click(screen.getByRole("button", { name: "Revisar e criar funil" }));
     expect(screen.getByText(/Histórico preparado · hubla.csv/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Criar funil" }));
 
     expect(await screen.findByText("Experiência de ativação Hubla")).toBeInTheDocument();
-    expect(invokeMock).toHaveBeenNthCalledWith(
-      1,
+    expect(invokeMock).toHaveBeenCalledWith(
       "hubla-csv-import",
       expect.objectContaining({
         body: expect.objectContaining({

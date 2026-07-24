@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { InviteList, type AdminInvite } from "./InviteList";
+import { publicConfig } from "@/lib/publicConfig";
 
 const pendingInvite: AdminInvite = {
   id: "invite-pending",
@@ -45,8 +46,26 @@ describe("InviteList", () => {
     fireEvent.click(screen.getByRole("button", { name: "Revogar" }));
 
     expect(onCopy).toHaveBeenCalledWith(
-      `${window.location.origin}/accept-invite?kind=workspace&token=safe-token`,
+      `${publicConfig.appUrl}/accept-invite?kind=workspace&token=safe-token`,
     );
     expect(onRevoke).toHaveBeenCalledWith(pendingInvite);
+  });
+
+  it("hides Owner invite mutations from an Admin", () => {
+    render(
+      <InviteList
+        invites={[{ ...pendingInvite, id: "owner-invite", role: "owner" }]}
+        kind="workspace"
+        canManage
+        canManageOwner={false}
+        onCopy={vi.fn()}
+        onRenew={vi.fn()}
+        onRevoke={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Copiar link" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reenviar" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Revogar" })).not.toBeInTheDocument();
   });
 });

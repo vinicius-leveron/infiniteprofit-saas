@@ -16,6 +16,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { toast } from "sonner";
+import { trackProductEvent } from "@/lib/productEvents";
 
 function defaultOrgName(email: string | undefined) {
   if (!email) return "Minha organização";
@@ -112,6 +113,12 @@ export default function Welcome() {
 
       await refreshAccess();
       setCurrentWorkspaceId(result.workspace_id);
+      trackProductEvent({
+        eventName: "account_bootstrapped",
+        organizationId: result.organization_id,
+        workspaceId: result.workspace_id,
+        properties: { entry_point: "welcome" },
+      });
       toast.success("Conta configurada. Agora crie seu primeiro funil.");
       navigate(`/clients/${result.workspace_id}/funnels/new`, { replace: true });
     } catch (error) {

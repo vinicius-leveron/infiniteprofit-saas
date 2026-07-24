@@ -28,7 +28,7 @@ jobs:
       VITE_SUPABASE_URL: https://nztnctrkmfrgclrnflfa.supabase.co
       VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
       VITE_SUPABASE_PROJECT_ID: nztnctrkmfrgclrnflfa
-      PROBE_APP_URL: https://infiniteprofit-saas.onrender.com
+      PROBE_APP_URL: ${{ vars.APP_PUBLIC_URL }}
       PROBE_AUTH_EMAIL: ${{ secrets.PROBE_AUTH_EMAIL }}
       PROBE_AUTH_PASSWORD: ${{ secrets.PROBE_AUTH_PASSWORD }}
       RLS_WORKSPACE_ID: ${{ vars.RLS_WORKSPACE_ID }}
@@ -37,6 +37,9 @@ jobs:
       RLS_MEMBER_PASSWORD: ${{ secrets.RLS_MEMBER_PASSWORD }}
       RLS_ADMIN_EMAIL: ${{ secrets.RLS_ADMIN_EMAIL }}
       RLS_ADMIN_PASSWORD: ${{ secrets.RLS_ADMIN_PASSWORD }}
+      APP_PUBLIC_URL: ${{ vars.APP_PUBLIC_URL }}
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      RESEND_FROM_EMAIL: ${{ vars.RESEND_FROM_EMAIL }}
 
     steps:
       - name: Checkout exact release commit
@@ -48,6 +51,9 @@ jobs:
           test "${{ inputs.confirm_project_ref }}" = "$SUPABASE_PROJECT_REF" || (echo "Production project confirmation does not match" && exit 1)
           test -n "$SUPABASE_ACCESS_TOKEN" || (echo "SUPABASE_ACCESS_TOKEN secret is required" && exit 1)
           test -n "$SUPABASE_DB_PASSWORD" || (echo "SUPABASE_DB_PASSWORD secret is required" && exit 1)
+          test -n "$APP_PUBLIC_URL" || (echo "APP_PUBLIC_URL variable is required" && exit 1)
+          test -n "$RESEND_API_KEY" || (echo "RESEND_API_KEY secret is required" && exit 1)
+          test -n "$RESEND_FROM_EMAIL" || (echo "RESEND_FROM_EMAIL variable is required" && exit 1)
 
       - name: Setup Node
         uses: actions/setup-node@v7
@@ -93,19 +99,21 @@ jobs:
       - name: Apply database migrations
         run: supabase db push --linked
 
-      - name: Deploy backend functions in dependency order
+      - name: Configure production function secrets
         run: |
-          supabase functions deploy workspace-credentials --project-ref "$SUPABASE_PROJECT_REF" --use-api
-          supabase functions deploy backend-canary --project-ref "$SUPABASE_PROJECT_REF" --use-api
-          supabase functions deploy aggregate-daily --project-ref "$SUPABASE_PROJECT_REF" --use-api
-          supabase functions deploy meta-pull --project-ref "$SUPABASE_PROJECT_REF" --use-api
-          supabase functions deploy vturb-pull --project-ref "$SUPABASE_PROJECT_REF" --use-api
-          supabase functions deploy creative-sync --project-ref "$SUPABASE_PROJECT_REF" --use-api
-          supabase functions deploy sync-scheduler --project-ref "$SUPABASE_PROJECT_REF" --use-api
-          supabase functions deploy sync-worker --project-ref "$SUPABASE_PROJECT_REF" --use-api
-          supabase functions deploy sync-watchdog --project-ref "$SUPABASE_PROJECT_REF" --use-api
-          supabase functions deploy gateway-worker-heartbeat --project-ref "$SUPABASE_PROJECT_REF" --use-api
-          supabase functions deploy webhook-gateway --project-ref "$SUPABASE_PROJECT_REF" --use-api
+          supabase secrets set \
+            APP_PUBLIC_URL="$APP_PUBLIC_URL" \
+            CANARY_APP_URL="$APP_PUBLIC_URL" \
+            RESEND_API_KEY="$RESEND_API_KEY" \
+            RESEND_FROM_EMAIL="$RESEND_FROM_EMAIL" \
+            --project-ref "$SUPABASE_PROJECT_REF"
+
+      - name: Deploy exact backend function inventory
+        run: |
+          node -e 'const m=require("./supabase/functions/deploy-manifest.json"); for (const name of m.expectedRemoteFunctions) console.log(name)' |
+          while read -r function_name; do
+            supabase functions deploy "$function_name" --project-ref "$SUPABASE_PROJECT_REF" --use-api
+          done
 
       - name: Verify function inventory
         run: npm run check:function-drift

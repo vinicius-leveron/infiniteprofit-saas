@@ -30,6 +30,28 @@ export interface CreativeWorkerHeartbeatRow {
   last_error: string | null;
 }
 
+export interface SourceSyncRunRow {
+  source: string;
+  status: string;
+  error_message: string | null;
+  created_at: string;
+}
+
+export function latestFailedSyncRuns<T extends SourceSyncRunRow>(runs: T[]) {
+  const latestBySource = new Map<string, T>();
+  for (const run of [...runs].sort(
+    (left, right) =>
+      timestampMs(right.created_at) - timestampMs(left.created_at),
+  )) {
+    if (!latestBySource.has(run.source)) {
+      latestBySource.set(run.source, run);
+    }
+  }
+  return [...latestBySource.values()].filter(
+    (run) => run.status === "failed",
+  );
+}
+
 export function creativeQueueAlerts(
   jobs: CreativeJobRow[],
   heartbeats: CreativeWorkerHeartbeatRow[],

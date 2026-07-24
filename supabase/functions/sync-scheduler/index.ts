@@ -10,6 +10,7 @@ import {
 } from "../_shared/sync-jobs.ts";
 import {
   buildSyncWindows,
+  metaSyncProfilesForWindow,
   parseSyncSchedulerOptions,
   sourceSyncStaleMinutes,
   type SyncJobInput,
@@ -54,6 +55,7 @@ type VturbPlayerRow = {
 
 type SchedulerCatalog = {
   metaAccountsByProject: Map<string, MetaAccountRow[]>;
+  metaSuspendedWorkspaceIds: Set<string>;
   vturbPlayersByProject: Map<string, VturbPlayerRow[]>;
   workspacesWithVturbKey: Set<string>;
   vturbSuspendedWorkspaceIds: Set<string>;
@@ -131,15 +133,19 @@ Deno.serve(async (req) => {
       const result = resultByProjectId.get(project.id)!;
 
       if (!options.source || options.source === "meta") {
-        schedule(
-          project.id,
-          "meta",
-          buildMetaJobs(
-            project,
-            windows,
-            catalog.metaAccountsByProject.get(project.id) ?? [],
-          ),
-        );
+        if (catalog.metaSuspendedWorkspaceIds.has(project.workspace_id)) {
+          result.meta = { skipped: "credential_suspended" };
+        } else {
+          schedule(
+            project.id,
+            "meta",
+            buildMetaJobs(
+              project,
+              windows,
+              catalog.metaAccountsByProject.get(project.id) ?? [],
+            ),
+          );
+        }
       }
 
       if (!options.source || options.source === "vturb") {
@@ -160,15 +166,19 @@ Deno.serve(async (req) => {
       }
 
       if (!options.source || options.source === "creative") {
-        schedule(
-          project.id,
-          "creative",
-          buildCreativeJobs(
-            project,
-            windows,
-            catalog.metaAccountsByProject.get(project.id) ?? [],
-          ),
-        );
+        if (catalog.metaSuspendedWorkspaceIds.has(project.workspace_id)) {
+          result.creative = { skipped: "meta_credential_suspended" };
+        } else {
+          schedule(
+            project.id,
+            "creative",
+            buildCreativeJobs(
+              project,
+              windows,
+              catalog.metaAccountsByProject.get(project.id) ?? [],
+            ),
+          );
+        }
       }
     }
 
@@ -245,26 +255,36 @@ function buildMetaJobs(
 ) {
   const jobs: SyncJobBatchItem[] = [];
   for (const account of accounts) {
+    const accountId = normalizeMetaAccountId(account.account_id);
     for (const window of windows) {
-      jobs.push({
-        job:
-          buildSourceJob(project, {
-            source: "meta",
-            entityType: "meta_account",
-            entityId: normalizeMetaAccountId(account.account_id),
-            window,
-            payload: {
-              workspace_meta_account_id: account.id,
-              account_id: normalizeMetaAccountId(account.account_id),
-              label: account.label,
-              window: window.label,
-            },
-          }),
-        options: {
-          requeueSucceededAfterMinutes:
-            sourceSyncStaleMinutes("meta", window),
-        },
-      });
+      for (const profile of metaSyncProfilesForWindow(window)) {
+        const profileWindow: SyncJobWindow = {
+          ...window,
+          priority: Math.max(0, window.priority + profile.priorityOffset),
+        };
+        jobs.push({
+          job:
+            buildSourceJob(project, {
+              source: "meta",
+              entityType: "meta_account",
+              entityId: profile.entitySuffix
+                ? `${accountId}:${profile.entitySuffix}`
+                : accountId,
+              window: profileWindow,
+              payload: {
+                workspace_meta_account_id: account.id,
+                account_id: accountId,
+                label: account.label,
+                window: window.label,
+                sync_profile: profile.name,
+                levels: profile.levels,
+              },
+            }),
+          options: {
+            requeueSucceededAfterMinutes: profile.staleMinutes,
+          },
+        });
+      }
     }
   }
   return jobs;
@@ -413,6 +433,7 @@ async function loadSchedulerCatalog(
   if (projects.length === 0) {
     return {
       metaAccountsByProject: new Map(),
+      metaSuspendedWorkspaceIds: new Set(),
       vturbPlayersByProject: new Map(),
       workspacesWithVturbKey: new Set(),
       vturbSuspendedWorkspaceIds: new Set(),
@@ -448,7 +469,9 @@ async function loadSchedulerCatalog(
       .in("workspace_id", workspaceIds),
     sb
       .from("workspace_integrations")
-      .select("workspace_id, vturb_api_key, vturb_sync_suspended_at")
+      .select(
+        "workspace_id, meta_sync_suspended_at, vturb_api_key, vturb_sync_suspended_at",
+      )
       .in("workspace_id", workspaceIds),
   ]);
 
@@ -480,6 +503,12 @@ async function loadSchedulerCatalog(
       metaBindingsResult.data ?? [],
       "meta_account_id",
       metaAccountsById,
+    ),
+    metaSuspendedWorkspaceIds: new Set(
+      (integrationsResult.data ?? [])
+        .filter((row: any) => Boolean(row.meta_sync_suspended_at))
+        .map((row: any) => String(row.workspace_id ?? ""))
+        .filter(Boolean),
     ),
     vturbPlayersByProject: groupBoundResources(
       vturbBindingsResult.data ?? [],

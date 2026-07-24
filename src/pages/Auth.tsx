@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { sanitizeNextPath } from "@/lib/authRedirect";
+import { publicConfig } from "@/lib/publicConfig";
 
 type AuthMode = "login" | "signup" | "forgot" | "check-email" | "recovery-sent";
 
@@ -83,9 +84,9 @@ export default function Auth() {
     searchParams.get("next") ?? pendingConfirmation?.nextPath,
     "/",
   );
-  const redirectUrl = `${window.location.origin}${nextPath}`;
+  const redirectUrl = `${publicConfig.appUrl}${nextPath}`;
   const emailConfirmationUrl =
-    `${window.location.origin}/auth?next=${encodeURIComponent(nextPath)}`;
+    `${publicConfig.appUrl}/auth?next=${encodeURIComponent(nextPath)}`;
   const googleAuthEnabled = import.meta.env.VITE_ENABLE_GOOGLE_AUTH === "true";
   const publicSignupEnabled = import.meta.env.VITE_ENABLE_PUBLIC_SIGNUP === "true";
   const signupEnabled = publicSignupEnabled || nextPath.startsWith("/accept-invite?");
@@ -142,7 +143,7 @@ export default function Auth() {
         setMode("check-email");
       } else if (mode === "forgot") {
         const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-          redirectTo: `${window.location.origin}/reset-password`,
+          redirectTo: `${publicConfig.appUrl}/reset-password`,
         });
         if (error) throw error;
         setMode("recovery-sent");
@@ -176,7 +177,7 @@ export default function Auth() {
         setFeedback("Novo email de confirmação enviado.");
       } else {
         const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-          redirectTo: `${window.location.origin}/reset-password`,
+          redirectTo: `${publicConfig.appUrl}/reset-password`,
         });
         if (error) throw error;
         setFeedback("Novo link de recuperação enviado.");

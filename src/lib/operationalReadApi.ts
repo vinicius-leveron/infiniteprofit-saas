@@ -47,6 +47,11 @@ export interface WorkspaceIntegrationSafeRow {
   gateway_last_event_at: string | null;
   has_vturb_api_key: boolean;
   has_gateway_secret: boolean;
+  has_meta_credential: boolean;
+  meta_sync_suspended_at: string | null;
+  meta_sync_suspension_reason: string | null;
+  meta_validated_at: string | null;
+  meta_credential_updated_at: string | null;
 }
 
 export interface WorkspaceMetaAccountSafeRow {

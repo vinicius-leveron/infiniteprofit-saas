@@ -410,6 +410,11 @@ export function evaluateOnboardingReport(
       report?.login === true &&
       report?.bootstrap_account === true &&
       report?.first_funnel === true &&
+      report?.hubla_history === true &&
+      report?.first_signal === true &&
+      report?.first_dashboard === true &&
+      report?.team_viewed === true &&
+      report?.sharing_created === true &&
       report?.activation_redirect === true &&
       report?.secrets_not_persisted === true &&
       Boolean(report?.artifact_url),
@@ -417,7 +422,13 @@ export function evaluateOnboardingReport(
       report?.login === true
     }; bootstrap=${report?.bootstrap_account === true}; first_funnel=${
       report?.first_funnel === true
-    }; secret_boundary=${report?.secrets_not_persisted === true}`,
+    }; hubla=${report?.hubla_history === true}; first_signal=${
+      report?.first_signal === true
+    }; first_dashboard=${report?.first_dashboard === true}; team=${
+      report?.team_viewed === true
+    }; sharing=${report?.sharing_created === true}; secret_boundary=${
+      report?.secrets_not_persisted === true
+    }`,
   );
 }
 

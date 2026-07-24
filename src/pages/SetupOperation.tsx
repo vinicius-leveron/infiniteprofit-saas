@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
@@ -8,8 +8,12 @@ import {
   CircleAlert,
   CircleCheck,
   Clock3,
+  CreditCard,
   Database,
+  FileUp,
   Loader2,
+  Megaphone,
+  PlayCircle,
   Plug,
   Radio,
   Search,
@@ -42,10 +46,12 @@ import type {
   SetupStepId as StepId,
 } from "@/lib/setupDraft";
 import { cn } from "@/lib/utils";
+import { trackProductEvent } from "@/lib/productEvents";
 
 const SETUP_DRAFT_STORAGE_KEY = "infiniteprofit.setupOperationDraft";
 
 type SourceSetupStatus = "not_started" | "prepared" | "configured" | "skipped" | "error";
+type SourceChoice = "hubla_history" | "gateway" | "meta" | "vturb";
 
 type DiscoveredMetaAccount = {
   accountId: string;
@@ -96,6 +102,7 @@ export default function SetupOperation() {
     workspaces.find((workspace) => workspace.id === routeClientId) ??
     currentWorkspace;
   const [step, setStep] = useState<StepId>("nome");
+  const [activeSourceChoice, setActiveSourceChoice] = useState<SourceChoice | null>(null);
   const [saving, setSaving] = useState(false);
   const [savingLabel, setSavingLabel] = useState("Criar funil");
   const [hydratedDraftKey, setHydratedDraftKey] = useState<string | null>(null);
@@ -119,6 +126,11 @@ export default function SetupOperation() {
   const [metaTestResults, setMetaTestResults] = useState<Record<string, MetaTestResult>>({});
   const [testingVturb, setTestingVturb] = useState(false);
   const [vturbTestResult, setVturbTestResult] = useState<{ ok: boolean; players?: VturbDetectedPlayer[]; error?: string } | null>(null);
+  const setupTrackedFor = useRef<string | null>(null);
+  const setupSessionId = useRef(
+    globalThis.crypto?.randomUUID?.() ??
+      `setup-${Date.now().toString(36)}`,
+  );
 
   useEffect(() => {
     if (!authLoading && !userId) navigate("/auth", { replace: true });
@@ -138,6 +150,19 @@ export default function SetupOperation() {
     routeClientId,
     setCurrentWorkspaceId,
   ]);
+
+  useEffect(() => {
+    if (!client?.id || setupTrackedFor.current === client.id) return;
+    setupTrackedFor.current = client.id;
+    trackProductEvent({
+      eventName: "funnel_setup_started",
+      workspaceId: client.id,
+      properties: {
+        entry_point: "new_funnel",
+        setup_session_id: setupSessionId.current,
+      },
+    });
+  }, [client?.id]);
 
   const draftStorageKey = useMemo(
     () => `${SETUP_DRAFT_STORAGE_KEY}.${client?.id ?? "global"}`,
@@ -228,6 +253,19 @@ export default function SetupOperation() {
       setHublaSecret("");
       setHublaHistory(null);
     }
+  }
+
+  function continueWithSelectedSources() {
+    if (!canSubmit) {
+      setStep("nome");
+      toast.error("Dê um nome ao funil antes de continuar.");
+      return;
+    }
+    (Object.entries(sourceStatuses) as Array<[SetupSource, SourceSetupStatus]>)
+      .filter(([, status]) => status !== "prepared" && status !== "configured")
+      .forEach(([source]) => skipSource(source));
+    setActiveSourceChoice(null);
+    setStep("revisao");
   }
 
   function setPlayerIds(nextIds: string[]) {
@@ -455,7 +493,10 @@ export default function SetupOperation() {
           },
         });
         const metaRow = metaData?.meta_account;
-        if (metaError || !metaRow) throw metaError ?? new Error("Falha ao salvar Meta");
+        if (metaError || metaData?.ok === false || !metaRow) {
+          throw metaError ??
+            new Error(metaData?.error ?? "Falha ao salvar Meta");
+        }
         metaRowIds.add(metaRow.id);
       }
 
@@ -563,6 +604,40 @@ export default function SetupOperation() {
       );
 
       setSavingLabel("Preparando seu primeiro resultado");
+      trackProductEvent({
+        eventName: "funnel_setup_started",
+        workspaceId: client.id,
+        projectId: project.id,
+        properties: {
+          entry_point: "new_funnel",
+          setup_session_id: setupSessionId.current,
+        },
+      });
+      configuredSources.forEach((source) => {
+        trackProductEvent({
+          eventName: "source_prepared",
+          workspaceId: client.id,
+          projectId: project.id,
+          properties: {
+            source,
+            method:
+              source === "gateway" && hublaHistory
+                ? "hubla_history"
+                : "credential",
+            setup_session_id: setupSessionId.current,
+          },
+        });
+      });
+      trackProductEvent({
+        eventName: "funnel_created",
+        workspaceId: client.id,
+        projectId: project.id,
+        properties: {
+          source_count: configuredSources.length,
+          has_hubla_history: Boolean(hublaHistory),
+          setup_session_id: setupSessionId.current,
+        },
+      });
       sessionStorage.removeItem(draftStorageKey);
       saveFunnelActivationPlan({
         version: 1,
@@ -664,7 +739,10 @@ export default function SetupOperation() {
             <button
               key={item.id}
               type="button"
-              onClick={() => setStep(item.id)}
+              onClick={() => {
+                setStep(item.id);
+                if (item.id === "fontes") setActiveSourceChoice(null);
+              }}
               disabled={
                 item.id === "revisao" && (!canSubmit || !sourcesDecided)
               }
@@ -701,11 +779,38 @@ export default function SetupOperation() {
           </StepSection>
         )}
 
-        {step === "fontes" && (
+        {step === "fontes" && activeSourceChoice === null && (
+          <ProgressiveSourceChooser
+            metaStatus={metaStatus}
+            vturbStatus={vturbStatus}
+            gatewayStatus={gatewayStatus}
+            hasHublaHistory={Boolean(hublaHistory)}
+            onSelect={setActiveSourceChoice}
+            onBack={() => setStep("nome")}
+            onContinue={continueWithSelectedSources}
+          />
+        )}
+
+        {step === "fontes" && activeSourceChoice !== null && (
+          <Button
+            type="button"
+            variant="ghost"
+            className="mb-4 min-h-11 gap-2"
+            onClick={() => setActiveSourceChoice(null)}
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Voltar às fontes
+          </Button>
+        )}
+
+        {step === "fontes" && activeSourceChoice === "meta" && (
           <StepSection title="Meta Ads">
             <SourceSetupHeader
               status={metaStatus}
-              onSkip={() => skipSource("meta")}
+              onSkip={() => {
+                skipSource("meta");
+                setActiveSourceChoice(null);
+              }}
               onResume={() => resumeSource("meta")}
             />
             {existingMetaAccounts.length > 0 && (
@@ -876,11 +981,14 @@ export default function SetupOperation() {
           </StepSection>
         )}
 
-        {step === "fontes" && (
+        {step === "fontes" && activeSourceChoice === "vturb" && (
           <StepSection title="VTurb">
             <SourceSetupHeader
               status={vturbStatus}
-              onSkip={() => skipSource("vturb")}
+              onSkip={() => {
+                skipSource("vturb");
+                setActiveSourceChoice(null);
+              }}
               onResume={() => resumeSource("vturb")}
             />
             <Field label="API key" htmlFor="vturb-api-key">
@@ -983,11 +1091,14 @@ export default function SetupOperation() {
           </StepSection>
         )}
 
-        {step === "fontes" && (
+        {step === "fontes" && activeSourceChoice === "gateway" && (
           <StepSection title="Gateway de pagamento">
             <SourceSetupHeader
               status={gatewayStatus}
-              onSkip={() => skipSource("gateway")}
+              onSkip={() => {
+                skipSource("gateway");
+                setActiveSourceChoice(null);
+              }}
               onResume={() => resumeSource("gateway")}
             />
             <Field label="Token/secret do webhook" htmlFor="gateway-secret">
@@ -1007,18 +1118,20 @@ export default function SetupOperation() {
               O webhook será criado e poderá ser copiado somente depois que o funil
               estiver persistido.
             </p>
-            <div className="my-1 flex items-center gap-3" aria-hidden="true">
-              <span className="h-px flex-1 bg-border" />
-              <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                primeiro resultado
-              </span>
-              <span className="h-px flex-1 bg-border" />
-            </div>
+          </StepSection>
+        )}
+
+        {step === "fontes" && activeSourceChoice === "hubla_history" && (
+          <StepSection title="Histórico da Hubla">
             <div className="rounded-xl border border-primary/20 bg-primary/[0.03] p-4">
               <div className="mb-3">
-                <p className="text-sm font-medium">Já tem histórico na Hubla?</p>
+                <div className="mb-2 inline-flex rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-primary">
+                  Quick win recomendado
+                </div>
+                <p className="text-sm font-medium">Abra o dashboard com vendas reais</p>
                 <p className="mt-1 text-xs leading-4 text-muted-foreground">
-                  Importe agora para abrir o primeiro dashboard com vendas reais, sem esperar o próximo webhook.
+                  Importe o histórico agora sem esperar o próximo webhook. O arquivo
+                  é validado e usado somente durante esta criação.
                 </p>
               </div>
               <HublaImportPicker
@@ -1034,13 +1147,29 @@ export default function SetupOperation() {
                 O conteúdo fica somente nesta etapa e será validado antes da importação.
               </p>
             </div>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                className="min-h-11"
+                onClick={() => {
+                  if (!hublaSecret.trim()) skipSource("gateway");
+                  setActiveSourceChoice(null);
+                }}
+              >
+                Fazer depois
+              </Button>
+              {hublaHistory && (
+                <Button
+                  type="button"
+                  className="min-h-11"
+                  onClick={() => setActiveSourceChoice(null)}
+                >
+                  Histórico preparado
+                </Button>
+              )}
+            </div>
           </StepSection>
-        )}
-
-        {step === "fontes" && !sourcesDecided && (
-          <p className="mt-6 text-xs text-muted-foreground">
-            Configure cada fonte ou escolha “Fazer depois” para avançar.
-          </p>
         )}
 
         {step === "revisao" && (
@@ -1093,6 +1222,7 @@ export default function SetupOperation() {
           </StepSection>
         )}
 
+        {step !== "fontes" && (
         <div className="flex justify-between gap-3 mt-6 pt-4 border-t border-border/50">
           <Button
             type="button"
@@ -1111,9 +1241,7 @@ export default function SetupOperation() {
             <Button
               type="button"
               disabled={
-                (step === "nome" && !canSubmit) ||
-                (step === "fontes" && !sourcesDecided) ||
-                saving
+                (step === "nome" && !canSubmit) || saving
               }
               onClick={() =>
                 setStep(STEPS[Math.min(STEPS.length - 1, currentStepIndex + 1)].id)
@@ -1123,6 +1251,7 @@ export default function SetupOperation() {
             </Button>
           )}
         </div>
+        )}
       </div>
     </main>
   );
@@ -1210,6 +1339,139 @@ function SetupCreatingState({ label }: { label: string }) {
         </div>
       </section>
     </main>
+  );
+}
+
+function ProgressiveSourceChooser({
+  metaStatus,
+  vturbStatus,
+  gatewayStatus,
+  hasHublaHistory,
+  onSelect,
+  onBack,
+  onContinue,
+}: {
+  metaStatus: SourceSetupStatus;
+  vturbStatus: SourceSetupStatus;
+  gatewayStatus: SourceSetupStatus;
+  hasHublaHistory: boolean;
+  onSelect: (source: SourceChoice) => void;
+  onBack: () => void;
+  onContinue: () => void;
+}) {
+  const options: Array<{
+    id: SourceChoice;
+    title: string;
+    description: string;
+    icon: typeof FileUp;
+    status: SourceSetupStatus;
+    recommended?: boolean;
+    order: string;
+  }> = [
+    {
+      id: "hubla_history",
+      title: "Histórico Hubla",
+      description: "Importe vendas passadas e abra o primeiro dashboard sem esperar novos eventos.",
+      icon: FileUp,
+      status: hasHublaHistory ? "prepared" : gatewayStatus === "skipped" ? "skipped" : "not_started",
+      recommended: true,
+      order: "1",
+    },
+    {
+      id: "gateway",
+      title: "Gateway",
+      description: "Prepare o recebimento contínuo das próximas vendas por webhook.",
+      icon: CreditCard,
+      status: gatewayStatus,
+      order: "2",
+    },
+    {
+      id: "meta",
+      title: "Meta Ads",
+      description: "Vincule as contas de anúncios que pertencem a este funil.",
+      icon: Megaphone,
+      status: metaStatus,
+      order: "3",
+    },
+    {
+      id: "vturb",
+      title: "VTurb",
+      description: "Selecione os players usados na oferta e acompanhe a jornada da VSL.",
+      icon: PlayCircle,
+      status: vturbStatus,
+      order: "4",
+    },
+  ];
+
+  return (
+    <section aria-labelledby="source-choice-title">
+      <div className="max-w-2xl">
+        <p className="text-xs font-semibold uppercase tracking-[0.15em] text-primary">
+          Ative valor primeiro
+        </p>
+        <h2 id="source-choice-title" className="mt-2 text-xl font-semibold">
+          Por onde você quer começar?
+        </h2>
+        <p className="mt-2 text-sm leading-5 text-muted-foreground">
+          Configure uma fonte por vez. O histórico Hubla é o caminho mais rápido para
+          enxergar vendas reais; todas as outras opções podem ser concluídas depois.
+        </p>
+      </div>
+
+      <div className="mt-6 grid gap-3 sm:grid-cols-2">
+        {options.map((option) => {
+          const Icon = option.icon;
+          return (
+            <button
+              key={option.id}
+              type="button"
+              onClick={() => onSelect(option.id)}
+              className={cn(
+                "relative min-h-40 rounded-2xl border p-4 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                option.recommended
+                  ? "border-primary/35 bg-primary/[0.04] hover:border-primary/60"
+                  : "border-border/70 bg-card hover:border-primary/40",
+              )}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                  <Icon className="h-5 w-5" />
+                </span>
+                <span className="text-xs font-semibold tabular-nums text-muted-foreground">
+                  {option.order}
+                </span>
+              </div>
+              {option.recommended && (
+                <span className="mt-4 inline-flex rounded-full bg-primary/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                  Quick win
+                </span>
+              )}
+              <h3 className={cn("font-semibold", option.recommended ? "mt-2" : "mt-4")}>
+                {option.title}
+              </h3>
+              <p className="mt-1 text-xs leading-4 text-muted-foreground">
+                {option.description}
+              </p>
+              <SourceStatus status={option.status} />
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="mt-6 flex flex-col-reverse gap-3 border-t border-border/60 pt-5 sm:flex-row sm:items-center sm:justify-between">
+        <Button type="button" variant="outline" className="min-h-11" onClick={onBack}>
+          Voltar
+        </Button>
+        <div className="text-right">
+          <Button type="button" className="min-h-11" onClick={onContinue}>
+            Revisar e criar funil
+          </Button>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Itens não configurados ficarão disponíveis para depois.
+          </p>
+        </div>
+      </div>
+    </section>
   );
 }
 

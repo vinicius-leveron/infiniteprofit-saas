@@ -24,7 +24,7 @@ jobs:
       SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
       VITE_SUPABASE_URL: https://nztnctrkmfrgclrnflfa.supabase.co
       VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
-      PROBE_APP_URL: https://infiniteprofit-saas.onrender.com
+      PROBE_APP_URL: ${{ vars.APP_PUBLIC_URL }}
       GITHUB_TOKEN: ${{ github.token }}
       READINESS_GITHUB_REPOSITORY: ${{ github.repository }}
       READINESS_ARTIFACT_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

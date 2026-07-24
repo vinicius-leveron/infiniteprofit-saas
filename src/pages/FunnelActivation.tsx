@@ -38,12 +38,14 @@ import {
 } from "@/lib/funnelActivation";
 import { getFunnelCheckoutBindingSafe } from "@/lib/operationalReadApi";
 import { cn } from "@/lib/utils";
+import { trackProductEvent } from "@/lib/productEvents";
 
 interface ProjectSummary {
   id: string;
   name: string;
   workspace_id: string;
   created_at: string;
+  first_dashboard_opened_at: string | null;
 }
 
 interface SyncRunSummary {
@@ -95,6 +97,7 @@ export default function FunnelActivation() {
   const [refreshing, setRefreshing] = useState(false);
   const initialSyncStarted = useRef(false);
   const activationMarked = useRef(false);
+  const activationViewTracked = useRef(false);
 
   const loadSnapshot = useCallback(
     async (background = false) => {
@@ -119,7 +122,7 @@ export default function FunnelActivation() {
         ] = await Promise.all([
           supabase
             .from("projects")
-            .select("id, name, workspace_id, created_at")
+            .select("id, name, workspace_id, created_at, first_dashboard_opened_at")
             .eq("id", funnelId)
             .single(),
           supabase
@@ -355,6 +358,24 @@ export default function FunnelActivation() {
     });
   }, [experience.hasTrustedSignal, funnelId]);
 
+  useEffect(() => {
+    if (
+      pageState !== "ready" ||
+      !data ||
+      !funnelId ||
+      activationViewTracked.current
+    ) {
+      return;
+    }
+    activationViewTracked.current = true;
+    trackProductEvent({
+      eventName: "activation_viewed",
+      workspaceId: data.project.workspace_id,
+      projectId: funnelId,
+      properties: { state: experience.state },
+    });
+  }, [data, experience.state, funnelId, pageState]);
+
   if (pageState === "loading") {
     return <ActivationLoading />;
   }
@@ -475,6 +496,7 @@ export default function FunnelActivation() {
           experience={experience}
           snapshot={data.snapshot}
           plan={plan}
+          dashboardOpened={Boolean(data.project.first_dashboard_opened_at)}
         />
         <FirstSignalCard data={data} experience={experience} plan={plan} />
       </div>
@@ -778,10 +800,12 @@ function ActivationChecklist({
   experience,
   snapshot,
   plan,
+  dashboardOpened,
 }: {
   experience: ActivationExperience;
   snapshot: FunnelActivationSnapshot;
   plan: FunnelActivationPlan | null;
+  dashboardOpened: boolean;
 }) {
   const hasSources = snapshot.configuredSources.length > 0;
   const syncDone =
@@ -842,6 +866,19 @@ function ActivationChecklist({
       status: experience.hasTrustedSignal
         ? "done"
         : experience.state === "preparing" || experience.state === "waiting_for_event"
+          ? "active"
+          : "pending",
+    },
+    {
+      label: "Dashboard aberto",
+      detail: dashboardOpened
+        ? "O primeiro resultado já foi visualizado."
+        : experience.hasTrustedSignal
+          ? "Abra o dashboard para concluir a ativação."
+          : "Disponível depois que o primeiro sinal chegar.",
+      status: dashboardOpened
+        ? "done"
+        : experience.hasTrustedSignal
           ? "active"
           : "pending",
     },

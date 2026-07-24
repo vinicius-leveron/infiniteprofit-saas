@@ -14,6 +14,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppShell } from "@/components/AppShell";
+import { AppErrorBoundary } from "@/components/AppErrorBoundary";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { WorkspaceProvider, useWorkspace } from "@/hooks/useWorkspace";
 import { resolveClientLandingDestination } from "@/lib/lastDashboard";
@@ -37,6 +38,10 @@ const ClientTeam = lazy(() => import("./pages/ClientTeam.tsx"));
 const ClientSettings = lazy(() => import("./pages/ClientSettings.tsx"));
 const OrganizationGeneral = lazy(() => import("./pages/OrganizationGeneral.tsx"));
 const OrganizationTeam = lazy(() => import("./pages/OrganizationTeam.tsx"));
+const FunnelCsvImport = lazy(() => import("./pages/FunnelCsvImport.tsx"));
+const Help = lazy(() => import("./pages/Help.tsx"));
+const Terms = lazy(() => import("./pages/Terms.tsx"));
+const Privacy = lazy(() => import("./pages/Privacy.tsx"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -93,6 +98,43 @@ function HomeRedirect() {
   );
 }
 
+function DashboardEntry() {
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const { currentWorkspaceId } = useWorkspace();
+  const projectId = searchParams.get("project");
+
+  useEffect(() => {
+    if (projectId || !user?.id) return;
+
+    if (!currentWorkspaceId) {
+      navigate("/clients", { replace: true });
+      return;
+    }
+
+    let active = true;
+    void resolveClientLandingDestination(user.id, currentWorkspaceId).then(
+      (destination) => {
+        if (active) navigate(destination, { replace: true });
+      },
+    );
+
+    return () => {
+      active = false;
+    };
+  }, [currentWorkspaceId, navigate, projectId, user?.id]);
+
+  if (projectId) return <Index />;
+
+  return (
+    <main className="flex min-h-[50vh] items-center justify-center" aria-busy="true">
+      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      <span className="sr-only">Abrindo o último funil disponível</span>
+    </main>
+  );
+}
+
 function LegacyFunnelRedirect({
   destination,
 }: {
@@ -137,6 +179,7 @@ function LegacyOrganizationRedirect() {
 }
 
 const App = () => (
+  <AppErrorBoundary>
   <QueryClientProvider client={queryClient}>
     <AuthProvider>
       <TooltipProvider>
@@ -150,6 +193,9 @@ const App = () => (
                 <Route path="/reset-password" element={<ResetPassword />} />
                 <Route path="/accept-invite" element={<AcceptInvite />} />
                 <Route path="/share/:token" element={<PublicShare />} />
+                <Route path="/help" element={<Help />} />
+                <Route path="/terms" element={<Terms />} />
+                <Route path="/privacy" element={<Privacy />} />
 
                 <Route element={<AppShell />}>
                   <Route path="/" element={<HomeRedirect />} />
@@ -158,6 +204,10 @@ const App = () => (
                   <Route path="/clients" element={<Clients />} />
                   <Route path="/clients/:clientId/funnels" element={<Projects />} />
                   <Route path="/clients/:clientId/funnels/new" element={<SetupOperation />} />
+                  <Route
+                    path="/clients/:clientId/funnels/import"
+                    element={<FunnelCsvImport />}
+                  />
                   <Route path="/clients/:clientId/integrations" element={<ClientIntegrations />} />
                   <Route path="/clients/:clientId/team" element={<ClientTeam />} />
                   <Route path="/clients/:clientId/settings" element={<ClientSettings />} />
@@ -180,7 +230,7 @@ const App = () => (
                     element={<Connections mode="sharing" />}
                   />
 
-                  <Route path="/dashboard" element={<Index />} />
+                  <Route path="/dashboard" element={<DashboardEntry />} />
 
                   <Route path="/projects" element={<Projects />} />
                   <Route path="/setup-operation" element={<SetupOperation />} />
@@ -210,6 +260,7 @@ const App = () => (
       </TooltipProvider>
     </AuthProvider>
   </QueryClientProvider>
+  </AppErrorBoundary>
 );
 
 export default App;

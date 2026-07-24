@@ -1,6 +1,13 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import {
+  MetaCredentialError,
+  listAccessibleMetaAdAccounts,
+  metaCredentialErrorFromResponse,
+  normalizeMetaAccountId,
+  validateMetaInsightsAccess,
+} from "../_shared/meta-credentials.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -43,7 +50,7 @@ Deno.serve(async (req) => {
       await assertWorkspaceAdmin(sb, workspaceId, caller.userId);
 
       try {
-        const accounts = await listAccessibleAdAccounts(directToken);
+        const accounts = await listAccessibleMetaAdAccounts(directToken);
         return json({ ok: true, accounts });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Falha ao buscar contas Meta";
@@ -87,73 +94,51 @@ Deno.serve(async (req) => {
       return json({ ok: false, error: "account_id/access_token ou meta_account_id sao obrigatorios" }, 400);
     }
 
-    const normalizedAccountId = accountId.startsWith("act_") ? accountId : `act_${accountId}`;
-    const url = `https://graph.facebook.com/v21.0/${normalizedAccountId}?fields=name,account_status,currency,timezone_name`;
-
-    const response = await fetch(url, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const data: any = await response.json().catch(() => ({}));
-
-    if (!response.ok || data.error) {
-      const msg = data?.error?.message ?? `HTTP ${response.status}`;
-      return json({ ok: false, error: msg, code: data?.error?.code });
+    const normalizedAccountId = normalizeMetaAccountId(accountId);
+    if (!normalizedAccountId) {
+      return json({ ok: false, error: "account_id inválido" }, 400);
     }
+    try {
+      const url =
+        `https://graph.facebook.com/v21.0/${normalizedAccountId}?fields=name,account_status,currency,timezone_name`;
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data: any = await response.json().catch(() => ({}));
 
-    return json({
-      ok: true,
-      name: data.name ?? null,
-      account_status: data.account_status ?? null,
-      currency: data.currency ?? null,
-      timezone: data.timezone_name ?? null,
-    });
+      if (!response.ok || data.error) {
+        throw metaCredentialErrorFromResponse(
+          response.status,
+          data,
+          token,
+        );
+      }
+
+      await validateMetaInsightsAccess(normalizedAccountId, token);
+      return json({
+        ok: true,
+        name: data.name ?? null,
+        account_status: data.account_status ?? null,
+        currency: data.currency ?? null,
+        timezone: data.timezone_name ?? null,
+        can_read_insights: true,
+      });
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : "Falha ao validar a leitura de investimento";
+      return json({
+        ok: false,
+        error: message,
+        code: error instanceof MetaCredentialError
+          ? error.code
+          : "META_VALIDATION_FAILED",
+      });
+    }
   } catch (error) {
     return json({ ok: false, error: error instanceof Error ? error.message : "Erro inesperado" }, 500);
   }
 });
-
-async function listAccessibleAdAccounts(token: string) {
-  const accounts = new Map<string, Record<string, unknown>>();
-  const baseUrl =
-    "https://graph.facebook.com/v21.0/me/adaccounts?fields=id,account_id,name,account_status,currency,timezone_name&limit=200";
-  let after: string | null = null;
-  let hasNextPage = true;
-
-  for (let page = 0; hasNextPage && page < 10; page += 1) {
-    const url = new URL(baseUrl);
-    if (after) url.searchParams.set("after", after);
-    const response = await fetch(url, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const payload: any = await response.json().catch(() => ({}));
-    if (!response.ok || payload.error) {
-      const message = payload?.error?.message ?? `HTTP ${response.status}`;
-      throw new Error(message);
-    }
-
-    const rows = Array.isArray(payload.data) ? payload.data : [];
-    for (const row of rows) {
-      const rawId = stringOrNull(row?.account_id) ?? stringOrNull(row?.id);
-      if (!rawId) continue;
-      const accountId = rawId.startsWith("act_") ? rawId : `act_${rawId}`;
-      accounts.set(accountId, {
-        id: accountId,
-        account_id: accountId,
-        name: stringOrNull(row?.name),
-        account_status: typeof row?.account_status === "number" ? row.account_status : null,
-        currency: stringOrNull(row?.currency),
-        timezone: stringOrNull(row?.timezone_name),
-      });
-    }
-
-    after = stringOrNull(payload?.paging?.cursors?.after);
-    hasNextPage = Boolean(payload?.paging?.next && after);
-  }
-
-  return [...accounts.values()].sort((left, right) =>
-    String(left.name ?? left.account_id).localeCompare(String(right.name ?? right.account_id), "pt-BR")
-  );
-}
 
 async function resolveUser(authHeader: string | null) {
   if (!authHeader?.startsWith("Bearer ")) return null;

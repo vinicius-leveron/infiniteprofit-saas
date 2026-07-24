@@ -5,6 +5,7 @@ import {
   buildSyncWindows,
   failureRetryPlan,
   hasWorkerJobBudget,
+  metaSyncProfilesForWindow,
   parseSyncWorkerOptions,
   shouldStopWorkerLoop,
   sourceSyncStaleMinutes,
@@ -89,9 +90,48 @@ describe("sync jobs core", () => {
     };
 
     expect(sourceSyncStaleMinutes("vturb", recent)).toBe(15);
-    expect(sourceSyncStaleMinutes("meta", recent)).toBe(60);
+    expect(sourceSyncStaleMinutes("meta", recent)).toBe(15);
     expect(sourceSyncStaleMinutes("creative", recent)).toBe(6 * 60);
     expect(sourceSyncStaleMinutes("meta", backfill)).toBe(12 * 60);
+  });
+
+  it("splits recent Meta work into a fast spend path and a detailed path", () => {
+    expect(
+      metaSyncProfilesForWindow({
+        label: "recent",
+        staleMinutes: 15,
+      }),
+    ).toEqual([
+      {
+        name: "fast",
+        levels: ["account"],
+        staleMinutes: 5,
+        priorityOffset: -5,
+        entitySuffix: "fast",
+      },
+      {
+        name: "detail",
+        levels: ["campaign", "adset", "ad"],
+        staleMinutes: 15,
+        priorityOffset: 0,
+        entitySuffix: null,
+      },
+    ]);
+
+    expect(
+      metaSyncProfilesForWindow({
+        label: "month",
+        staleMinutes: 24 * 60,
+      }),
+    ).toEqual([
+      {
+        name: "backfill",
+        levels: ["account", "campaign", "adset", "ad"],
+        staleMinutes: 24 * 60,
+        priorityOffset: 0,
+        entitySuffix: null,
+      },
+    ]);
   });
 
   it("stops before the runtime limit and dead-letters exhausted jobs", () => {
@@ -140,6 +180,26 @@ describe("sync jobs core", () => {
       finishedAt: null,
       kind: "retryable",
     });
+  });
+
+  it("dead-letters expired or underprivileged Meta credentials", () => {
+    const now = new Date("2026-07-23T21:30:00Z");
+    for (const message of [
+      'Meta API 400: {"error":{"code":190,"error_subcode":463,"message":"Session has expired"}}',
+      "Requires ads_management or ads_read permission",
+      "Error validating access token",
+    ]) {
+      expect(
+        syncJobFailurePlan(
+          { attempt_count: 1, max_attempts: 5 },
+          message,
+          now,
+        ),
+      ).toMatchObject({
+        status: "dead_letter",
+        kind: "permanent",
+      });
+    }
   });
 
   it("caps each downstream call inside the worker runtime budget", () => {

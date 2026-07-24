@@ -4,6 +4,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { isAutomationRequest } from "../_shared/automation.ts";
 import {
   creativeQueueAlerts,
+  latestFailedSyncRuns,
   type AlertCandidate,
   type CreativeJobRow,
   type CreativeWorkerHeartbeatRow,
@@ -144,6 +145,7 @@ async function buildAlerts(sb: SupabaseClientAny, project: ProjectContext): Prom
     { data: playerBindings },
     { data: checkout },
     { data: syncRuns },
+    { data: workspaceIntegration },
     { data: creativeJobs },
     { data: workerHeartbeats },
   ] =
@@ -169,6 +171,11 @@ async function buildAlerts(sb: SupabaseClientAny, project: ProjectContext): Prom
         .eq("project_id", project.id)
         .order("created_at", { ascending: false })
         .limit(10),
+      sb
+        .from("workspace_integrations")
+        .select("meta_sync_suspended_at, meta_sync_suspension_reason")
+        .eq("workspace_id", project.workspace_id)
+        .maybeSingle(),
       sb
         .from("creative_asset_jobs")
         .select("id, status, attempt_count, max_attempts, available_at, locked_at, locked_by, last_error, created_at")
@@ -197,6 +204,21 @@ async function buildAlerts(sb: SupabaseClientAny, project: ProjectContext): Prom
       title: "Meta sem conta vinculada",
       message: "Este projeto não tem conta Meta vinculada. O dashboard não vai preencher gasto, impressões e cliques.",
       dedupe_key: "meta_binding",
+    });
+  } else if (workspaceIntegration?.meta_sync_suspended_at) {
+    alerts.push({
+      source: "meta",
+      type: "credential_suspended",
+      severity: "critical",
+      title: "Meta requer nova credencial",
+      message:
+        workspaceIntegration.meta_sync_suspension_reason ??
+          "A sincronização Meta está pausada até a credencial compartilhada ser substituída.",
+      dedupe_key: "meta-credential-suspended",
+      details: {
+        action: "replace_meta_credential",
+        suspended_at: workspaceIntegration.meta_sync_suspended_at,
+      },
     });
   }
   if (playerCount === 0) {
@@ -257,8 +279,9 @@ async function buildAlerts(sb: SupabaseClientAny, project: ProjectContext): Prom
     });
   }
 
-  for (const run of (syncRuns ?? []) as SyncRunRow[]) {
-    if (run.status !== "failed") continue;
+  for (
+    const run of latestFailedSyncRuns((syncRuns ?? []) as SyncRunRow[])
+  ) {
     alerts.push({
       source: sourceForSyncRun(run.source),
       type: "sync_failed",

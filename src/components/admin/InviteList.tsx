@@ -2,6 +2,7 @@ import { Copy, Link2, RotateCcw, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { StatusPill } from "@/components/admin/StatusPill";
+import { publicConfig } from "@/lib/publicConfig";
 
 export interface AdminInvite {
   id: string;
@@ -11,12 +12,17 @@ export interface AdminInvite {
   expires_at: string | null;
   accepted_at: string | null;
   revoked_at: string | null;
+  delivery_status?: "pending" | "sent" | "failed";
+  delivery_error?: string | null;
+  last_sent_at?: string | null;
+  send_count?: number;
 }
 
 interface InviteListProps {
   invites: AdminInvite[];
   kind: "organization" | "workspace";
   canManage: boolean;
+  canManageOwner?: boolean;
   onCopy: (url: string) => void;
   onRenew: (invite: AdminInvite) => void;
   onRevoke: (invite: AdminInvite) => void;
@@ -46,6 +52,7 @@ export function InviteList({
   invites,
   kind,
   canManage,
+  canManageOwner = false,
   onCopy,
   onRenew,
   onRevoke,
@@ -65,7 +72,9 @@ export function InviteList({
       {invites.map((invite) => {
         const status = getInviteStatus(invite);
         const active = status.label === "Pendente";
-        const url = `${window.location.origin}/accept-invite?kind=${kind}&token=${invite.token}`;
+        const canManageInvite =
+          canManage && (invite.role !== "owner" || canManageOwner);
+        const url = `${publicConfig.appUrl}/accept-invite?kind=${kind}&token=${invite.token}`;
 
         return (
           <Card key={invite.id}>
@@ -74,13 +83,24 @@ export function InviteList({
                 <div className="flex flex-wrap items-center gap-2">
                   <p className="truncate text-sm font-medium">{invite.email}</p>
                   <StatusPill label={status.label} tone={status.tone} />
+                  {invite.delivery_status === "sent" && (
+                    <StatusPill label="Email enviado" tone="success" />
+                  )}
+                  {invite.delivery_status === "failed" && (
+                    <StatusPill label="Falha no envio" tone="warning" />
+                  )}
                 </div>
                 <p className="mt-1 text-xs text-muted-foreground">
                   {invite.role} · {formatExpiration(invite.expires_at)}
                 </p>
+                {invite.delivery_status === "failed" && invite.delivery_error && (
+                  <p className="mt-2 max-w-xl text-xs text-destructive" role="alert">
+                    {invite.delivery_error}
+                  </p>
+                )}
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                {active && (
+                {active && canManageInvite && (
                   <Button
                     type="button"
                     variant="outline"
@@ -91,24 +111,22 @@ export function InviteList({
                     Copiar link
                   </Button>
                 )}
-                {canManage && !invite.accepted_at && (
+                {canManageInvite && !invite.accepted_at && (
                   <>
-                    {!active && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="min-h-11 gap-2"
-                        disabled={renewingId === invite.id}
-                        onClick={() => onRenew(invite)}
-                      >
-                        {renewingId === invite.id ? (
-                          <RotateCcw className="h-4 w-4 animate-spin" aria-hidden="true" />
-                        ) : (
-                          <Link2 className="h-4 w-4" aria-hidden="true" />
-                        )}
-                        Renovar
-                      </Button>
-                    )}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11 gap-2"
+                      disabled={renewingId === invite.id}
+                      onClick={() => onRenew(invite)}
+                    >
+                      {renewingId === invite.id ? (
+                        <RotateCcw className="h-4 w-4 animate-spin" aria-hidden="true" />
+                      ) : (
+                        <Link2 className="h-4 w-4" aria-hidden="true" />
+                      )}
+                      {active ? "Reenviar" : "Renovar e reenviar"}
+                    </Button>
                     {!invite.revoked_at && (
                       <Button
                         type="button"
