@@ -725,9 +725,11 @@ export default function ClientIntegrations() {
                     <div>
                       <dt className="text-xs text-muted-foreground">Credencial</dt>
                       <dd className="mt-1 text-sm font-medium">
-                        {integration?.meta_validated_at
-                          ? "Validada para todas as contas"
-                          : "Aguardando validação compartilhada"}
+                        {integration?.meta_sync_suspended_at
+                          ? "Expirada — substituição necessária"
+                          : integration?.meta_validated_at
+                            ? "Validada para todas as contas"
+                            : "Aguardando validação compartilhada"}
                       </dd>
                     </div>
                     <div>
