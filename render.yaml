@@ -15,6 +15,10 @@ services:
         value: "false"
       - key: VITE_ENABLE_PUBLIC_SIGNUP
         value: "false"
+      - key: VITE_ENABLE_HOTMART_CHECKOUT
+        value: "false"
+      - key: VITE_HOTMART_CANARY_WORKSPACE_IDS
+        value: ce21f804-5915-40fa-8499-e43092d2884b
       - key: VITE_APP_PUBLIC_URL
         value: https://infiniteprofit-saas.onrender.com
       - key: VITE_SUPPORT_EMAIL
