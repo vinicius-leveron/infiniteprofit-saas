@@ -8,7 +8,10 @@ import {
 
 type SupabaseLike = {
   from: (table: string) => any;
-  rpc?: (name: string, args: Record<string, unknown>) => Promise<any>;
+  rpc?: (
+    name: string,
+    args: Record<string, unknown>,
+  ) => PromiseLike<{ data: any; error: any }>;
 };
 
 export type EnqueueSyncJobOptions = {

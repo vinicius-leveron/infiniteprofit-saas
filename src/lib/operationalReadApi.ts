@@ -68,6 +68,68 @@ export interface WorkspaceCheckoutBindingSafeRow {
   project_id: string;
   enabled: boolean;
   webhook_token: string | null;
+  checkout_integration_id: string | null;
+  provider: CheckoutProvider | null;
+  integration_label: string | null;
+  integration_status: CheckoutIntegrationStatus | null;
+  product_bindings: CheckoutProductBinding[];
+}
+
+export type CheckoutProvider = "hotmart" | "hubla" | "kiwify";
+export type CheckoutProductRole = "front" | "order_bump" | "upsell";
+export type CheckoutIntegrationStatus =
+  | "pending"
+  | "connected"
+  | "requires_action"
+  | "disconnected";
+
+export interface CheckoutProductBinding {
+  product_id: string;
+  offer_id: string | null;
+  role: CheckoutProductRole;
+}
+
+export interface WorkspaceCheckoutIntegrationSafeRow {
+  id: string;
+  workspace_id: string;
+  provider: CheckoutProvider;
+  label: string;
+  external_account_name: string | null;
+  status: CheckoutIntegrationStatus;
+  auth_mode: "webhook" | "client_credentials";
+  has_credentials: boolean;
+  has_webhook_secret: boolean;
+  validated_at: string | null;
+  catalog_synced_at: string | null;
+  last_event_at: string | null;
+  last_backfill_at: string | null;
+  last_error_code: string | null;
+  last_error_message: string | null;
+  product_count: number;
+  bound_project_count: number;
+}
+
+export interface WorkspaceCheckoutOfferSafeRow {
+  id: string;
+  code: string;
+  name: string | null;
+  status: string;
+  price: number | null;
+  currency_code: string | null;
+  payment_mode: string | null;
+  is_main_offer: boolean;
+}
+
+export interface WorkspaceCheckoutCatalogSafeRow {
+  integration_id: string;
+  product_id: string;
+  provider_product_id: string;
+  product_ucode: string | null;
+  product_name: string;
+  product_status: string;
+  is_subscription: boolean;
+  currency_code: string | null;
+  offers: WorkspaceCheckoutOfferSafeRow[];
 }
 
 export interface ProjectSyncSettingsSafeRow {
@@ -130,6 +192,20 @@ export function listWorkspaceMetaAccountsSafe(workspaceId: string) {
 export function listWorkspaceCheckoutBindingsSafe(workspaceId: string) {
   return runOperationalRpc<WorkspaceCheckoutBindingSafeRow>(
     "list_workspace_checkout_bindings_safe",
+    { _workspace_id: workspaceId },
+  );
+}
+
+export function listWorkspaceCheckoutIntegrationsSafe(workspaceId: string) {
+  return runOperationalRpc<WorkspaceCheckoutIntegrationSafeRow>(
+    "list_workspace_checkout_integrations_safe",
+    { _workspace_id: workspaceId },
+  );
+}
+
+export function listWorkspaceCheckoutCatalogSafe(workspaceId: string) {
+  return runOperationalRpc<WorkspaceCheckoutCatalogSafeRow>(
+    "list_workspace_checkout_catalog_safe",
     { _workspace_id: workspaceId },
   );
 }

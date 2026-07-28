@@ -40,6 +40,12 @@ interface RawEventRow {
   event_type: string;
   received_at: string;
   event_date: string;
+  payload: {
+    provider?: unknown;
+    exclusion_reason?: unknown;
+    product_id?: unknown;
+    offer_code?: unknown;
+  } | null;
 }
 
 interface MetricRow {
@@ -152,7 +158,7 @@ async function buildAlerts(sb: SupabaseClientAny, project: ProjectContext): Prom
     await Promise.all([
       sb
         .from("raw_events")
-        .select("source, event_type, received_at, event_date")
+        .select("source, event_type, received_at, event_date, payload")
         .eq("project_id", project.id)
         .order("received_at", { ascending: false })
         .limit(5000),
@@ -236,7 +242,7 @@ async function buildAlerts(sb: SupabaseClientAny, project: ProjectContext): Prom
       source: "gateway",
       type: "missing_binding",
       severity: "critical",
-      title: "Hubla sem webhook ativo",
+      title: "Checkout sem webhook ativo",
       message: "O projeto não tem webhook de checkout ativo. Vendas, faturamento e reembolsos não entram automaticamente.",
       dedupe_key: "checkout_binding",
     });
@@ -272,7 +278,7 @@ async function buildAlerts(sb: SupabaseClientAny, project: ProjectContext): Prom
       source: "gateway",
       type: "stale_source",
       severity: "warning",
-      title: "Hubla sem evento recente",
+      title: "Checkout sem evento recente",
       message: "O webhook está ativo, mas não recebeu eventos nas últimas 24h.",
       dedupe_key: "gateway_stale",
       details: { last_received_at: latestGateway },
@@ -339,12 +345,92 @@ async function buildAlerts(sb: SupabaseClientAny, project: ProjectContext): Prom
 
   const missingCoverage = coverageGaps(rows, rawEvents);
   alerts.push(...missingCoverage);
+  alerts.push(...hotmartExclusionAlerts(rawEvents));
   alerts.push(...creativeQueueAlerts(
     (creativeJobs ?? []) as CreativeJobRow[],
     (workerHeartbeats ?? []) as CreativeWorkerHeartbeatRow[],
   ));
 
   return alerts;
+}
+
+function hotmartExclusionAlerts(events: RawEventRow[]): AlertCandidate[] {
+  const reasons = new Map<
+    string,
+    { reason: string; productId: string | null; offerCode: string | null }
+  >();
+  for (const event of events) {
+    if (
+      event.source !== "gateway"
+      || event.payload?.provider !== "hotmart"
+    ) {
+      continue;
+    }
+    const reason = String(event.payload.exclusion_reason ?? "");
+    if (
+      reason !== "unbound_product"
+      && reason !== "unsupported_currency"
+      && reason !== "financial_enrichment_required"
+    ) {
+      continue;
+    }
+    const productId = stringOrNull(event.payload.product_id);
+    const offerCode = stringOrNull(event.payload.offer_code);
+    reasons.set(`${reason}:${productId ?? "unknown"}`, {
+      reason,
+      productId,
+      offerCode,
+    });
+  }
+
+  return [...reasons.values()].map((item) => {
+    if (item.reason === "unbound_product") {
+      return {
+        source: "gateway",
+        type: "hotmart_event_excluded",
+        severity: "warning",
+        title: "Produto Hotmart fora deste funil",
+        message:
+          "A venda foi preservada para diagnóstico, mas não entrou nas métricas porque o produto não está vinculado.",
+        dedupe_key: `unbound:${item.productId ?? "unknown"}`,
+        details: {
+          reason: item.reason,
+          product_id: item.productId,
+          offer_code: item.offerCode,
+        },
+      };
+    }
+    if (item.reason === "unsupported_currency") {
+      return {
+        source: "gateway",
+        type: "hotmart_event_excluded",
+        severity: "warning",
+        title: "Venda Hotmart em moeda sem conversão",
+        message:
+          "A venda foi preservada, mas ficou fora do financeiro porque a Hotmart não forneceu conversão autoritativa para BRL.",
+        dedupe_key: `currency:${item.productId ?? "unknown"}`,
+        details: {
+          reason: item.reason,
+          product_id: item.productId,
+          offer_code: item.offerCode,
+        },
+      };
+    }
+    return {
+      source: "gateway",
+      type: "hotmart_event_excluded",
+      severity: "warning",
+      title: "Venda Hotmart aguardando valores",
+      message:
+        "O sinal foi preservado e o enriquecimento financeiro foi enfileirado antes da agregação.",
+      dedupe_key: `financial:${item.productId ?? "unknown"}`,
+      details: {
+        reason: item.reason,
+        product_id: item.productId,
+        offer_code: item.offerCode,
+      },
+    };
+  });
 }
 
 function coverageGaps(rows: MetricRow[], events: RawEventRow[]): AlertCandidate[] {

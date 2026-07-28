@@ -900,4 +900,35 @@ describe("aggregate daily core", () => {
     expect(metrics.vendas_totais).toBe(1);
     expect(metrics.bumps).toEqual([]);
   });
+
+  it("does not aggregate Hotmart events awaiting enrichment or cart abandonment", () => {
+    const metrics = aggregateOneDay([
+      {
+        source: "gateway",
+        event_type: "purchase.approved",
+        external_id: "hotmart-unbound",
+        payload: {
+          provider: "hotmart",
+          total: 297,
+          net: 270,
+          metrics_ready: false,
+          exclusion_reason: "unbound_product",
+        },
+      },
+      {
+        source: "gateway",
+        event_type: "checkout.abandoned",
+        external_id: "hotmart-abandoned",
+        payload: {
+          provider: "hotmart",
+          metrics_ready: false,
+          exclusion_reason: "cart_abandonment_is_operational",
+        },
+      },
+    ]);
+
+    expect(metrics.vendas_totais).toBeNull();
+    expect(metrics.fat_bruto).toBeNull();
+    expect(metrics.checkouts).toBeNull();
+  });
 });

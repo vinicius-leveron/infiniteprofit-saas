@@ -1,7 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { normalizeHubla } from "../../supabase/functions/webhook-gateway/core";
+import {
+  normalizeHotmart,
+  normalizeHubla,
+  validateHotmartHottok,
+} from "../../supabase/functions/webhook-gateway/core";
 
 describe("webhook gateway core", () => {
+  it("accepts only the exact Hotmart Hottok", () => {
+    expect(validateHotmartHottok("hottok-correto", "hottok-correto")).toBe(
+      true,
+    );
+    expect(validateHotmartHottok("hottok-errado", "hottok-correto")).toBe(
+      false,
+    );
+    expect(validateHotmartHottok(null, "hottok-correto")).toBe(false);
+  });
+
   it("normalizes Hubla Stripe-like invoice success with cents and audit payload", () => {
     const raw = {
       id: "evt_123",
@@ -309,4 +323,274 @@ describe("webhook gateway core", () => {
 
     expect(events).toEqual([]);
   });
+
+  it("normalizes a bound Hotmart approval with gross, fee, net, UTM and front role", () => {
+    const [event] = normalizeHotmart({
+      id: "evt-hot-1",
+      event: "PURCHASE_APPROVED",
+      creation_date: 1785258000000,
+      data: {
+        product: {
+          id: 101,
+          ucode: "ucode-front",
+          name: "Produto principal",
+        },
+        purchase: {
+          transaction: "HP123",
+          status: "APPROVED",
+          approved_date: 1785258000000,
+          full_price: { value: 297, currency_value: "BRL" },
+          hotmart_fee: { value: 27, currency_value: "BRL" },
+          payment: { type: "CREDIT_CARD" },
+          offer: { code: "offer-front" },
+          origin: { src: "Meta", sck: "AD-07" },
+        },
+      },
+    }, {
+      productRoles: { "101": "front", "ucode-front": "front" },
+      offerRoles: { "offer-front": "front" },
+      requireProductBinding: true,
+    });
+
+    expect(event.event_type).toBe("purchase.approved");
+    expect(event.external_id).toBe("hotmart:HP123");
+    expect(event.payload).toEqual(expect.objectContaining({
+      provider: "hotmart",
+      gross: 297,
+      total: 297,
+      platform_fee: 27,
+      net: 270,
+      currency: "BRL",
+      payment_method: "credit_card",
+      product_id: "101",
+      product_ucode: "ucode-front",
+      offer_code: "offer-front",
+      product_role: "front",
+      is_front: true,
+      is_upsell: false,
+      metrics_ready: true,
+      utm_source: "meta",
+      utm_content: "ad-07",
+    }));
+    expect(event.payload).not.toHaveProperty("raw_payload");
+  });
+
+  it("classifies Hotmart bump and upsell products from the funnel binding", () => {
+    const bump = normalizeHotmart(hotmartPurchaseFixture("PURCHASE_COMPLETE", {
+      transaction: "HP-BUMP",
+      productId: "bump-1",
+      offerCode: "bump-offer",
+    }), {
+      productRoles: { "bump-1": "order_bump" },
+      requireProductBinding: true,
+    })[0];
+    const upsell = normalizeHotmart(hotmartPurchaseFixture("PURCHASE_APPROVED", {
+      transaction: "HP-UPSELL",
+      productId: "upsell-1",
+      offerCode: "upsell-offer",
+    }), {
+      offerRoles: { "upsell-offer": "upsell" },
+      requireProductBinding: true,
+    })[0];
+
+    expect(bump.payload.product_role).toBe("order_bump");
+    expect(bump.payload.items[0]).toEqual(
+      expect.objectContaining({ type: "order_bump", is_bump: true }),
+    );
+    expect(upsell.payload.product_role).toBe("upsell");
+    expect(upsell.payload.is_upsell).toBe(true);
+  });
+
+  it("preserves unbound and unsupported-currency Hotmart events without aggregating them", () => {
+    const unbound = normalizeHotmart(
+      hotmartPurchaseFixture("PURCHASE_APPROVED", {
+        transaction: "HP-UNBOUND",
+        productId: "other-product",
+      }),
+      { productRoles: { expected: "front" }, requireProductBinding: true },
+    )[0];
+    const foreign = normalizeHotmart({
+      ...hotmartPurchaseFixture("PURCHASE_APPROVED", {
+        transaction: "HP-USD",
+        productId: "front-usd",
+      }),
+      data: {
+        ...hotmartPurchaseFixture("PURCHASE_APPROVED", {
+          transaction: "HP-USD",
+          productId: "front-usd",
+        }).data,
+        purchase: {
+          transaction: "HP-USD",
+          approved_date: 1785258000000,
+          full_price: { value: 100, currency_value: "USD" },
+          hotmart_fee: { value: 10, currency_value: "USD" },
+        },
+      },
+    }, {
+      productRoles: { "front-usd": "front" },
+      requireProductBinding: true,
+    })[0];
+
+    expect(unbound.payload.metrics_ready).toBe(false);
+    expect(unbound.payload.exclusion_reason).toBe("unbound_product");
+    expect(foreign.payload.metrics_ready).toBe(false);
+    expect(foreign.payload.exclusion_reason).toBe("unsupported_currency");
+  });
+
+  it("accepts foreign currency only with Hotmart commission conversion", () => {
+    const fixture = hotmartPurchaseFixture("PURCHASE_APPROVED", {
+      transaction: "HP-CONVERTED",
+      productId: "front-usd",
+    });
+    fixture.data.purchase.full_price = {
+      value: 100,
+      currency_value: "USD",
+    };
+    fixture.data.purchase.hotmart_fee = {
+      value: 10,
+      currency_value: "USD",
+    };
+    const [event] = normalizeHotmart({
+      ...fixture,
+      data: {
+        ...fixture.data,
+        commissions: [
+          {
+            source: "PRODUCER",
+            value: 90,
+            currency_value: "USD",
+            currency_conversion: {
+              converted_value: 450,
+              converted_to_currency: "BRL",
+              conversion_rate: 5,
+            },
+          },
+          {
+            source: "MARKETPLACE",
+            value: 10,
+            currency_value: "USD",
+          },
+        ],
+      },
+    }, {
+      productRoles: { "front-usd": "front" },
+      requireProductBinding: true,
+    });
+
+    expect(event.payload).toEqual(expect.objectContaining({
+      gross: 500,
+      platform_fee: 50,
+      net: 450,
+      original_currency: "USD",
+      currency: "BRL",
+      metrics_ready: true,
+    }));
+  });
+
+  it("uses only the informed amount for a partial Hotmart refund", () => {
+    const [event] = normalizeHotmart({
+      event: "PURCHASE_PARTIALLY_REFUNDED",
+      creation_date: 1785258000000,
+      data: {
+        product: { id: "front" },
+        purchase: {
+          transaction: "HP-PARTIAL",
+          full_price: { value: 300, currency_value: "BRL" },
+          hotmart_fee: { value: 30, currency_value: "BRL" },
+          refund_value: { value: 50 },
+        },
+      },
+    }, {
+      productRoles: { front: "front" },
+      requireProductBinding: true,
+    });
+
+    expect(event.event_type).toBe("purchase.refunded");
+    expect(event.payload.total).toBe(50);
+    expect(event.payload.net).toBe(45);
+    expect(event.payload.metrics_ready).toBe(true);
+  });
+
+  it.each([
+    ["PURCHASE_BILLET_PRINTED", "checkout_created"],
+    ["PURCHASE_CANCELED", "purchase.refused"],
+    ["PURCHASE_EXPIRED", "purchase.refused"],
+    ["PURCHASE_DELAYED", "purchase.refused"],
+    ["PURCHASE_PROTEST", "purchase.refused"],
+    ["PURCHASE_REFUNDED", "purchase.refunded"],
+    ["PURCHASE_CHARGEBACK", "purchase.refunded"],
+  ])("maps Hotmart %s to %s", (rawEvent, expectedType) => {
+    const [event] = normalizeHotmart(
+      hotmartPurchaseFixture(rawEvent, {
+        transaction: `HP-${rawEvent}`,
+        productId: "front",
+      }),
+      { productRoles: { front: "front" }, requireProductBinding: true },
+    );
+
+    expect(event.event_type).toBe(expectedType);
+    expect(event.payload.metrics_ready).toBe(true);
+  });
+
+  it("keeps recurring approvals idempotent by transaction", () => {
+    const fixture = hotmartPurchaseFixture("PURCHASE_APPROVED", {
+      transaction: "HP-RECURRENCE-03",
+      productId: "subscription-front",
+    });
+    fixture.data.purchase.recurrence_number = 3;
+    const [event] = normalizeHotmart(fixture, {
+      productRoles: { "subscription-front": "front" },
+      requireProductBinding: true,
+    });
+
+    expect(event.external_id).toBe("hotmart:HP-RECURRENCE-03");
+    expect(event.payload.transaction_id).toBe("HP-RECURRENCE-03");
+    expect(event.payload.recurrence_number).toBe(3);
+  });
+
+  it("keeps Hotmart cart abandonment operational and separate from checkout KPI", () => {
+    const [event] = normalizeHotmart(
+      hotmartPurchaseFixture("PURCHASE_OUT_OF_SHOPPING_CART", {
+        transaction: "HP-ABANDONED",
+        productId: "front",
+      }),
+      { productRoles: { front: "front" }, requireProductBinding: true },
+    );
+
+    expect(event.event_type).toBe("checkout.abandoned");
+    expect(event.payload.metrics_ready).toBe(false);
+    expect(event.payload.exclusion_reason).toBe(
+      "cart_abandonment_is_operational",
+    );
+  });
 });
+
+function hotmartPurchaseFixture(
+  event: string,
+  {
+    transaction,
+    productId,
+    offerCode = "offer",
+  }: {
+    transaction: string;
+    productId: string;
+    offerCode?: string;
+  },
+) {
+  return {
+    id: `evt-${transaction}`,
+    event,
+    creation_date: 1785258000000,
+    data: {
+      product: { id: productId, name: productId },
+      purchase: {
+        transaction,
+        status: "APPROVED",
+        approved_date: 1785258000000,
+        full_price: { value: 197, currency_value: "BRL" },
+        hotmart_fee: { value: 17, currency_value: "BRL" },
+        offer: { code: offerCode },
+      },
+    },
+  };
+}

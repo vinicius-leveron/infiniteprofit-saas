@@ -6,11 +6,22 @@ export type NormalizedEvent = {
     | "purchase.approved"
     | "purchase.refused"
     | "purchase.refunded"
-    | "checkout_created";
+    | "checkout_created"
+    | "checkout.abandoned";
   event_date: string;
   event_occurred_at: string;
   external_id: string;
   payload: any;
+};
+
+export type CheckoutProductRole = "front" | "order_bump" | "upsell";
+
+export type HotmartNormalizationContext = {
+  productRoles?: Record<string, CheckoutProductRole>;
+  offerRoles?: Record<string, CheckoutProductRole>;
+  requireProductBinding?: boolean;
+  priceDetail?: Record<string, any> | null;
+  source?: "webhook" | "api";
 };
 
 type MoneyPath = {
@@ -19,85 +30,322 @@ type MoneyPath = {
   autoCents?: boolean;
 };
 
-export function normalizeEvent(provider: string, raw: any): NormalizedEvent[] {
-  if (provider === "hotmart") return normalizeHotmart(raw);
+export function normalizeEvent(
+  provider: string,
+  raw: any,
+  context?: HotmartNormalizationContext,
+): NormalizedEvent[] {
+  if (provider === "hotmart") return normalizeHotmart(raw, context);
   if (provider === "hubla") return normalizeHubla(raw);
   if (provider === "kiwify") return normalizeKiwify(raw);
   return [];
 }
 
-function normalizeHotmart(raw: any): NormalizedEvent[] {
+export function validateHotmartHottok(
+  received: string | null | undefined,
+  expected: string,
+) {
+  const actual = received ?? "";
+  if (!actual || !expected || actual.length !== expected.length) return false;
+  let difference = 0;
+  for (let index = 0; index < actual.length; index++) {
+    difference |= actual.charCodeAt(index) ^ expected.charCodeAt(index);
+  }
+  return difference === 0;
+}
+
+export function normalizeHotmart(
+  raw: any,
+  context: HotmartNormalizationContext = {},
+): NormalizedEvent[] {
   const event = String(raw?.event ?? "").toUpperCase();
   const data = raw?.data ?? {};
   const purchase = data?.purchase ?? data;
   const product = data?.product ?? {};
-  const buyer = data?.buyer ?? {};
-  const items: any[] = Array.isArray(purchase?.offer?.items)
-    ? purchase.offer.items
-    : Array.isArray(purchase?.items)
-      ? purchase.items
-      : [];
-  const total = num(purchase?.price?.value ?? purchase?.full_price?.value ?? purchase?.total ?? 0);
-  const net = num(
-    purchase?.commission_as ?? purchase?.commission?.value ?? purchase?.producer?.value ?? total,
+  const priceDetail = context.priceDetail ?? {};
+  const total = firstPositive([
+    purchase?.full_price?.value,
+    purchase?.price?.value,
+    priceDetail?.total?.value,
+    purchase?.total,
+  ]);
+  const currency = firstString([
+    purchase?.full_price?.currency_value,
+    purchase?.full_price?.currency_code,
+    purchase?.price?.currency_value,
+    purchase?.price?.currency_code,
+    priceDetail?.total?.currency_code,
+    "BRL",
+  ]).toUpperCase();
+  const platformFee = hotmartPlatformFee(purchase, priceDetail, currency);
+  const commissionAmounts = hotmartCommissionAmounts(
+    data?.commissions,
+    currency,
   );
+  const nativeNet = platformFee != null
+    ? Math.max(0, total - platformFee)
+    : commissionAmounts.nativeNet;
   const method = String(
     purchase?.payment?.type ?? purchase?.payment_type ?? purchase?.payment?.method ?? "",
   ).toLowerCase();
-  const tsRaw = purchase?.approved_date ?? purchase?.order_date ?? raw?.creation_date ?? Date.now();
+  const isRefund =
+    event === "PURCHASE_REFUNDED"
+    || event === "PURCHASE_CHARGEBACK"
+    || event === "PURCHASE_PARTIALLY_REFUNDED";
+  const tsRaw = isRefund
+    ? raw?.creation_date ?? purchase?.approved_date ?? purchase?.order_date
+    : purchase?.approved_date ?? purchase?.order_date ?? raw?.creation_date;
   const ts = timestampValue(tsRaw);
   const eventDate = ymdSaoPaulo(new Date(ts));
   const externalId = String(
     purchase?.transaction ?? purchase?.transaction_id ?? raw?.id ?? `hot-${ts}`,
   );
 
-  const mainProductId = String(product?.id ?? product?.ucode ?? "");
-  const normalizedItems = items.map((item: any) => {
-    const itemId = String(item?.id ?? item?.ucode ?? item?.product_id ?? "");
-    const isBump = !!mainProductId && !!itemId && itemId !== mainProductId;
-    return {
-      external_id: itemId,
-      name: item?.name ?? itemId,
-      price: num(item?.price?.value ?? item?.value ?? item?.price ?? 0),
-      type: isBump ? "orderbump" : "main",
-      is_bump: isBump,
-    };
-  });
+  const productId = String(product?.id ?? "");
+  const productUcode = String(product?.ucode ?? "");
+  const offerCode = String(purchase?.offer?.code ?? data?.offer?.code ?? "");
+  const role = resolveHotmartRole(
+    context,
+    [productId, productUcode],
+    offerCode,
+  );
+  const productIsBound = role != null || context.requireProductBinding !== true;
+  const effectiveRole = role ?? "front";
+  const explicitRefund = firstPositive([
+    purchase?.refund_value?.value,
+    purchase?.refunded_value?.value,
+    purchase?.refund_amount,
+    data?.refund?.value,
+  ]);
+  const isPartialRefund = event === "PURCHASE_PARTIALLY_REFUNDED";
+  const eventTotal = isPartialRefund ? explicitRefund : total;
+  const eventNativeNet = isPartialRefund && total > 0 && nativeNet != null
+    ? eventTotal * (nativeNet / total)
+    : nativeNet;
 
+  const origin = purchase?.origin ?? data?.origin ?? {};
   const tracking = purchase?.tracking ?? data?.tracking ?? raw?.tracking ?? {};
   const utm = extractUtmParams({
+    ...origin,
     ...tracking,
     ...purchase,
     ...data,
+    utm_source: tracking?.utm_source ?? origin?.src ?? tracking?.source,
+    utm_content: tracking?.utm_content ?? origin?.sck ?? tracking?.external_code,
+    utm_term: tracking?.utm_term ?? origin?.xcode,
   });
 
   let type: NormalizedEvent["event_type"] | null = null;
   if (event === "PURCHASE_APPROVED" || event === "PURCHASE_COMPLETE") type = "purchase.approved";
-  else if (event === "PURCHASE_REFUNDED" || event === "PURCHASE_CHARGEBACK") type = "purchase.refunded";
-  else if (event === "PURCHASE_CANCELED" || event === "PURCHASE_DECLINED" || event === "PURCHASE_EXPIRED") type = "purchase.refused";
-  else if (event === "PURCHASE_BILLET_PRINTED" || event === "PURCHASE_OUT_OF_SHOPPING_CART") type = "checkout_created";
+  else if (
+    event === "PURCHASE_REFUNDED"
+    || event === "PURCHASE_CHARGEBACK"
+    || event === "PURCHASE_PARTIALLY_REFUNDED"
+  ) type = "purchase.refunded";
+  else if (
+    event === "PURCHASE_CANCELED"
+    || event === "PURCHASE_DECLINED"
+    || event === "PURCHASE_EXPIRED"
+    || event === "PURCHASE_DELAYED"
+    || event === "PURCHASE_PROTEST"
+  ) type = "purchase.refused";
+  else if (event === "PURCHASE_BILLET_PRINTED") type = "checkout_created";
+  else if (event === "PURCHASE_OUT_OF_SHOPPING_CART") type = "checkout.abandoned";
   if (!type) return [];
+
+  const hasReliableFinancials =
+    type !== "purchase.approved"
+    && type !== "purchase.refunded"
+      ? true
+      : eventTotal > 0
+        && eventNativeNet != null
+        && (!isPartialRefund || explicitRefund > 0);
+  const conversionRate = commissionAmounts.brlRate;
+  const convertedCurrency = currency === "BRL" || (
+    conversionRate != null
+    && (
+      commissionAmounts.brlNet != null
+      || platformFee != null
+    )
+  );
+  const metricsReady =
+    type !== "checkout.abandoned"
+    && productIsBound
+    && hasReliableFinancials
+    && convertedCurrency;
+  const canonicalTotal = currency !== "BRL" && convertedCurrency
+    ? eventTotal * (conversionRate ?? 0)
+    : eventTotal;
+  const fullConvertedNet = currency !== "BRL" && convertedCurrency
+    ? commissionAmounts.brlNet
+      ?? (nativeNet != null ? nativeNet * (conversionRate ?? 0) : null)
+    : nativeNet;
+  const canonicalNet =
+    isPartialRefund && total > 0 && fullConvertedNet != null
+      ? fullConvertedNet * (eventTotal / total)
+      : fullConvertedNet;
+  const canonicalPlatformFee =
+    platformFee != null && currency !== "BRL" && convertedCurrency
+      ? platformFee * (conversionRate ?? 0)
+      : platformFee;
+  const providerTransactionId = `hotmart:${externalId}`;
 
   return [{
     event_type: type,
     event_date: eventDate,
     event_occurred_at: new Date(ts).toISOString(),
-    external_id: externalId,
+    external_id: type === "checkout.abandoned"
+      ? `hotmart:${String(raw?.id ?? externalId)}`
+      : providerTransactionId,
     payload: {
+      provider: "hotmart",
+      provider_event_id: String(raw?.id ?? ""),
       raw_event: event,
-      total,
-      net,
+      status: String(purchase?.status ?? event),
+      gross: canonicalTotal,
+      total: canonicalTotal,
+      platform_fee: canonicalPlatformFee,
+      net: canonicalNet,
+      original_platform_fee: platformFee,
+      original_currency: currency,
+      currency: convertedCurrency ? "BRL" : currency,
+      metrics_ready: metricsReady,
+      exclusion_reason: !productIsBound
+        ? "unbound_product"
+        : !convertedCurrency
+          ? "unsupported_currency"
+          : !hasReliableFinancials
+            ? "financial_enrichment_required"
+            : type === "checkout.abandoned"
+              ? "cart_abandonment_is_operational"
+              : null,
       payment_method: method,
-      buyer_email: buyer?.email ?? null,
-      product_id: mainProductId,
-      items: normalizedItems,
-      is_front: !purchase?.is_funnel && !purchase?.is_upsell,
-      transaction_id: stripOfferSuffix(externalId),
-      is_offer_event: isOfferExternalId(externalId),
-      raw_payload: raw,
+      recurrence_number:
+        Number.isFinite(Number(purchase?.recurrence_number))
+          ? Number(purchase.recurrence_number)
+          : null,
+      product_id: productId || productUcode,
+      product_ucode: productUcode || null,
+      product_name: firstString([product?.name, productId, productUcode])
+        || null,
+      offer_code: offerCode || null,
+      product_role: effectiveRole,
+      items: [{
+        external_id: productId || productUcode,
+        name: product?.name ?? productId ?? productUcode,
+        price: canonicalTotal,
+        type: effectiveRole === "front" ? "main" : effectiveRole,
+        is_bump: effectiveRole !== "front",
+      }],
+      is_front: effectiveRole === "front",
+      is_upsell: effectiveRole === "upsell",
+      transaction_id: externalId,
+      is_offer_event: effectiveRole !== "front",
+      ingestion_source: context.source ?? "webhook",
       ...utm,
     },
   }];
+}
+
+function resolveHotmartRole(
+  context: HotmartNormalizationContext,
+  productKeys: string[],
+  offerCode: string,
+) {
+  if (offerCode && context.offerRoles?.[offerCode]) {
+    return context.offerRoles[offerCode];
+  }
+  for (const key of productKeys) {
+    if (key && context.productRoles?.[key]) return context.productRoles[key];
+  }
+  return null;
+}
+
+function hotmartPlatformFee(
+  purchase: Record<string, any>,
+  priceDetail: Record<string, any>,
+  currency: string,
+) {
+  const feeCurrency = firstString([
+    purchase?.hotmart_fee?.currency_code,
+    purchase?.hotmart_fee?.currency_value,
+    priceDetail?.fee?.currency_code,
+    currency,
+  ]).toUpperCase();
+  const value = firstPositive([
+    purchase?.hotmart_fee?.total,
+    purchase?.hotmart_fee?.value,
+    priceDetail?.fee?.value,
+  ]);
+  if (value <= 0 || feeCurrency !== currency) return null;
+  return value;
+}
+
+function hotmartCommissionAmounts(
+  commissions: unknown,
+  originalCurrency: string,
+) {
+  if (!Array.isArray(commissions) || commissions.length === 0) {
+    return {
+      nativeNet: null,
+      brlNet: null,
+      brlRate: null,
+    };
+  }
+  let nativeNet = 0;
+  let nativeMatched = false;
+  let brlNet = 0;
+  let brlMatched = false;
+  let brlRate: number | null = null;
+  for (const commission of commissions) {
+    const source = String(
+      commission?.source ?? commission?.commission?.source ?? "",
+    ).toUpperCase();
+    if (source === "HOTMART" || source === "MARKETPLACE") continue;
+
+    const amount = commission?.commission ?? commission;
+    const value = amount?.value;
+    const valueCurrency = firstString([
+      amount?.currency_value,
+      amount?.currency_code,
+    ]).toUpperCase();
+    const conversion =
+      amount?.currency_conversion
+      ?? commission?.currency_conversion
+      ?? {};
+    const numericValue = num(value);
+    if (valueCurrency === originalCurrency && numericValue > 0) {
+      nativeNet += numericValue;
+      nativeMatched = true;
+    }
+    if (
+      String(conversion?.converted_to_currency ?? "").toUpperCase() === "BRL"
+      && num(conversion?.converted_value) > 0
+    ) {
+      const convertedValue = num(conversion.converted_value);
+      brlNet += convertedValue;
+      brlMatched = true;
+      const providerRate = num(conversion?.conversion_rate);
+      const inferredRate = numericValue > 0
+        ? convertedValue / numericValue
+        : 0;
+      if (providerRate > 0) brlRate = providerRate;
+      else if (inferredRate > 0 && brlRate == null) brlRate = inferredRate;
+    }
+  }
+  return {
+    nativeNet: nativeMatched ? nativeNet : null,
+    brlNet: brlMatched ? brlNet : null,
+    brlRate,
+  };
+}
+
+function firstPositive(values: unknown[]) {
+  for (const value of values) {
+    const parsed = num(value);
+    if (parsed > 0) return parsed;
+  }
+  return 0;
 }
 
 export function normalizeHubla(raw: any): NormalizedEvent[] {

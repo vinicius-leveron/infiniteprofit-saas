@@ -9,7 +9,6 @@ import {
   RefreshCw,
   Save,
   ShieldCheck,
-  ShoppingBag,
   Trash2,
   Video,
 } from "lucide-react";
@@ -17,17 +16,11 @@ import { AdminPage } from "@/components/admin/AdminPage";
 import { AsyncState } from "@/components/admin/AsyncState";
 import { StatusPill } from "@/components/admin/StatusPill";
 import { useAdminClient } from "@/components/admin/useAdminClient";
+import { CheckoutIntegrationsPanel } from "@/components/checkout/CheckoutIntegrationsPanel";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import {
   Sheet,
@@ -41,24 +34,19 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import {
   getWorkspaceIntegrationSafe,
-  listWorkspaceCheckoutBindingsSafe,
   listWorkspaceMetaAccountsSafe,
 } from "@/lib/operationalReadApi";
 import { toast } from "sonner";
 
-type GatewayProvider = "hotmart" | "hubla" | "kiwify";
 type IntegrationEditor =
   | "meta"
   | "meta-credential"
   | "vturb"
-  | "gateway"
   | null;
 
 interface IntegrationRow {
   workspace_id: string;
   vturb_last_event_at: string | null;
-  gateway_provider: GatewayProvider | null;
-  gateway_last_event_at: string | null;
   has_meta_credential: boolean;
   meta_sync_suspended_at: string | null;
   meta_sync_suspension_reason: string | null;
@@ -150,7 +138,6 @@ export default function ClientIntegrations() {
   const [metaAccounts, setMetaAccounts] = useState<MetaAccount[]>([]);
   const [metaFunnelUseCount, setMetaFunnelUseCount] = useState(0);
   const [vturbPlayers, setVturbPlayers] = useState<VturbPlayer[]>([]);
-  const [gatewayUseCount, setGatewayUseCount] = useState(0);
   const [loading, setLoading] = useState(Boolean(clientId));
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [editor, setEditor] = useState<IntegrationEditor>(null);
@@ -168,8 +155,6 @@ export default function ClientIntegrations() {
 
   const [vturbApiKey, setVturbApiKey] = useState("");
   const [refreshingVturb, setRefreshingVturb] = useState(false);
-  const [gatewayProvider, setGatewayProvider] = useState<GatewayProvider | "">("");
-  const [gatewaySecret, setGatewaySecret] = useState("");
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
@@ -182,7 +167,6 @@ export default function ClientIntegrations() {
         integrationRow,
         metaRows,
         { data: playerRows, error: playerError },
-        { data: projectRows, error: projectError },
       ] = await Promise.all([
         getWorkspaceIntegrationSafe(clientId),
         listWorkspaceMetaAccountsSafe(clientId),
@@ -191,10 +175,8 @@ export default function ClientIntegrations() {
           .select("id, player_id, label, last_synced_at")
           .eq("workspace_id", clientId)
           .order("created_at", { ascending: true }),
-        supabase.from("projects").select("id").eq("workspace_id", clientId),
       ]);
       if (playerError) throw playerError;
-      if (projectError) throw projectError;
 
       const typedMeta = (metaRows ?? []) as Omit<MetaAccount, "boundProjectCount">[];
       const typedPlayers = (playerRows ?? []) as Omit<
@@ -203,9 +185,8 @@ export default function ClientIntegrations() {
       >[];
       const metaIds = typedMeta.map((account) => account.id);
       const playerIds = typedPlayers.map((player) => player.id);
-      const projectIds = (projectRows ?? []).map((project) => project.id);
 
-      const [metaBindingResult, playerBindingResult, gatewayBindingResult] =
+      const [metaBindingResult, playerBindingResult] =
         await Promise.all([
           metaIds.length
             ? supabase
@@ -219,9 +200,6 @@ export default function ClientIntegrations() {
                 .select("vturb_player_id")
                 .in("vturb_player_id", playerIds)
             : Promise.resolve({ data: [], error: null }),
-          projectIds.length
-            ? listWorkspaceCheckoutBindingsSafe(clientId)
-            : Promise.resolve([]),
         ]);
       if (metaBindingResult.error) throw metaBindingResult.error;
       if (playerBindingResult.error) throw playerBindingResult.error;
@@ -254,9 +232,6 @@ export default function ClientIntegrations() {
           ...player,
           boundProjectCount: playerCounts.get(player.id) ?? 0,
         })),
-      );
-      setGatewayUseCount(
-        gatewayBindingResult.filter((binding) => binding.enabled).length,
       );
     } catch (error) {
       setErrorMessage(
@@ -302,12 +277,6 @@ export default function ClientIntegrations() {
   function openVturb() {
     setVturbApiKey("");
     setEditor("vturb");
-  }
-
-  function openGateway() {
-    setGatewayProvider(integration?.gateway_provider ?? "");
-    setGatewaySecret("");
-    setEditor("gateway");
   }
 
   async function discoverMetaAccounts() {
@@ -568,31 +537,6 @@ export default function ClientIntegrations() {
       toast.error(error instanceof Error ? error.message : "Falha ao remover player.");
     } finally {
       setDeletingId(null);
-    }
-  }
-
-  async function saveGateway() {
-    if (!clientId || !canManage || !gatewayProvider) return;
-    setSaving(true);
-    try {
-      const { error } = await supabase.functions.invoke("workspace-credentials", {
-        body: {
-          action: "upsert_workspace_integration",
-          workspace_id: clientId,
-          gateway_provider: gatewayProvider,
-          gateway_webhook_secret: gatewaySecret.trim() || undefined,
-        },
-      });
-      if (error) throw error;
-      setEditor(null);
-      await loadIntegrations();
-      toast.success("Gateway salvo");
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Falha ao salvar o gateway.",
-      );
-    } finally {
-      setSaving(false);
     }
   }
 
@@ -906,63 +850,12 @@ export default function ClientIntegrations() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader className="p-5 md:p-6">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                <div className="flex gap-3">
-                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600">
-                    <ShoppingBag className="h-5 w-5" aria-hidden="true" />
-                  </span>
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <CardTitle className="text-lg leading-7">
-                        Gateway de pagamento
-                      </CardTitle>
-                      <StatusPill
-                        label={
-                          integration?.gateway_provider
-                            ? "Configurado"
-                            : "Não configurado"
-                        }
-                        tone={integration?.gateway_provider ? "success" : "neutral"}
-                      />
-                    </div>
-                    <CardDescription>
-                      Provedor e segredo compartilhados, sem exibir a credencial salva.
-                    </CardDescription>
-                  </div>
-                </div>
-                {canManage && (
-                  <Button className="min-h-11" onClick={openGateway}>
-                    {integration?.gateway_provider ? "Configurar" : "Conectar gateway"}
-                  </Button>
-                )}
-              </div>
-            </CardHeader>
-            <Separator />
-            <CardContent className="p-5 md:p-6">
-              <dl className="grid gap-4 sm:grid-cols-3">
-                <div>
-                  <dt className="text-xs text-muted-foreground">Provedor</dt>
-                  <dd className="mt-1 text-sm font-medium capitalize">
-                    {integration?.gateway_provider ?? "Não definido"}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-muted-foreground">Uso</dt>
-                  <dd className="mt-1 text-sm font-medium">
-                    {formatUseCount(gatewayUseCount)}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-muted-foreground">Atividade</dt>
-                  <dd className="mt-1 text-sm font-medium">
-                    {formatLastActivity(integration?.gateway_last_event_at ?? null)}
-                  </dd>
-                </div>
-              </dl>
-            </CardContent>
-          </Card>
+          {clientId ? (
+            <CheckoutIntegrationsPanel
+              workspaceId={clientId}
+              canManage={canManage}
+            />
+          ) : null}
         </div>
       </AsyncState>
 
@@ -1234,66 +1127,6 @@ export default function ClientIntegrations() {
         </SheetContent>
       </Sheet>
 
-      <Sheet
-        open={editor === "gateway"}
-        onOpenChange={(open) => !open && setEditor(null)}
-      >
-        <SheetContent className="w-full sm:max-w-lg">
-          <SheetHeader>
-            <SheetTitle>Configurar gateway</SheetTitle>
-            <SheetDescription>
-              O segredo salvo nunca será exibido novamente nesta página.
-            </SheetDescription>
-          </SheetHeader>
-          <div className="space-y-5 py-6">
-            <div className="space-y-2">
-              <Label htmlFor="gateway-provider">Provedor</Label>
-              <Select
-                value={gatewayProvider}
-                onValueChange={(value) => setGatewayProvider(value as GatewayProvider)}
-              >
-                <SelectTrigger id="gateway-provider" className="min-h-11">
-                  <SelectValue placeholder="Selecione o provedor" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="hotmart">Hotmart</SelectItem>
-                  <SelectItem value="hubla">Hubla</SelectItem>
-                  <SelectItem value="kiwify">Kiwify</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="gateway-secret">Chave secreta</Label>
-              <Input
-                id="gateway-secret"
-                type="password"
-                autoComplete="off"
-                value={gatewaySecret}
-                onChange={(event) => setGatewaySecret(event.target.value)}
-                placeholder={
-                  integration?.gateway_provider
-                    ? "Deixe vazio para manter a chave atual"
-                    : "Cole a chave do gateway"
-                }
-              />
-            </div>
-          </div>
-          <SheetFooter>
-            <Button
-              className="min-h-11 gap-2"
-              disabled={saving || !gatewayProvider}
-              onClick={() => void saveGateway()}
-            >
-              {saving ? (
-                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-              ) : (
-                <Save className="h-4 w-4" aria-hidden="true" />
-              )}
-              Salvar gateway
-            </Button>
-          </SheetFooter>
-        </SheetContent>
-      </Sheet>
     </AdminPage>
   );
 }

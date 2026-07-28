@@ -68,6 +68,25 @@ Deno.serve(async (req) => {
       return json({ ok: true, integration: result });
     }
 
+    if (body.action === "upsert_checkout_integration") {
+      const result = await upsertCheckoutIntegration(
+        admin,
+        body,
+        workspaceId,
+        caller.userId,
+      );
+      return json({ ok: true, checkout_integration: result });
+    }
+
+    if (body.action === "delete_checkout_integration") {
+      const result = await deleteCheckoutIntegration(
+        admin,
+        body,
+        workspaceId,
+      );
+      return json({ ok: true, deleted_checkout_integration_id: result });
+    }
+
     if (body.action === "upsert_meta_account") {
       const result = await upsertMetaAccount(
         admin,
@@ -183,7 +202,211 @@ async function upsertWorkspaceIntegration(
     .single();
   if (error) throw new Error(error.message);
 
+  const provider = Object.hasOwn(body, "gateway_provider")
+    ? normalizeGatewayProvider(body.gateway_provider)
+    : null;
+  if (provider) {
+    await upsertLegacyCheckoutIntegration(admin, {
+      workspaceId,
+      userId,
+      provider,
+      secret: gatewaySecret,
+    });
+  }
+
   return data;
+}
+
+async function upsertLegacyCheckoutIntegration(
+  admin: SupabaseClientAny,
+  args: {
+    workspaceId: string;
+    userId: string;
+    provider: string;
+    secret: string | null;
+  },
+) {
+  const { data: existing, error: lookupError } = await admin
+    .from("workspace_checkout_integrations")
+    .select("id")
+    .eq("workspace_id", args.workspaceId)
+    .eq("provider", args.provider)
+    .is("external_account_id", null)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (lookupError) throw new Error(lookupError.message);
+
+  let integrationId = existing?.id as string | undefined;
+  if (!integrationId) {
+    const { data, error } = await admin
+      .from("workspace_checkout_integrations")
+      .insert({
+        workspace_id: args.workspaceId,
+        provider: args.provider,
+        label: providerLabel(args.provider),
+        status: args.secret ? "connected" : "pending",
+        auth_mode: "webhook",
+        created_by: args.userId,
+      })
+      .select("id")
+      .single();
+    if (error || !data) {
+      throw new Error(error?.message ?? "Falha ao criar integração de checkout");
+    }
+    integrationId = data.id;
+  }
+
+  if (args.secret) {
+    const { error } = await admin.rpc("store_checkout_integration_secret", {
+      _integration_id: integrationId,
+      _kind: "webhook",
+      _secret: args.secret,
+    });
+    if (error) throw new Error(error.message);
+    await admin
+      .from("workspace_checkout_integrations")
+      .update({
+        status: "connected",
+        validated_at: new Date().toISOString(),
+      })
+      .eq("id", integrationId);
+  }
+  return integrationId;
+}
+
+async function upsertCheckoutIntegration(
+  admin: SupabaseClientAny,
+  body: Record<string, unknown>,
+  workspaceId: string,
+  userId: string,
+) {
+  const provider = normalizeGatewayProvider(body.provider);
+  if (!provider) {
+    throw new HttpError("provider obrigatorio", 400);
+  }
+  const integrationId = stringOrNull(body.integration_id);
+  const label = stringOrNull(body.label) ?? providerLabel(provider);
+  if (label.length > 120) {
+    throw new HttpError("Nome da integração muito longo.", 400);
+  }
+
+  let selectedId = integrationId;
+  if (selectedId) {
+    const { data, error } = await admin
+      .from("workspace_checkout_integrations")
+      .update({ label })
+      .eq("id", selectedId)
+      .eq("workspace_id", workspaceId)
+      .eq("provider", provider)
+      .select("id")
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!data) {
+      throw new HttpError("Integração de checkout não encontrada.", 404);
+    }
+  } else {
+    const { data, error } = await admin
+      .from("workspace_checkout_integrations")
+      .insert({
+        workspace_id: workspaceId,
+        provider,
+        label,
+        status: "pending",
+        auth_mode: provider === "hotmart"
+          ? "client_credentials"
+          : "webhook",
+        created_by: userId,
+      })
+      .select("id")
+      .single();
+    if (error || !data) {
+      throw new Error(error?.message ?? "Falha ao criar integração de checkout");
+    }
+    selectedId = data.id;
+  }
+
+  const webhookSecret = stringOrNull(
+    body.webhook_secret ?? body.gateway_webhook_secret,
+  );
+  if (webhookSecret) {
+    if (webhookSecret.length > 1000) {
+      throw new HttpError("Secret do checkout muito longo.", 400);
+    }
+    const { error } = await admin.rpc("store_checkout_integration_secret", {
+      _integration_id: selectedId,
+      _kind: "webhook",
+      _secret: webhookSecret,
+    });
+    if (error) throw new Error(error.message);
+    if (provider !== "hotmart") {
+      await admin
+        .from("workspace_checkout_integrations")
+        .update({
+          status: "connected",
+          validated_at: new Date().toISOString(),
+        })
+        .eq("id", selectedId);
+    }
+  }
+
+  const { data, error } = await admin
+    .from("workspace_checkout_integrations")
+    .select(
+      "id, workspace_id, provider, label, status, auth_mode, validated_at, catalog_synced_at, last_event_at, last_backfill_at",
+    )
+    .eq("id", selectedId)
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+async function deleteCheckoutIntegration(
+  admin: SupabaseClientAny,
+  body: Record<string, unknown>,
+  workspaceId: string,
+) {
+  const integrationId = stringOrNull(body.integration_id);
+  if (!integrationId) {
+    throw new HttpError("integration_id obrigatorio", 400);
+  }
+  const { count, error: countError } = await admin
+    .from("project_checkout_bindings")
+    .select("project_id", { count: "exact", head: true })
+    .eq("checkout_integration_id", integrationId)
+    .eq("enabled", true);
+  if (countError) throw new Error(countError.message);
+  if ((count ?? 0) > 0) {
+    throw new HttpError(
+      "Desvincule esta integração dos funis antes de removê-la.",
+      409,
+    );
+  }
+
+  const { data: integration, error: lookupError } = await admin
+    .from("workspace_checkout_integrations")
+    .select("id")
+    .eq("id", integrationId)
+    .eq("workspace_id", workspaceId)
+    .maybeSingle();
+  if (lookupError) throw new Error(lookupError.message);
+  if (!integration) {
+    throw new HttpError("Integração de checkout não encontrada.", 404);
+  }
+
+  for (const kind of ["credential", "webhook"]) {
+    const { error } = await admin.rpc("delete_checkout_integration_secret", {
+      _integration_id: integrationId,
+      _kind: kind,
+    });
+    if (error) throw new Error(error.message);
+  }
+  const { error } = await admin
+    .from("workspace_checkout_integrations")
+    .delete()
+    .eq("id", integrationId);
+  if (error) throw new Error(error.message);
+  return integrationId;
 }
 
 async function upsertMetaAccount(
@@ -584,19 +807,61 @@ async function upsertCheckoutBinding(
     throw new HttpError("Funil não encontrado neste cliente.", 404);
   }
 
+  const integrationId = stringOrNull(body.checkout_integration_id);
+  if (integrationId) {
+    const productBindings = Array.isArray(body.product_bindings)
+      ? body.product_bindings
+      : [];
+    const { data, error } = await admin.rpc("save_checkout_binding", {
+      _workspace_id: workspaceId,
+      _project_id: projectId,
+      _integration_id: integrationId,
+      _enabled: body.enabled !== false,
+      _product_bindings: productBindings,
+    });
+    if (error) throw new HttpError(error.message, 422);
+    return Array.isArray(data) ? data[0] : data;
+  }
+
+  // Legacy callers do not send checkout_integration_id. Resolve the old
+  // workspace provider explicitly so Hubla can never bind to a Hotmart
+  // integration simply because it was created first.
+  const { data: legacySettings, error: legacySettingsError } = await admin
+    .from("workspace_integrations")
+    .select("gateway_provider")
+    .eq("workspace_id", workspaceId)
+    .maybeSingle();
+  if (legacySettingsError) throw new Error(legacySettingsError.message);
+
+  const legacyProvider = normalizeGatewayProvider(
+    body.gateway_provider ?? legacySettings?.gateway_provider,
+  );
+  let legacyIntegrationQuery = admin
+    .from("workspace_checkout_integrations")
+    .select("id")
+    .eq("workspace_id", workspaceId);
+  if (legacyProvider) {
+    legacyIntegrationQuery = legacyIntegrationQuery.eq(
+      "provider",
+      legacyProvider,
+    );
+  }
+  const { data: legacyIntegration, error: legacyIntegrationError } =
+    await legacyIntegrationQuery
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+  if (legacyIntegrationError) throw new Error(legacyIntegrationError.message);
   const { data, error } = await admin
     .from("project_checkout_bindings")
-    .upsert(
-      {
-        project_id: projectId,
-        enabled: body.enabled !== false,
-      },
-      { onConflict: "project_id" },
-    )
-    .select("project_id, webhook_token, enabled")
+    .upsert({
+      project_id: projectId,
+      enabled: body.enabled !== false,
+      checkout_integration_id: legacyIntegration?.id ?? null,
+    }, { onConflict: "project_id" })
+    .select("project_id, webhook_token, enabled, checkout_integration_id")
     .single();
   if (error) throw new Error(error.message);
-
   return data;
 }
 
@@ -652,6 +917,13 @@ function normalizeGatewayProvider(value: unknown) {
   if (!GATEWAY_PROVIDERS.has(provider)) {
     throw new Error("gateway_provider invalido");
   }
+  return provider;
+}
+
+function providerLabel(provider: string) {
+  if (provider === "hotmart") return "Hotmart";
+  if (provider === "hubla") return "Hubla";
+  if (provider === "kiwify") return "Kiwify";
   return provider;
 }
 

@@ -106,6 +106,13 @@ export function aggregateOneDay(events: RawEvent[]) {
     }
     hasGatewayRaw = true;
 
+    // Provider events can be durable before financial enrichment or before
+    // their product is bound to this funnel. They remain observable but must
+    // not affect dashboard metrics until the provider adapter marks them ready.
+    if (payload.metrics_ready === false) {
+      continue;
+    }
+
     if (event.event_type === "checkout_created") {
       checkoutEvents.push(event);
       continue;

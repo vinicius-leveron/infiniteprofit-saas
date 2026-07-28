@@ -36,7 +36,10 @@ import {
   type FunnelActivationPlan,
   type FunnelActivationSnapshot,
 } from "@/lib/funnelActivation";
-import { getFunnelCheckoutBindingSafe } from "@/lib/operationalReadApi";
+import {
+  getFunnelCheckoutBindingSafe,
+  type CheckoutProvider,
+} from "@/lib/operationalReadApi";
 import { cn } from "@/lib/utils";
 import { trackProductEvent } from "@/lib/productEvents";
 
@@ -56,9 +59,29 @@ interface SyncRunSummary {
   finished_at: string | null;
 }
 
+interface SyncJobSummary {
+  entity_type: string;
+  status: string;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+  finished_at: string | null;
+}
+
+type HotmartActivationState =
+  | { phase: "none"; completed: 0; total: 0; error: null }
+  | {
+      phase: "importing" | "consolidating" | "ready" | "empty" | "error";
+      completed: number;
+      total: number;
+      error: string | null;
+    };
+
 interface ActivationData {
   project: ProjectSummary;
   snapshot: FunnelActivationSnapshot;
+  checkoutProvider: CheckoutProvider | null;
+  hotmartJobs: SyncJobSummary[];
   latestActivityAt: string | null;
   latestSyncError: string | null;
 }
@@ -119,6 +142,7 @@ export default function FunnelActivation() {
           eventResult,
           metricResult,
           syncResult,
+          syncJobResult,
         ] = await Promise.all([
           supabase
             .from("projects")
@@ -152,6 +176,18 @@ export default function FunnelActivation() {
             .eq("project_id", funnelId)
             .order("created_at", { ascending: false })
             .limit(20),
+          supabase
+            .from("sync_jobs")
+            .select(
+              "entity_type, status, last_error, created_at, updated_at, finished_at",
+            )
+            .eq("project_id", funnelId)
+            .in("entity_type", [
+              "hotmart_sales_backfill",
+              "aggregate_project_dates",
+            ])
+            .order("created_at", { ascending: false })
+            .limit(500),
         ]);
 
         const firstError = [
@@ -161,6 +197,7 @@ export default function FunnelActivation() {
           eventResult.error,
           metricResult.error,
           syncResult.error,
+          syncJobResult.error,
         ].find(Boolean);
         if (firstError) throw firstError;
         if (!projectResult.data) throw new Error("Funil não encontrado.");
@@ -193,11 +230,17 @@ export default function FunnelActivation() {
             .map(([source]) => source),
         );
         const latestRun = runs[0] ?? null;
+        const hotmartJobs = (syncJobResult.data ?? []) as SyncJobSummary[];
+        const latestJob = hotmartJobs[0] ?? null;
         const latestEvent = eventResult.data?.[0] ?? null;
         const latestMetric = metricResult.data?.[0] ?? null;
         const latestActivityAt = latestTimestamp(
           latestEvent?.received_at ?? null,
           latestRun?.finished_at ?? latestRun?.created_at ?? null,
+          latestJob?.finished_at
+            ?? latestJob?.updated_at
+            ?? latestJob?.created_at
+            ?? null,
         );
 
         setData({
@@ -212,10 +255,18 @@ export default function FunnelActivation() {
             runningSyncSources,
             failedSyncSources,
           },
+          checkoutProvider: gatewayResult?.provider ?? null,
+          hotmartJobs,
           latestActivityAt,
           latestSyncError:
             runs.find((run) => run.status === "failed" && run.error_message)
-              ?.error_message ?? null,
+              ?.error_message
+            ?? hotmartJobs.find(
+              (job) =>
+                (job.status === "failed" || job.status === "dead_letter")
+                && job.last_error,
+            )?.last_error
+            ?? null,
         });
         setErrorMessage("");
         setPageState("ready");
@@ -323,10 +374,17 @@ export default function FunnelActivation() {
     void startSync(plan.syncSources);
   }, [data, isWorkspaceAdmin, pageState, plan, startSync]);
 
-  const experience = useMemo(
-    () => deriveActivationExperience(data?.snapshot ?? EMPTY_SNAPSHOT, plan),
-    [data?.snapshot, plan],
+  const hotmartState = useMemo(
+    () => deriveHotmartActivationState(data),
+    [data],
   );
+  const experience = useMemo(() => {
+    const base = deriveActivationExperience(
+      data?.snapshot ?? EMPTY_SNAPSHOT,
+      plan,
+    );
+    return refineHotmartActivationExperience(base, hotmartState);
+  }, [data?.snapshot, hotmartState, plan]);
 
   useEffect(() => {
     if (
@@ -496,6 +554,7 @@ export default function FunnelActivation() {
           experience={experience}
           snapshot={data.snapshot}
           plan={plan}
+          hotmartState={hotmartState}
           dashboardOpened={Boolean(data.project.first_dashboard_opened_at)}
         />
         <FirstSignalCard data={data} experience={experience} plan={plan} />
@@ -748,18 +807,18 @@ function ActivationActions({
         {canManage && (
           <Button
             className="min-h-11 gap-2 sm:min-w-48"
-            onClick={() => onNavigate(`/funnels/${encodeURIComponent(funnelId)}/sources`)}
+            onClick={() => onNavigate(`/funnels/${encodeURIComponent(funnelId)}/health`)}
           >
-            Revisar fonte
+            Abrir saúde
             <ArrowRight className="h-4 w-4" />
           </Button>
         )}
         <Button
           variant="ghost"
           className="min-h-11"
-          onClick={() => onNavigate(`/funnels/${encodeURIComponent(funnelId)}/health`)}
+          onClick={() => onNavigate(`/funnels/${encodeURIComponent(funnelId)}/sources`)}
         >
-          Ver detalhes de saúde
+          Revisar fontes
         </Button>
       </div>
     );
@@ -800,25 +859,32 @@ function ActivationChecklist({
   experience,
   snapshot,
   plan,
+  hotmartState,
   dashboardOpened,
 }: {
   experience: ActivationExperience;
   snapshot: FunnelActivationSnapshot;
   plan: FunnelActivationPlan | null;
+  hotmartState: HotmartActivationState;
   dashboardOpened: boolean;
 }) {
   const hasSources = snapshot.configuredSources.length > 0;
-  const syncDone =
-    snapshot.successfulSyncSources.length > 0 ||
-    plan?.syncState === "complete";
-  const syncError =
-    snapshot.failedSyncSources.length > 0 ||
-    plan?.syncState === "error" ||
-    hasPlanErrors(plan);
-  const syncActive =
-    snapshot.runningSyncSources.length > 0 ||
-    plan?.syncState === "running" ||
-    plan?.syncState === "pending";
+  const hotmartTracked = hotmartState.phase !== "none";
+  const syncDone = hotmartTracked
+    ? hotmartState.phase === "ready" || hotmartState.phase === "empty"
+    : snapshot.successfulSyncSources.length > 0 ||
+      plan?.syncState === "complete";
+  const syncError = hotmartTracked
+    ? hotmartState.phase === "error"
+    : snapshot.failedSyncSources.length > 0 ||
+      plan?.syncState === "error" ||
+      hasPlanErrors(plan);
+  const syncActive = hotmartTracked
+    ? hotmartState.phase === "importing" ||
+      hotmartState.phase === "consolidating"
+    : snapshot.runningSyncSources.length > 0 ||
+      plan?.syncState === "running" ||
+      plan?.syncState === "pending";
 
   const steps: Array<{
     label: string;
@@ -1044,12 +1110,142 @@ function FirstSignalCard({
 }
 
 function progressLabel(experience: ActivationExperience) {
+  if (experience.progressLabel) return experience.progressLabel;
   if (experience.state === "activated") return "Ativação concluída";
   if (experience.state === "ready_to_connect") return "Estrutura criada";
   if (experience.state === "needs_attention") return "Configuração preservada";
   if (experience.state === "waiting_for_event") return "Rastreamento preparado";
   if (experience.state === "ready_to_sync") return "Conexões prontas";
   return "Preparando primeiro resultado";
+}
+
+function deriveHotmartActivationState(
+  data: ActivationData | null,
+): HotmartActivationState {
+  if (data?.checkoutProvider !== "hotmart") {
+    return { phase: "none", completed: 0, total: 0, error: null };
+  }
+
+  const backfills = data.hotmartJobs.filter(
+    (job) => job.entity_type === "hotmart_sales_backfill",
+  );
+  if (backfills.length === 0) {
+    return { phase: "none", completed: 0, total: 0, error: null };
+  }
+  const aggregates = data.hotmartJobs.filter(
+    (job) => job.entity_type === "aggregate_project_dates",
+  );
+  const failed = [...backfills, ...aggregates].find(
+    (job) => job.status === "failed" || job.status === "dead_letter",
+  );
+  const completedBackfills = backfills.filter(
+    (job) => job.status === "succeeded",
+  ).length;
+  if (failed) {
+    return {
+      phase: "error",
+      completed: completedBackfills,
+      total: backfills.length,
+      error: failed.last_error,
+    };
+  }
+
+  const backfillPending = backfills.some(
+    (job) => job.status === "queued" || job.status === "running",
+  );
+  if (backfillPending) {
+    return {
+      phase: "importing",
+      completed: completedBackfills,
+      total: backfills.length,
+      error: null,
+    };
+  }
+
+  const aggregatePending = aggregates.some(
+    (job) => job.status === "queued" || job.status === "running",
+  );
+  if (aggregatePending) {
+    return {
+      phase: "consolidating",
+      completed: aggregates.filter((job) => job.status === "succeeded").length,
+      total: aggregates.length,
+      error: null,
+    };
+  }
+
+  return {
+    phase: data.snapshot.metricsDayCount > 0 ? "ready" : "empty",
+    completed: backfills.length,
+    total: backfills.length,
+    error: null,
+  };
+}
+
+function refineHotmartActivationExperience(
+  base: ActivationExperience,
+  state: HotmartActivationState,
+): ActivationExperience {
+  if (state.phase === "none") return base;
+  if (state.phase === "error") {
+    return {
+      state: "needs_attention",
+      hasTrustedSignal: false,
+      hasDataSignal: false,
+      progress: 68,
+      progressLabel: "Importação preservada",
+      headline: "A Hotmart precisa de atenção",
+      description:
+        "O funil e as janelas já concluídas foram preservados. Abra Saúde para tentar novamente sem duplicar vendas.",
+    };
+  }
+  if (state.phase === "importing") {
+    const ratio = state.total > 0 ? state.completed / state.total : 0;
+    return {
+      state: "preparing",
+      hasTrustedSignal: false,
+      hasDataSignal: false,
+      progress: Math.round(48 + ratio * 32),
+      progressLabel: "Importando vendas",
+      headline: "Trazendo seu histórico da Hotmart",
+      description:
+        `${state.completed} de ${state.total} janelas concluídas. Esta tela pode ficar aberta ou ser retomada depois.`,
+    };
+  }
+  if (state.phase === "consolidating") {
+    return {
+      state: "preparing",
+      hasTrustedSignal: false,
+      hasDataSignal: false,
+      progress: 88,
+      progressLabel: "Consolidando resultados",
+      headline: "Transformando vendas em visão de negócio",
+      description:
+        "O histórico já chegou. Agora estamos consolidando os dias processados para liberar o dashboard.",
+    };
+  }
+  if (state.phase === "ready") {
+    return {
+      state: "activated",
+      hasTrustedSignal: true,
+      hasDataSignal: true,
+      progress: 100,
+      progressLabel: "Dashboard pronto",
+      headline: "Seu histórico Hotmart está pronto",
+      description:
+        "As vendas vinculadas foram importadas e consolidadas. Abra o dashboard para ver o primeiro resultado real.",
+    };
+  }
+  return {
+    state: "waiting_for_event",
+    hasTrustedSignal: false,
+    hasDataSignal: false,
+    progress: 92,
+    progressLabel: "Histórico verificado",
+    headline: "Conexão pronta, sem vendas no período",
+    description:
+      "Os 90 dias foram verificados e não encontramos vendas elegíveis para os produtos vinculados. O próximo evento aparecerá automaticamente.",
+  };
 }
 
 function firstSignalDescription(

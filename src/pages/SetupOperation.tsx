@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
@@ -22,11 +22,19 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { HublaImportPicker } from "@/components/hubla/HublaImportPicker";
+import { HotmartProductBindings } from "@/components/checkout/HotmartProductBindings";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorkspace } from "@/hooks/useWorkspace";
@@ -39,7 +47,16 @@ import {
   runHublaImport,
   type PreparedHublaImport,
 } from "@/lib/hublaImport";
-import { listWorkspaceMetaAccountsSafe } from "@/lib/operationalReadApi";
+import {
+  type CheckoutProductBinding,
+  type WorkspaceCheckoutCatalogSafeRow,
+  type WorkspaceCheckoutIntegrationSafeRow,
+  listWorkspaceCheckoutCatalogSafe,
+  listWorkspaceCheckoutIntegrationsSafe,
+  listWorkspaceMetaAccountsSafe,
+} from "@/lib/operationalReadApi";
+import { edgeFunctionErrorMessage } from "@/lib/edgeFunctionError";
+import { publicConfig } from "@/lib/publicConfig";
 import type {
   SetupDraftV2,
   SetupSource,
@@ -51,7 +68,17 @@ import { trackProductEvent } from "@/lib/productEvents";
 const SETUP_DRAFT_STORAGE_KEY = "infiniteprofit.setupOperationDraft";
 
 type SourceSetupStatus = "not_started" | "prepared" | "configured" | "skipped" | "error";
-type SourceChoice = "hubla_history" | "gateway" | "meta" | "vturb";
+type SourceChoice =
+  | "hotmart"
+  | "hubla_history"
+  | "gateway"
+  | "meta"
+  | "vturb";
+type HotmartWorkingStage =
+  | "authorizing"
+  | "catalog"
+  | "hottok"
+  | "refreshing";
 
 type DiscoveredMetaAccount = {
   accountId: string;
@@ -120,6 +147,25 @@ export default function SetupOperation() {
   const [playersText, setPlayersText] = useState("");
   const [hublaSecret, setHublaSecret] = useState("");
   const [hublaHistory, setHublaHistory] = useState<PreparedHublaImport | null>(null);
+  const [checkoutIntegrations, setCheckoutIntegrations] = useState<
+    WorkspaceCheckoutIntegrationSafeRow[]
+  >([]);
+  const [checkoutCatalog, setCheckoutCatalog] = useState<
+    WorkspaceCheckoutCatalogSafeRow[]
+  >([]);
+  const [hotmartIntegrationId, setHotmartIntegrationId] = useState("");
+  const [hotmartProducts, setHotmartProducts] = useState<
+    CheckoutProductBinding[]
+  >([]);
+  const [hotmartClientId, setHotmartClientId] = useState("");
+  const [hotmartClientSecret, setHotmartClientSecret] = useState("");
+  const [hotmartBasicToken, setHotmartBasicToken] = useState("");
+  const [showHotmartCredentials, setShowHotmartCredentials] = useState(false);
+  const [hotmartHottok, setHotmartHottok] = useState("");
+  const [hotmartWorking, setHotmartWorking] = useState(false);
+  const [hotmartWorkingStage, setHotmartWorkingStage] =
+    useState<HotmartWorkingStage | null>(null);
+  const [hotmartError, setHotmartError] = useState<string | null>(null);
 
   // Test states
   const [testingMetaKey, setTestingMetaKey] = useState<string | null>(null);
@@ -164,6 +210,200 @@ export default function SetupOperation() {
     });
   }, [client?.id]);
 
+  const loadCheckoutCatalog = useCallback(async () => {
+    if (!client?.id || !publicConfig.hotmartCheckoutEnabled) return;
+    const [integrationRows, catalogRows] = await Promise.all([
+      listWorkspaceCheckoutIntegrationsSafe(client.id),
+      listWorkspaceCheckoutCatalogSafe(client.id),
+    ]);
+    setCheckoutIntegrations(integrationRows);
+    setCheckoutCatalog(catalogRows);
+    setHotmartIntegrationId((current) => {
+      if (
+        current
+        && integrationRows.some(
+          (item) => item.id === current && item.provider === "hotmart",
+        )
+      ) {
+        return current;
+      }
+      return "";
+    });
+  }, [client?.id]);
+
+  useEffect(() => {
+    if (!client?.id || !publicConfig.hotmartCheckoutEnabled) {
+      setCheckoutIntegrations([]);
+      setCheckoutCatalog([]);
+      return;
+    }
+    let cancelled = false;
+    void loadCheckoutCatalog().catch(() => {
+      if (!cancelled) {
+        setHotmartError("Não foi possível carregar suas conexões Hotmart.");
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [client?.id, loadCheckoutCatalog]);
+
+  async function connectHotmart() {
+    if (!client?.id) return;
+    if (
+      !hotmartClientId.trim()
+      || !hotmartClientSecret.trim()
+      || !hotmartBasicToken.trim()
+    ) {
+      setHotmartError("Informe Client ID, Client Secret e token Basic.");
+      return;
+    }
+    setHublaSecret("");
+    setHublaHistory(null);
+    resumeSource("gateway");
+    setHotmartWorking(true);
+    setHotmartWorkingStage("authorizing");
+    setHotmartError(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("hotmart-auth", {
+        body: {
+          action: "connect",
+          workspace_id: client.id,
+          integration_id: hotmartIntegrationId || undefined,
+          label: selectedHotmartIntegration?.label ?? "Hotmart",
+          client_id: hotmartClientId.trim(),
+          client_secret: hotmartClientSecret.trim(),
+          basic_token: hotmartBasicToken.trim(),
+        },
+      });
+      if (error) {
+        throw new Error(
+          await edgeFunctionErrorMessage(
+            error,
+            "A Hotmart não aceitou essas credenciais.",
+          ),
+        );
+      }
+      if (data?.ok === false) throw new Error(data.error);
+      const integrationId = String(data?.integration_id ?? "");
+      if (!integrationId) throw new Error("Integração Hotmart não criada.");
+      setHotmartIntegrationId(integrationId);
+      setHotmartClientId("");
+      setHotmartClientSecret("");
+      setHotmartBasicToken("");
+      setShowHotmartCredentials(false);
+      await loadCheckoutCatalog();
+      setHotmartIntegrationId(integrationId);
+      setHotmartWorkingStage("catalog");
+      const { data: catalogData, error: catalogError } =
+        await supabase.functions.invoke("hotmart-sync", {
+          body: {
+            action: "sync_catalog",
+            workspace_id: client.id,
+            integration_id: integrationId,
+          },
+        });
+      if (catalogError) {
+        throw new Error(
+          await edgeFunctionErrorMessage(
+            catalogError,
+            "A conta foi validada, mas os produtos ainda não foram carregados.",
+          ),
+        );
+      }
+      if (catalogData?.ok === false) throw new Error(catalogData.error);
+      await loadCheckoutCatalog();
+      setHotmartIntegrationId(integrationId);
+      toast.success("Hotmart conectada e produtos carregados.");
+    } catch (error) {
+      setHotmartError(
+        error instanceof Error ? error.message : "Falha ao conectar a Hotmart.",
+      );
+    } finally {
+      setHotmartWorking(false);
+      setHotmartWorkingStage(null);
+    }
+  }
+
+  async function saveHotmartHottok() {
+    if (!client?.id || !selectedHotmartIntegration || !hotmartHottok.trim()) {
+      return;
+    }
+    setHotmartWorking(true);
+    setHotmartWorkingStage("hottok");
+    setHotmartError(null);
+    try {
+      const { data, error } = await supabase.functions.invoke(
+        "workspace-credentials",
+        {
+          body: {
+            action: "upsert_checkout_integration",
+            workspace_id: client.id,
+            integration_id: selectedHotmartIntegration.id,
+            provider: "hotmart",
+            label: selectedHotmartIntegration.label,
+            webhook_secret: hotmartHottok.trim(),
+          },
+        },
+      );
+      if (error) {
+        throw new Error(
+            await edgeFunctionErrorMessage(
+              error,
+              "Não foi possível salvar o Hottok.",
+          ),
+        );
+      }
+      if (data?.ok === false) throw new Error(data.error);
+      setHotmartHottok("");
+      await loadCheckoutCatalog();
+      toast.success("Hottok salvo com segurança.");
+    } catch (error) {
+      setHotmartError(
+        error instanceof Error ? error.message : "Falha ao salvar o Hottok.",
+      );
+    } finally {
+      setHotmartWorking(false);
+      setHotmartWorkingStage(null);
+    }
+  }
+
+  async function refreshHotmartCatalog() {
+    if (!client?.id || !hotmartIntegrationId) return;
+    setHotmartWorking(true);
+    setHotmartWorkingStage("refreshing");
+    setHotmartError(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("hotmart-sync", {
+        body: {
+          action: "sync_catalog",
+          workspace_id: client.id,
+          integration_id: hotmartIntegrationId,
+        },
+      });
+      if (error) {
+        throw new Error(
+          await edgeFunctionErrorMessage(
+            error,
+            "Não foi possível carregar os produtos Hotmart.",
+          ),
+        );
+      }
+      if (data?.ok === false) throw new Error(data.error);
+      await loadCheckoutCatalog();
+      toast.success("Produtos Hotmart atualizados.");
+    } catch (error) {
+      setHotmartError(
+        error instanceof Error
+          ? error.message
+          : "Falha ao atualizar produtos Hotmart.",
+      );
+    } finally {
+      setHotmartWorking(false);
+      setHotmartWorkingStage(null);
+    }
+  }
+
   const draftStorageKey = useMemo(
     () => `${SETUP_DRAFT_STORAGE_KEY}.${client?.id ?? "global"}`,
     [client?.id],
@@ -193,6 +433,26 @@ export default function SetupOperation() {
   const selectedPlayerIdSet = useMemo(() => new Set(playerIds), [playerIds]);
   const detectedPlayers = vturbTestResult?.ok ? vturbTestResult.players ?? [] : [];
   const selectedDetectedPlayers = detectedPlayers.filter((player) => selectedPlayerIdSet.has(player.id));
+  const selectedHotmartIntegration =
+    checkoutIntegrations.find(
+      (item) => item.id === hotmartIntegrationId,
+    ) ?? null;
+  const selectedHotmartCatalog = checkoutCatalog.filter(
+    (item) => item.integration_id === hotmartIntegrationId,
+  );
+  const hasHotmartFront =
+    hotmartProducts.filter((item) => item.role === "front").length === 1;
+  const hotmartStatus: SourceSetupStatus =
+    selectedHotmartIntegration?.status === "requires_action"
+    || selectedHotmartIntegration?.status === "disconnected"
+      ? "error"
+      : selectedHotmartIntegration?.status === "connected"
+        && selectedHotmartIntegration.has_webhook_secret
+        && hasHotmartFront
+        ? "configured"
+        : selectedHotmartIntegration?.status === "connected"
+          ? "prepared"
+          : "not_started";
   const metaStatus: SourceSetupStatus = skippedSources.includes("meta")
     ? "skipped"
     : hasMetaTestError || metaDiscoveryIsStale
@@ -207,13 +467,21 @@ export default function SetupOperation() {
       : vturbKey.trim() && playerIds.length > 0
         ? "configured"
         : "not_started";
-  const gatewayStatus: SourceSetupStatus = skippedSources.includes("gateway")
+  const hublaGatewayStatus: SourceSetupStatus = skippedSources.includes("gateway")
     ? "skipped"
     : hublaSecret.trim()
       ? "configured"
       : hublaHistory
         ? "prepared"
         : "not_started";
+  const gatewayStatus: SourceSetupStatus =
+    hotmartStatus === "configured"
+      ? "configured"
+      : hotmartStatus === "error"
+        ? "error"
+        : hotmartStatus === "prepared"
+          ? "prepared"
+          : hublaGatewayStatus;
   const sourceStatuses: Record<SetupSource, SourceSetupStatus> = {
     meta: metaStatus,
     vturb: vturbStatus,
@@ -252,6 +520,13 @@ export default function SetupOperation() {
     } else {
       setHublaSecret("");
       setHublaHistory(null);
+      setHotmartIntegrationId("");
+      setHotmartProducts([]);
+      setHotmartClientId("");
+      setHotmartClientSecret("");
+      setHotmartBasicToken("");
+      setShowHotmartCredentials(false);
+      setHotmartHottok("");
     }
   }
 
@@ -414,6 +689,12 @@ export default function SetupOperation() {
     setPlayersText(draft.playersText);
     setHublaSecret("");
     setHublaHistory(null);
+    setHotmartHottok("");
+    setHotmartProducts([]);
+    setHotmartClientId("");
+    setHotmartClientSecret("");
+    setHotmartBasicToken("");
+    setShowHotmartCredentials(false);
     setSkippedSources(draft.skippedSources);
     setMetaTestResults({});
     setVturbTestResult(null);
@@ -563,7 +844,53 @@ export default function SetupOperation() {
         configuredSources.push("vturb");
       }
 
-      if (hublaSecret.trim()) {
+      if (hotmartStatus === "configured" && selectedHotmartIntegration) {
+        setSavingLabel("Vinculando produtos da Hotmart");
+        const { data: checkoutData, error: checkoutError } =
+          await supabase.functions.invoke(
+            "workspace-credentials",
+            {
+              body: {
+                action: "upsert_checkout_binding",
+                workspace_id: client.id,
+                project_id: project.id,
+                checkout_integration_id: selectedHotmartIntegration.id,
+                product_bindings: hotmartProducts,
+                enabled: true,
+              },
+            },
+          );
+        if (checkoutError) {
+          throw new Error(
+            await edgeFunctionErrorMessage(
+              checkoutError,
+              "Não foi possível vincular os produtos Hotmart.",
+            ),
+          );
+        }
+        if (checkoutData?.ok === false) throw new Error(checkoutData.error);
+
+        setSavingLabel("Importando 90 dias da Hotmart");
+        const { data: backfillData, error: backfillError } =
+          await supabase.functions.invoke("hotmart-sync", {
+            body: {
+              action: "enqueue_backfill",
+              workspace_id: client.id,
+              project_id: project.id,
+              integration_id: selectedHotmartIntegration.id,
+            },
+          });
+        if (backfillError) {
+          throw new Error(
+            await edgeFunctionErrorMessage(
+              backfillError,
+              "O funil foi criado, mas o histórico Hotmart não iniciou.",
+            ),
+          );
+        }
+        if (backfillData?.ok === false) throw new Error(backfillData.error);
+        configuredSources.push("gateway");
+      } else if (hublaSecret.trim()) {
         const { error: checkoutError } = await supabase.functions.invoke(
           "workspace-credentials",
           {
@@ -579,7 +906,7 @@ export default function SetupOperation() {
         configuredSources.push("gateway");
       }
 
-      if (hublaHistory) {
+      if (hublaHistory && hotmartStatus !== "configured") {
         setSavingLabel("Validando seu histórico da Hubla");
         const preview = await runHublaImport(project.id, hublaHistory.csv, true);
         if (preview.imported === 0) {
@@ -603,7 +930,11 @@ export default function SetupOperation() {
           source === "meta" || source === "vturb",
       );
 
-      setSavingLabel("Preparando seu primeiro resultado");
+      setSavingLabel(
+        hotmartStatus === "configured"
+          ? "Consolidando resultados da Hotmart"
+          : "Preparando seu primeiro resultado",
+      );
       trackProductEvent({
         eventName: "funnel_setup_started",
         workspaceId: client.id,
@@ -621,9 +952,11 @@ export default function SetupOperation() {
           properties: {
             source,
             method:
-              source === "gateway" && hublaHistory
-                ? "hubla_history"
-                : "credential",
+              source === "gateway" && hotmartStatus === "configured"
+                ? "hotmart_api"
+                : source === "gateway" && hublaHistory
+                  ? "hubla_history"
+                  : "credential",
             setup_session_id: setupSessionId.current,
           },
         });
@@ -635,6 +968,7 @@ export default function SetupOperation() {
         properties: {
           source_count: configuredSources.length,
           has_hubla_history: Boolean(hublaHistory),
+          has_hotmart_backfill: hotmartStatus === "configured",
           setup_session_id: setupSessionId.current,
         },
       });
@@ -784,6 +1118,8 @@ export default function SetupOperation() {
             metaStatus={metaStatus}
             vturbStatus={vturbStatus}
             gatewayStatus={gatewayStatus}
+            hotmartStatus={hotmartStatus}
+            hotmartEnabled={publicConfig.hotmartCheckoutEnabled}
             hasHublaHistory={Boolean(hublaHistory)}
             onSelect={setActiveSourceChoice}
             onBack={() => setStep("nome")}
@@ -1091,6 +1427,348 @@ export default function SetupOperation() {
           </StepSection>
         )}
 
+        {step === "fontes" && activeSourceChoice === "hotmart" && (
+          <StepSection title="Hotmart">
+            <SourceSetupHeader
+              status={hotmartStatus}
+              onSkip={() => {
+                skipSource("gateway");
+                setActiveSourceChoice(null);
+              }}
+              onResume={() => resumeSource("gateway")}
+            />
+
+            <div className="rounded-xl border border-primary/20 bg-primary/[0.03] p-4">
+              <div className="inline-flex rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-primary">
+                Quick win
+              </div>
+              <h3 className="mt-3 text-sm font-semibold">
+                Abra o dashboard com até 90 dias de vendas reais
+              </h3>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                Valide as credenciais da conta, informe o Hottok e escolha o
+                produto front. A importação começa assim que o funil for criado.
+              </p>
+            </div>
+
+            {hotmartError ? (
+              <div
+                className="rounded-xl border border-destructive/25 bg-destructive/5 p-4"
+                role="alert"
+              >
+                <p className="text-sm font-medium text-destructive">
+                  A Hotmart precisa de atenção
+                </p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {hotmartError}
+                </p>
+              </div>
+            ) : null}
+
+            {hotmartWorkingStage ? (
+              <div
+                className="rounded-xl border border-primary/20 bg-primary/[0.03] p-4"
+                role="status"
+                aria-live="polite"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                    <Loader2 className="h-5 w-5 animate-spin motion-reduce:animate-none" />
+                  </span>
+                  <div>
+                    <p className="text-sm font-semibold">
+                      {hotmartWorkingStage === "authorizing"
+                        ? "Autorizando conta"
+                        : hotmartWorkingStage === "catalog"
+                          ? "Carregando produtos"
+                          : hotmartWorkingStage === "hottok"
+                            ? "Protegendo o Hottok"
+                            : "Atualizando produtos"}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {hotmartWorkingStage === "authorizing"
+                        ? "Validando a credencial diretamente com a Hotmart."
+                        : hotmartWorkingStage === "catalog"
+                          ? "Sincronizando produtos e ofertas disponíveis."
+                          : hotmartWorkingStage === "hottok"
+                            ? "Salvando o segredo no Vault sem expor no navegador."
+                            : "Comparando o catálogo atual com a Hotmart."}
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-4 grid grid-cols-2 gap-2">
+                  <LoadingStage
+                    label="Autorizando conta"
+                    done={hotmartWorkingStage !== "authorizing"}
+                    active={hotmartWorkingStage === "authorizing"}
+                  />
+                  <LoadingStage
+                    label="Carregando produtos"
+                    done={hotmartWorkingStage === "hottok"}
+                    active={
+                      hotmartWorkingStage === "catalog"
+                      || hotmartWorkingStage === "refreshing"
+                    }
+                  />
+                </div>
+              </div>
+            ) : null}
+
+            {checkoutIntegrations.some(
+              (item) => item.provider === "hotmart",
+            ) ? (
+              <div className="space-y-2">
+                <Label htmlFor="setup-hotmart-integration">
+                  Conta Hotmart
+                </Label>
+                <Select
+                  value={hotmartIntegrationId}
+                  onValueChange={(value) => {
+                    resumeSource("gateway");
+                    setHublaSecret("");
+                    setHublaHistory(null);
+                    setHotmartIntegrationId(value);
+                    setHotmartProducts([]);
+                    setShowHotmartCredentials(false);
+                    setHotmartError(null);
+                  }}
+                >
+                  <SelectTrigger
+                    id="setup-hotmart-integration"
+                    className="min-h-11"
+                  >
+                    <SelectValue placeholder="Selecione a conta conectada" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {checkoutIntegrations
+                      .filter((item) => item.provider === "hotmart")
+                      .map((item) => (
+                        <SelectItem
+                          key={item.id}
+                          value={item.id}
+                          disabled={item.status === "disconnected"}
+                        >
+                          {item.label}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
+
+            {selectedHotmartIntegration?.status === "connected"
+            && !showHotmartCredentials ? (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4">
+                <div>
+                  <p className="text-sm font-medium">
+                    Credenciais Developers validadas
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Os valores estão protegidos no Vault e não são exibidos.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-11"
+                    onClick={() => setShowHotmartCredentials(true)}
+                  >
+                    Trocar credenciais
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-11"
+                    disabled={hotmartWorking}
+                    onClick={() => void refreshHotmartCatalog()}
+                  >
+                    Atualizar produtos
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4 rounded-xl border bg-muted/20 p-4">
+                <div>
+                  <p className="text-sm font-medium">
+                    Credenciais Developers
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                    Na Hotmart, abra Ferramentas → Credenciais, crie uma
+                    credencial e copie Client ID, Client Secret e o token Basic.
+                    Nada será salvo no navegador.
+                  </p>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <Field label="Client ID" htmlFor="setup-hotmart-client-id">
+                    <Input
+                      id="setup-hotmart-client-id"
+                      type="password"
+                      autoComplete="off"
+                      value={hotmartClientId}
+                      onChange={(event) =>
+                        setHotmartClientId(event.target.value)
+                      }
+                    />
+                  </Field>
+                  <Field
+                    label="Client Secret"
+                    htmlFor="setup-hotmart-client-secret"
+                  >
+                    <Input
+                      id="setup-hotmart-client-secret"
+                      type="password"
+                      autoComplete="off"
+                      value={hotmartClientSecret}
+                      onChange={(event) =>
+                        setHotmartClientSecret(event.target.value)
+                      }
+                    />
+                  </Field>
+                </div>
+                <Field label="Token Basic" htmlFor="setup-hotmart-basic">
+                  <Input
+                    id="setup-hotmart-basic"
+                    type="password"
+                    autoComplete="off"
+                    value={hotmartBasicToken}
+                    onChange={(event) =>
+                      setHotmartBasicToken(event.target.value)
+                    }
+                    placeholder="Basic ..."
+                  />
+                </Field>
+                <Button
+                  type="button"
+                  className="min-h-11 gap-2"
+                  disabled={
+                    hotmartWorking
+                    || !hotmartClientId.trim()
+                    || !hotmartClientSecret.trim()
+                    || !hotmartBasicToken.trim()
+                  }
+                  onClick={() => void connectHotmart()}
+                >
+                  {hotmartWorking ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Plug className="h-4 w-4" />
+                  )}
+                  Validar e carregar produtos
+                </Button>
+              </div>
+            )}
+
+            {selectedHotmartIntegration?.status === "connected" ? (
+              <>
+                <div className="rounded-xl border p-4">
+                  <div className="flex items-center gap-3">
+                    <span
+                      className={cn(
+                        "flex h-9 w-9 items-center justify-center rounded-lg",
+                        selectedHotmartIntegration.has_webhook_secret
+                          ? "bg-green-500/10 text-green-700"
+                          : "bg-amber-500/10 text-amber-700",
+                      )}
+                    >
+                      {selectedHotmartIntegration.has_webhook_secret ? (
+                        <Check className="h-4 w-4" />
+                      ) : (
+                        <Clock3 className="h-4 w-4" />
+                      )}
+                    </span>
+                    <div>
+                      <p className="text-sm font-medium">
+                        {selectedHotmartIntegration.has_webhook_secret
+                          ? "Hottok configurado"
+                          : "Informe o Hottok"}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Ele valida os eventos enviados pela Hotmart e nunca volta
+                        a ser exibido.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                    <Input
+                      aria-label="Hottok"
+                      type="password"
+                      autoComplete="off"
+                      value={hotmartHottok}
+                      onChange={(event) => {
+                        resumeSource("gateway");
+                        setHublaSecret("");
+                        setHublaHistory(null);
+                        setHotmartHottok(event.target.value);
+                      }}
+                      placeholder={
+                        selectedHotmartIntegration.has_webhook_secret
+                          ? "Cole somente para substituir"
+                          : "Cole o Hottok da Hotmart"
+                      }
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11 shrink-0"
+                      disabled={!hotmartHottok.trim() || hotmartWorking}
+                      onClick={() => void saveHotmartHottok()}
+                    >
+                      Salvar Hottok
+                    </Button>
+                  </div>
+                </div>
+
+                {selectedHotmartCatalog.length > 0 ? (
+                  <HotmartProductBindings
+                    catalog={selectedHotmartCatalog}
+                    value={hotmartProducts}
+                    disabled={hotmartWorking}
+                    onChange={(value) => {
+                      resumeSource("gateway");
+                      setHublaSecret("");
+                      setHublaHistory(null);
+                      setHotmartProducts(value);
+                    }}
+                  />
+                ) : (
+                  <div className="rounded-xl border border-dashed p-5 text-center">
+                    <p className="text-sm font-medium">
+                      Nenhum produto carregado
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Atualize o catálogo para selecionar o front deste funil.
+                    </p>
+                  </div>
+                )}
+              </>
+            ) : null}
+
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                className="min-h-11"
+                onClick={() => {
+                  skipSource("gateway");
+                  setActiveSourceChoice(null);
+                }}
+              >
+                Fazer depois
+              </Button>
+              {hotmartStatus === "configured" ? (
+                <Button
+                  type="button"
+                  className="min-h-11"
+                  onClick={() => setActiveSourceChoice(null)}
+                >
+                  Hotmart preparada
+                </Button>
+              ) : null}
+            </div>
+          </StepSection>
+        )}
+
         {step === "fontes" && activeSourceChoice === "gateway" && (
           <StepSection title="Gateway de pagamento">
             <SourceSetupHeader
@@ -1107,6 +1785,8 @@ export default function SetupOperation() {
                 value={hublaSecret}
                 onChange={(event) => {
                   resumeSource("gateway");
+                  setHotmartIntegrationId("");
+                  setHotmartProducts([]);
                   setHublaSecret(event.target.value);
                 }}
                 type="password"
@@ -1137,6 +1817,10 @@ export default function SetupOperation() {
               <HublaImportPicker
                 value={hublaHistory}
                 onChange={(next) => {
+                  if (next) {
+                    setHotmartIntegrationId("");
+                    setHotmartProducts([]);
+                  }
                   setHublaHistory(next);
                   if (next) resumeSource("gateway");
                 }}
@@ -1201,9 +1885,11 @@ export default function SetupOperation() {
                 detail={vturbTestResult?.ok ? "API validada" : undefined}
               />
               <Review
-                label="Gateway"
+                label="Checkout"
                 value={
-                  hublaSecret.trim() && hublaHistory
+                  hotmartStatus === "configured"
+                    ? `Hotmart · ${hotmartProducts.length} produto(s)`
+                    : hublaSecret.trim() && hublaHistory
                     ? "Webhook e histórico preparados"
                     : hublaHistory
                       ? `Histórico preparado · ${hublaHistory.fileName}`
@@ -1212,7 +1898,13 @@ export default function SetupOperation() {
                         : sourceStatusDescription(gatewayStatus)
                 }
                 status={gatewayStatus}
-                detail={hublaHistory ? "Será validado e importado ao criar" : undefined}
+                detail={
+                  hotmartStatus === "configured"
+                    ? "90 dias serão importados ao criar"
+                    : hublaHistory
+                      ? "Será validado e importado ao criar"
+                      : undefined
+                }
               />
             </div>
             <p className="text-xs text-muted-foreground">
@@ -1259,15 +1951,18 @@ export default function SetupOperation() {
 
 function SetupCreatingState({ label }: { label: string }) {
   const stages = [
-    { label: "Criar estrutura", icon: Waypoints },
+    { label: "Criar funil", icon: Waypoints },
     { label: "Vincular fontes", icon: Plug },
-    { label: "Preparar sinais", icon: Database },
+    { label: "Importar vendas", icon: Database },
+    { label: "Consolidar", icon: Radio },
   ];
   const activeIndex = label.includes("estrutura")
     ? 0
     : label.includes("Vinculando")
       ? 1
-      : 2;
+      : label.includes("Importando")
+        ? 2
+        : 3;
 
   return (
     <main
@@ -1298,7 +1993,7 @@ function SetupCreatingState({ label }: { label: string }) {
             resultado ou o próximo passo mais útil.
           </p>
 
-          <ol className="mx-auto mt-8 grid max-w-lg gap-3 text-left sm:grid-cols-3">
+          <ol className="mx-auto mt-8 grid max-w-2xl gap-3 text-left sm:grid-cols-4">
             {stages.map((stage, index) => {
               const Icon = stage.icon;
               const done = index < activeIndex;
@@ -1346,6 +2041,8 @@ function ProgressiveSourceChooser({
   metaStatus,
   vturbStatus,
   gatewayStatus,
+  hotmartStatus,
+  hotmartEnabled,
   hasHublaHistory,
   onSelect,
   onBack,
@@ -1354,6 +2051,8 @@ function ProgressiveSourceChooser({
   metaStatus: SourceSetupStatus;
   vturbStatus: SourceSetupStatus;
   gatewayStatus: SourceSetupStatus;
+  hotmartStatus: SourceSetupStatus;
+  hotmartEnabled: boolean;
   hasHublaHistory: boolean;
   onSelect: (source: SourceChoice) => void;
   onBack: () => void;
@@ -1368,6 +2067,18 @@ function ProgressiveSourceChooser({
     recommended?: boolean;
     order: string;
   }> = [
+    ...(hotmartEnabled
+      ? [{
+          id: "hotmart" as const,
+          title: "Hotmart",
+          description:
+            "Conecte a conta, escolha o produto e importe até 90 dias automaticamente.",
+          icon: CreditCard,
+          status: hotmartStatus,
+          recommended: true,
+          order: "1",
+        }]
+      : []),
     {
       id: "hubla_history",
       title: "Histórico Hubla",
@@ -1375,7 +2086,7 @@ function ProgressiveSourceChooser({
       icon: FileUp,
       status: hasHublaHistory ? "prepared" : gatewayStatus === "skipped" ? "skipped" : "not_started",
       recommended: true,
-      order: "1",
+      order: hotmartEnabled ? "2" : "1",
     },
     {
       id: "gateway",
@@ -1383,7 +2094,7 @@ function ProgressiveSourceChooser({
       description: "Prepare o recebimento contínuo das próximas vendas por webhook.",
       icon: CreditCard,
       status: gatewayStatus,
-      order: "2",
+      order: hotmartEnabled ? "3" : "2",
     },
     {
       id: "meta",
@@ -1391,7 +2102,7 @@ function ProgressiveSourceChooser({
       description: "Vincule as contas de anúncios que pertencem a este funil.",
       icon: Megaphone,
       status: metaStatus,
-      order: "3",
+      order: hotmartEnabled ? "4" : "3",
     },
     {
       id: "vturb",
@@ -1399,7 +2110,7 @@ function ProgressiveSourceChooser({
       description: "Selecione os players usados na oferta e acompanhe a jornada da VSL.",
       icon: PlayCircle,
       status: vturbStatus,
-      order: "4",
+      order: hotmartEnabled ? "5" : "4",
     },
   ];
 
@@ -1413,8 +2124,9 @@ function ProgressiveSourceChooser({
           Por onde você quer começar?
         </h2>
         <p className="mt-2 text-sm leading-5 text-muted-foreground">
-          Configure uma fonte por vez. O histórico Hubla é o caminho mais rápido para
-          enxergar vendas reais; todas as outras opções podem ser concluídas depois.
+          Configure uma fonte por vez. Hotmart e histórico Hubla são os caminhos
+          mais rápidos para enxergar vendas reais; o restante pode ser concluído
+          depois.
         </p>
       </div>
 
@@ -1556,6 +2268,36 @@ function Field({ label, htmlFor, children }: { label: string; htmlFor?: string; 
     <div className="space-y-1.5">
       <Label htmlFor={htmlFor}>{label}</Label>
       {children}
+    </div>
+  );
+}
+
+function LoadingStage({
+  label,
+  done,
+  active,
+}: {
+  label: string;
+  done: boolean;
+  active: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex min-h-11 items-center gap-2 rounded-lg border px-3 text-xs",
+        active
+          ? "border-primary/30 bg-primary/5 text-foreground"
+          : "border-border/60 text-muted-foreground",
+      )}
+    >
+      {done ? (
+        <Check className="h-4 w-4 text-green-600" />
+      ) : active ? (
+        <Loader2 className="h-4 w-4 animate-spin text-primary motion-reduce:animate-none" />
+      ) : (
+        <Circle className="h-4 w-4" />
+      )}
+      {label}
     </div>
   );
 }
