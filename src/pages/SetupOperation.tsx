@@ -56,7 +56,7 @@ import {
   listWorkspaceMetaAccountsSafe,
 } from "@/lib/operationalReadApi";
 import { edgeFunctionErrorMessage } from "@/lib/edgeFunctionError";
-import { publicConfig } from "@/lib/publicConfig";
+import { isHotmartCheckoutEnabled } from "@/lib/publicConfig";
 import type {
   SetupDraftV2,
   SetupSource,
@@ -128,6 +128,7 @@ export default function SetupOperation() {
   const client =
     workspaces.find((workspace) => workspace.id === routeClientId) ??
     currentWorkspace;
+  const hotmartEnabled = isHotmartCheckoutEnabled(client?.id);
   const [step, setStep] = useState<StepId>("nome");
   const [activeSourceChoice, setActiveSourceChoice] = useState<SourceChoice | null>(null);
   const [saving, setSaving] = useState(false);
@@ -211,7 +212,7 @@ export default function SetupOperation() {
   }, [client?.id]);
 
   const loadCheckoutCatalog = useCallback(async () => {
-    if (!client?.id || !publicConfig.hotmartCheckoutEnabled) return;
+    if (!client?.id || !hotmartEnabled) return;
     const [integrationRows, catalogRows] = await Promise.all([
       listWorkspaceCheckoutIntegrationsSafe(client.id),
       listWorkspaceCheckoutCatalogSafe(client.id),
@@ -229,10 +230,10 @@ export default function SetupOperation() {
       }
       return "";
     });
-  }, [client?.id]);
+  }, [client?.id, hotmartEnabled]);
 
   useEffect(() => {
-    if (!client?.id || !publicConfig.hotmartCheckoutEnabled) {
+    if (!client?.id || !hotmartEnabled) {
       setCheckoutIntegrations([]);
       setCheckoutCatalog([]);
       return;
@@ -246,7 +247,7 @@ export default function SetupOperation() {
     return () => {
       cancelled = true;
     };
-  }, [client?.id, loadCheckoutCatalog]);
+  }, [client?.id, hotmartEnabled, loadCheckoutCatalog]);
 
   async function connectHotmart() {
     if (!client?.id) return;
@@ -1119,7 +1120,7 @@ export default function SetupOperation() {
             vturbStatus={vturbStatus}
             gatewayStatus={gatewayStatus}
             hotmartStatus={hotmartStatus}
-            hotmartEnabled={publicConfig.hotmartCheckoutEnabled}
+            hotmartEnabled={hotmartEnabled}
             hasHublaHistory={Boolean(hublaHistory)}
             onSelect={setActiveSourceChoice}
             onBack={() => setStep("nome")}

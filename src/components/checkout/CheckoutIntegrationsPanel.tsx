@@ -43,7 +43,7 @@ import {
   type WorkspaceCheckoutIntegrationSafeRow,
   listWorkspaceCheckoutIntegrationsSafe,
 } from "@/lib/operationalReadApi";
-import { publicConfig } from "@/lib/publicConfig";
+import { isHotmartCheckoutEnabled } from "@/lib/publicConfig";
 
 type EditorState = {
   integration: WorkspaceCheckoutIntegrationSafeRow | null;
@@ -74,6 +74,7 @@ export function CheckoutIntegrationsPanel({
   workspaceId: string;
   canManage: boolean;
 }) {
+  const hotmartEnabled = isHotmartCheckoutEnabled(workspaceId);
   const [integrations, setIntegrations] = useState<
     WorkspaceCheckoutIntegrationSafeRow[]
   >([]);
@@ -501,7 +502,7 @@ export function CheckoutIntegrationsPanel({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="hubla">Hubla</SelectItem>
-                    {publicConfig.hotmartCheckoutEnabled ? (
+                    {hotmartEnabled ? (
                       <SelectItem value="hotmart">Hotmart</SelectItem>
                     ) : null}
                     <SelectItem value="kiwify">Kiwify</SelectItem>
