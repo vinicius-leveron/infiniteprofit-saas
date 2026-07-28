@@ -1,5 +1,10 @@
 export type EffectiveRole = "owner" | "admin" | "moderator" | "member";
 
+export function bearerToken(authHeader: string | null | undefined) {
+  const match = authHeader?.match(/^Bearer\s+(\S+)$/i);
+  return match?.[1] ?? null;
+}
+
 export function roleWeight(role: EffectiveRole) {
   return { owner: 4, admin: 3, moderator: 2, member: 1 }[role];
 }

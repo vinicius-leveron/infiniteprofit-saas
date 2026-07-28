@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import { edgeFunctionErrorMessage } from "@/lib/edgeFunctionError";
 
 export type TeamAccessScope = "organization" | "workspace";
 export type TeamAccessAction =
@@ -36,7 +37,14 @@ export async function runTeamAccess(
   const { data, error } = await supabase.functions.invoke("team-access", {
     body: request,
   });
-  if (error) throw error;
+  if (error) {
+    throw new Error(
+      await edgeFunctionErrorMessage(
+        error,
+        "Não foi possível concluir esta ação de equipe. Tente novamente.",
+      ),
+    );
+  }
   if (data?.error) throw new Error(String(data.error));
   return data as TeamAccessResult;
 }

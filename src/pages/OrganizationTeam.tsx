@@ -165,7 +165,7 @@ export default function OrganizationTeam() {
       if (result.delivery?.status === "sent") {
         toast.success("Convite enviado por email");
       } else {
-        toast.warning("Convite criado, mas o email falhou. Use reenviar.");
+        toast.warning("Convite criado. O email não foi enviado; copie o link abaixo.");
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Falha ao criar convite.");
@@ -187,7 +187,7 @@ export default function OrganizationTeam() {
       if (result.delivery?.status === "sent") {
         toast.success("Convite reenviado por email");
       } else {
-        toast.error("O email não foi enviado. Tente novamente.");
+        toast.error("O email não foi enviado. Copie o link do convite.");
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Falha ao renovar convite.");

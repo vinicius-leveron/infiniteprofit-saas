@@ -2,6 +2,7 @@
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import {
+  bearerToken,
   canGrantRole,
   highestEffectiveAccess,
   type EffectiveRole,
@@ -88,7 +89,11 @@ Deno.serve(async (req) => {
       error: sanitizeOperationalError(message),
     }));
     return json(
-      { error: message },
+      {
+        error: error instanceof HttpError
+          ? message
+          : "Não foi possível concluir esta ação de equipe. Tente novamente.",
+      },
       error instanceof HttpError ? error.status : 500,
     );
   }
@@ -424,6 +429,19 @@ async function deliverInvite({
   if (updateError) throw new Error(updateError.message);
 
   return { status, error: deliveryError };
+}
+
+async function resolveUser(authHeader: string | null) {
+  const token = bearerToken(authHeader);
+  if (!token) return null;
+
+  const userClient = createClient(SUPABASE_URL, ANON_KEY, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+    auth: { persistSession: false },
+  });
+  const { data, error } = await userClient.auth.getUser();
+  if (error || !data.user?.id) return null;
+  return { userId: data.user.id };
 }
 
 async function resolveEffectiveAccess(
