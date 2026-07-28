@@ -5,9 +5,14 @@ afterEach(() => {
   vi.resetModules();
 });
 
-async function loadHotmartFlag(globalFlag: string, canaryIds: string) {
+async function loadHotmartFlag(
+  globalFlag: string,
+  canaryIds?: string,
+) {
   vi.stubEnv("VITE_ENABLE_HOTMART_CHECKOUT", globalFlag);
-  vi.stubEnv("VITE_HOTMART_CANARY_WORKSPACE_IDS", canaryIds);
+  if (canaryIds !== undefined) {
+    vi.stubEnv("VITE_HOTMART_CANARY_WORKSPACE_IDS", canaryIds);
+  }
   return import("./publicConfig");
 }
 
@@ -27,5 +32,14 @@ describe("Hotmart checkout rollout", () => {
     const { isHotmartCheckoutEnabled } = await loadHotmartFlag("true", "");
 
     expect(isHotmartCheckoutEnabled("workspace-customer")).toBe(true);
+  });
+
+  it("keeps the internal canary available when the host has no new env var", async () => {
+    const { isHotmartCheckoutEnabled } = await loadHotmartFlag("false");
+
+    expect(
+      isHotmartCheckoutEnabled("ce21f804-5915-40fa-8499-e43092d2884b"),
+    ).toBe(true);
+    expect(isHotmartCheckoutEnabled("workspace-customer")).toBe(false);
   });
 });
