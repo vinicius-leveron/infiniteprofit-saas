@@ -1,4 +1,6 @@
 const DEFAULT_APP_URL = "https://infiniteprofit-saas.onrender.com";
+const DEFAULT_HOTMART_CANARY_WORKSPACE_IDS =
+  "ce21f804-5915-40fa-8499-e43092d2884b";
 
 function cleanValue(value: string | undefined) {
   const cleaned = value?.trim();
@@ -20,7 +22,8 @@ export const publicConfig = {
     cleanValue(import.meta.env.VITE_ENABLE_HOTMART_CHECKOUT)?.toLowerCase()
       === "true",
   hotmartCanaryWorkspaceIds: commaSeparatedValues(
-    import.meta.env.VITE_HOTMART_CANARY_WORKSPACE_IDS,
+    import.meta.env.VITE_HOTMART_CANARY_WORKSPACE_IDS
+      ?? DEFAULT_HOTMART_CANARY_WORKSPACE_IDS,
   ),
   supportEmail:
     cleanValue(import.meta.env.VITE_SUPPORT_EMAIL) ??
