@@ -327,6 +327,56 @@ async function processJob(
     );
   }
 
+  if (job.source === "gateway" && job.entity_type === "hotmart_catalog") {
+    const integrationId = String(
+      job.payload?.integration_id ?? job.entity_id ?? "",
+    ).trim();
+    if (!integrationId) throw new Error("Job Hotmart sem integration_id");
+    const result = await callFunction(
+      "hotmart-sync",
+      {
+        action: "execute_catalog",
+        workspace_id: job.workspace_id,
+        integration_id: integrationId,
+      },
+      traceId,
+      timeoutMs,
+    );
+    return { source_result: compactResult(result) };
+  }
+
+  if (
+    job.source === "gateway"
+    && job.entity_type === "hotmart_sales_backfill"
+  ) {
+    const integrationId = String(
+      job.payload?.integration_id ?? job.entity_id ?? "",
+    ).trim();
+    if (!integrationId) throw new Error("Job Hotmart sem integration_id");
+    const result = await callFunction(
+      "hotmart-sync",
+      {
+        action: "execute_backfill",
+        workspace_id: job.workspace_id,
+        project_id: job.project_id,
+        integration_id: integrationId,
+        start_date: job.date_start,
+        end_date: job.date_end,
+      },
+      traceId,
+      timeoutMs,
+    );
+    if (result?.ok === false || result?.error) {
+      throw new Error(String(result?.error ?? "Falha no histórico Hotmart"));
+    }
+    const aggregate = await enqueueAggregateForJob(
+      sb,
+      job,
+      extractDates(result, job),
+    );
+    return { source_result: compactResult(result), aggregate };
+  }
+
   if (job.source === "creative" && job.entity_type === "creative_project") {
     const days = daysForDateRange(job.date_start, job.date_end);
     const result = await callFunction(

@@ -12,6 +12,8 @@
     "generate-alerts",
     "gateway-worker-heartbeat",
     "hubla-csv-import",
+    "hotmart-auth",
+    "hotmart-sync",
     "insights",
     "meta-pull",
     "meta-test",

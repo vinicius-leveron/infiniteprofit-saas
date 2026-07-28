@@ -5,6 +5,8 @@ export type SyncJobEntityType =
   | "meta_account"
   | "vturb_player"
   | "hubla_reconcile"
+  | "hotmart_catalog"
+  | "hotmart_sales_backfill"
   | "aggregate_project_dates"
   | "creative_project";
 export type SyncJobStatus = "queued" | "running" | "succeeded" | "failed" | "dead_letter";

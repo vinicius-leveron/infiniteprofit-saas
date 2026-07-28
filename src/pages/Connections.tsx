@@ -18,33 +18,43 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { HublaImportDialog } from "@/components/hubla/HublaImportDialog";
+import { HotmartProductBindings } from "@/components/checkout/HotmartProductBindings";
+import { HotmartBackfillDialog } from "@/components/checkout/HotmartBackfillDialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import {
+  type CheckoutProductBinding,
+  type WorkspaceCheckoutBindingSafeRow,
+  type WorkspaceCheckoutCatalogSafeRow,
+  type WorkspaceCheckoutIntegrationSafeRow,
   getFunnelCheckoutBindingSafe,
-  getWorkspaceIntegrationSafe,
+  listWorkspaceCheckoutCatalogSafe,
+  listWorkspaceCheckoutIntegrationsSafe,
   listWorkspaceMetaAccountsSafe,
 } from "@/lib/operationalReadApi";
+import { edgeFunctionErrorMessage } from "@/lib/edgeFunctionError";
 import { getProjectMetaBindingChanges } from "@/lib/projectMetaBindings";
 import { cn } from "@/lib/utils";
 import { trackProductEvent } from "@/lib/productEvents";
 import { publicConfig } from "@/lib/publicConfig";
 
 type ConnectionsMode = "sources" | "sharing";
-type GatewayProvider = "hotmart" | "hubla" | "kiwify";
 
 interface ProjectRow {
   id: string;
   name: string;
   workspace_id: string;
-}
-
-interface WorkspaceIntegrationRow {
-  gateway_provider: GatewayProvider | null;
 }
 
 interface MetaAccountRow {
@@ -57,12 +67,6 @@ interface VturbPlayerRow {
   id: string;
   player_id: string;
   label: string | null;
-}
-
-interface CheckoutBindingRow {
-  project_id: string;
-  webhook_token: string;
-  enabled: boolean;
 }
 
 interface PublicLinkRow {
@@ -90,7 +94,6 @@ export default function Connections({ mode = "sources" }: { mode?: ConnectionsMo
   const [saveError, setSaveError] = useState("");
   const [saving, setSaving] = useState(false);
   const [project, setProject] = useState<ProjectRow | null>(null);
-  const [integration, setIntegration] = useState<WorkspaceIntegrationRow | null>(null);
   const [metaAccounts, setMetaAccounts] = useState<MetaAccountRow[]>([]);
   const [selectedMetaIds, setSelectedMetaIds] = useState<string[]>([]);
   const [savedMetaIds, setSavedMetaIds] = useState<string[]>([]);
@@ -99,9 +102,25 @@ export default function Connections({ mode = "sources" }: { mode?: ConnectionsMo
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<string[]>([]);
   const [savedPlayerIds, setSavedPlayerIds] = useState<string[]>([]);
   const [playerQuery, setPlayerQuery] = useState("");
-  const [checkoutBinding, setCheckoutBinding] = useState<CheckoutBindingRow | null>(null);
+  const [checkoutIntegrations, setCheckoutIntegrations] = useState<
+    WorkspaceCheckoutIntegrationSafeRow[]
+  >([]);
+  const [checkoutCatalog, setCheckoutCatalog] = useState<
+    WorkspaceCheckoutCatalogSafeRow[]
+  >([]);
+  const [checkoutBinding, setCheckoutBinding] =
+    useState<WorkspaceCheckoutBindingSafeRow | null>(null);
   const [checkoutEnabled, setCheckoutEnabled] = useState(false);
   const [savedCheckoutEnabled, setSavedCheckoutEnabled] = useState(false);
+  const [checkoutIntegrationId, setCheckoutIntegrationId] = useState("");
+  const [savedCheckoutIntegrationId, setSavedCheckoutIntegrationId] =
+    useState("");
+  const [checkoutProducts, setCheckoutProducts] = useState<
+    CheckoutProductBinding[]
+  >([]);
+  const [savedCheckoutProducts, setSavedCheckoutProducts] = useState<
+    CheckoutProductBinding[]
+  >([]);
   const [publicLinks, setPublicLinks] = useState<PublicLinkRow[]>([]);
 
   useEffect(() => {
@@ -128,15 +147,15 @@ export default function Connections({ mode = "sources" }: { mode?: ConnectionsMo
       }
 
       const [
-        integrationResult,
         metaResult,
         selectedMetaResult,
         playerResult,
         selectedPlayerResult,
         checkoutResult,
+        checkoutIntegrationsResult,
+        checkoutCatalogResult,
         linkResult,
       ] = await Promise.all([
-        getWorkspaceIntegrationSafe(typedProject.workspace_id),
         listWorkspaceMetaAccountsSafe(typedProject.workspace_id),
         supabase.from("project_meta_accounts").select("meta_account_id").eq("project_id", typedProject.id),
         supabase
@@ -146,6 +165,8 @@ export default function Connections({ mode = "sources" }: { mode?: ConnectionsMo
           .order("created_at", { ascending: true }),
         supabase.from("project_vturb_players").select("vturb_player_id").eq("project_id", typedProject.id),
         getFunnelCheckoutBindingSafe(typedProject.id),
+        listWorkspaceCheckoutIntegrationsSafe(typedProject.workspace_id),
+        listWorkspaceCheckoutCatalogSafe(typedProject.workspace_id),
         supabase
           .from("project_public_links" as never)
           .select("id, token, enabled, label, last_accessed_at, expires_at, created_at")
@@ -172,15 +193,23 @@ export default function Connections({ mode = "sources" }: { mode?: ConnectionsMo
       }
 
       const nextPlayerIds = (selectedPlayerResult.data ?? []).map((row) => row.vturb_player_id);
-      const typedCheckout = checkoutResult as CheckoutBindingRow | null;
-      setIntegration((integrationResult ?? null) as WorkspaceIntegrationRow | null);
+      const typedCheckout = checkoutResult;
+      const nextCheckoutProducts = typedCheckout?.product_bindings ?? [];
       setMetaAccounts(metaResult as MetaAccountRow[]);
       setVturbPlayers((playerResult.data ?? []) as VturbPlayerRow[]);
       setSelectedPlayerIds(nextPlayerIds);
       setSavedPlayerIds(nextPlayerIds);
       setCheckoutBinding(typedCheckout);
+      setCheckoutIntegrations(checkoutIntegrationsResult);
+      setCheckoutCatalog(checkoutCatalogResult);
       setCheckoutEnabled(typedCheckout?.enabled ?? false);
       setSavedCheckoutEnabled(typedCheckout?.enabled ?? false);
+      setCheckoutIntegrationId(typedCheckout?.checkout_integration_id ?? "");
+      setSavedCheckoutIntegrationId(
+        typedCheckout?.checkout_integration_id ?? "",
+      );
+      setCheckoutProducts(nextCheckoutProducts);
+      setSavedCheckoutProducts(nextCheckoutProducts);
       setPublicLinks((linkResult.data ?? []) as unknown as PublicLinkRow[]);
       setState("ready");
     } catch (error) {
@@ -223,8 +252,24 @@ export default function Connections({ mode = "sources" }: { mode?: ConnectionsMo
 
   const saveSources = async () => {
     if (!project || !isWorkspaceAdmin) return;
+    const selectedCheckout = checkoutIntegrations.find(
+      (item) => item.id === checkoutIntegrationId,
+    );
+    if (checkoutEnabled && !selectedCheckout) {
+      setSaveError("Selecione uma integração de checkout para este funil.");
+      return;
+    }
+    if (
+      checkoutEnabled
+      && selectedCheckout?.provider === "hotmart"
+      && checkoutProducts.filter((item) => item.role === "front").length !== 1
+    ) {
+      setSaveError("Selecione exatamente um produto front da Hotmart.");
+      return;
+    }
     setSaving(true);
     setSaveError("");
+    let backfillWarning: string | null = null;
     try {
       await persistMetaBindings();
 
@@ -244,6 +289,13 @@ export default function Connections({ mode = "sources" }: { mode?: ConnectionsMo
         if (error) throw error;
       }
 
+      const shouldStartHotmartBackfill =
+        checkoutEnabled
+        && selectedCheckout?.provider === "hotmart"
+        && (
+          !checkoutBinding?.enabled
+          || checkoutBinding.checkout_integration_id !== checkoutIntegrationId
+        );
       if (checkoutBinding || checkoutEnabled) {
         const { data, error } = await supabase.functions.invoke(
           "workspace-credentials",
@@ -253,19 +305,74 @@ export default function Connections({ mode = "sources" }: { mode?: ConnectionsMo
               workspace_id: project.workspace_id,
               project_id: project.id,
               enabled: checkoutEnabled,
+              checkout_integration_id:
+                checkoutIntegrationId || checkoutBinding?.checkout_integration_id,
+              product_bindings:
+                selectedCheckout?.provider === "hotmart"
+                  ? checkoutProducts
+                  : [],
             },
           },
         );
-        if (error) throw error;
-        setCheckoutBinding(
-          (data?.checkout_binding ?? null) as CheckoutBindingRow | null,
-        );
+        if (error) {
+          throw new Error(
+            await edgeFunctionErrorMessage(
+              error,
+              "Não foi possível salvar o checkout do funil.",
+            ),
+          );
+        }
+        if (data?.ok === false) throw new Error(data.error);
+        const savedBinding = data?.checkout_binding as
+          | WorkspaceCheckoutBindingSafeRow
+          | undefined;
+        if (savedBinding) {
+          setCheckoutBinding({
+            ...savedBinding,
+            provider: selectedCheckout?.provider ?? null,
+            integration_label: selectedCheckout?.label ?? null,
+            integration_status: selectedCheckout?.status ?? null,
+            product_bindings: [...checkoutProducts],
+          });
+        }
+
+        if (shouldStartHotmartBackfill && checkoutIntegrationId) {
+          const { data: backfillData, error: backfillError } =
+            await supabase.functions.invoke("hotmart-sync", {
+              body: {
+                action: "enqueue_backfill",
+                workspace_id: project.workspace_id,
+                project_id: project.id,
+                integration_id: checkoutIntegrationId,
+              },
+            });
+          if (backfillError) {
+            backfillWarning = await edgeFunctionErrorMessage(
+              backfillError,
+              "O histórico Hotmart não foi iniciado.",
+            );
+          } else if (backfillData?.ok === false) {
+            backfillWarning =
+              backfillData.error ?? "O histórico Hotmart não foi iniciado.";
+          } else {
+            toast.success("Hotmart vinculada. Importação de 90 dias iniciada.");
+          }
+        }
       }
 
       setSavedMetaIds([...selectedMetaIds]);
       setSavedPlayerIds([...selectedPlayerIds]);
       setSavedCheckoutEnabled(checkoutEnabled);
-      toast.success("Fontes do funil salvas");
+      setSavedCheckoutIntegrationId(checkoutIntegrationId);
+      setSavedCheckoutProducts([...checkoutProducts]);
+      if (backfillWarning) {
+        setSaveError(
+          `As fontes foram salvas, mas o histórico precisa de atenção: ${backfillWarning}`,
+        );
+        toast.warning("Checkout salvo; tente o histórico novamente em Saúde.");
+      } else if (!shouldStartHotmartBackfill) {
+        toast.success("Fontes do funil salvas");
+      }
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "Não foi possível salvar as fontes.");
     } finally {
@@ -334,12 +441,32 @@ export default function Connections({ mode = "sources" }: { mode?: ConnectionsMo
     );
   }, [playerQuery, vturbPlayers]);
 
+  const selectedCheckoutIntegration = useMemo(
+    () =>
+      checkoutIntegrations.find(
+        (item) => item.id === checkoutIntegrationId,
+      ) ?? null,
+    [checkoutIntegrationId, checkoutIntegrations],
+  );
+  const selectedCheckoutCatalog = useMemo(
+    () =>
+      checkoutCatalog.filter(
+        (item) => item.integration_id === checkoutIntegrationId,
+      ),
+    [checkoutCatalog, checkoutIntegrationId],
+  );
+  const checkoutConfigurationDirty =
+    checkoutIntegrationId !== savedCheckoutIntegrationId ||
+    checkoutProductFingerprint(checkoutProducts) !==
+      checkoutProductFingerprint(savedCheckoutProducts) ||
+    checkoutEnabled !== savedCheckoutEnabled;
+
   const isDirty =
     selectedMetaIds.length !== savedMetaIds.length ||
     selectedMetaIds.some((id) => !savedMetaIds.includes(id)) ||
     selectedPlayerIds.length !== savedPlayerIds.length ||
     selectedPlayerIds.some((id) => !savedPlayerIds.includes(id)) ||
-    checkoutEnabled !== savedCheckoutEnabled;
+    checkoutConfigurationDirty;
 
   if (!projectId) return <Navigate to="/clients" replace />;
 
@@ -366,8 +493,8 @@ export default function Connections({ mode = "sources" }: { mode?: ConnectionsMo
     ? `/clients/${project.workspace_id}/integrations?returnTo=${encodeURIComponent(returnTo)}`
     : "/clients";
   const gatewayWebhookUrl =
-    integration?.gateway_provider && checkoutBinding?.webhook_token
-      ? `${SUPABASE_URL}/functions/v1/webhook-gateway/${integration.gateway_provider}/${checkoutBinding.webhook_token}`
+    selectedCheckoutIntegration?.provider && checkoutBinding?.webhook_token
+      ? `${SUPABASE_URL}/functions/v1/webhook-gateway/${selectedCheckoutIntegration.provider}/${checkoutBinding.webhook_token}`
       : null;
 
   return (
@@ -496,53 +623,155 @@ export default function Connections({ mode = "sources" }: { mode?: ConnectionsMo
 
           <SourceSection
             icon={<CreditCard className="h-5 w-5" />}
-            title="Gateway"
-            description="Receba novas vendas por webhook ou importe o histórico da Hubla."
+            title="Checkout"
+            description="Escolha a integração e os produtos que pertencem a este funil."
             connected={Boolean(checkoutBinding?.enabled)}
           >
             <div className="space-y-4">
-              {!integration?.gateway_provider ? (
+              {checkoutIntegrations.length === 0 ? (
                 <MissingResource
-                  message="Configure um gateway nas integrações do cliente para receber novas vendas."
+                  message="Conecte Hubla ou Hotmart no Cliente antes de vincular este funil."
                   onAdd={isWorkspaceAdmin ? () => navigate(integrationsPath) : undefined}
                 />
               ) : (
                 <>
-                  <label className="flex min-h-11 items-center gap-3 text-sm font-medium">
-                    <Checkbox
-                      checked={checkoutEnabled}
-                      onCheckedChange={(checked) => setCheckoutEnabled(checked === true)}
+                  <div className="max-w-xl space-y-2">
+                    <label
+                      htmlFor="checkout-integration"
+                      className="text-sm font-medium"
+                    >
+                      Integração de checkout
+                    </label>
+                    <Select
+                      value={checkoutIntegrationId}
                       disabled={!isWorkspaceAdmin}
-                    />
-                    Habilitar {integration.gateway_provider} neste funil
-                  </label>
-                  {checkoutEnabled && checkoutBinding && isWorkspaceAdmin ? (
-                    <div className="rounded-lg border border-border/60 bg-muted/20 p-4">
-                      <p className="mb-3 text-sm text-muted-foreground">
-                        Este webhook já foi persistido e pode ser configurado no provedor.
-                      </p>
-                      <Button
-                        variant="outline"
-                        className="min-h-11 gap-2"
-                        onClick={() => {
-                          if (!gatewayWebhookUrl) return;
-                          void navigator.clipboard.writeText(gatewayWebhookUrl);
-                          toast.success("Webhook copiado");
-                        }}
+                      onValueChange={(value) => {
+                        setCheckoutIntegrationId(value);
+                        setCheckoutEnabled(true);
+                        setCheckoutProducts(
+                          value === savedCheckoutIntegrationId
+                            ? [...savedCheckoutProducts]
+                            : [],
+                        );
+                      }}
+                    >
+                      <SelectTrigger
+                        id="checkout-integration"
+                        className="min-h-11"
                       >
-                        <Copy className="h-4 w-4" />
-                        Copiar webhook
-                      </Button>
+                        <SelectValue placeholder="Selecione Hubla ou Hotmart" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {checkoutIntegrations.map((item) => (
+                          <SelectItem
+                            key={item.id}
+                            value={item.id}
+                            disabled={item.status !== "connected"}
+                          >
+                            {item.label} · {providerName(item.provider)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {selectedCheckoutIntegration ? (
+                      <p className="text-xs text-muted-foreground">
+                        {selectedCheckoutIntegration.status === "connected"
+                          ? "Conta conectada e pronta para o funil."
+                          : "Esta conexão ainda requer atenção nas Integrações do Cliente."}
+                      </p>
+                    ) : null}
+                  </div>
+
+                  {checkoutIntegrationId ? (
+                    <label className="flex min-h-11 items-center gap-3 text-sm font-medium">
+                      <Checkbox
+                        checked={checkoutEnabled}
+                        onCheckedChange={(checked) =>
+                          setCheckoutEnabled(checked === true)
+                        }
+                        disabled={!isWorkspaceAdmin}
+                      />
+                      Usar {selectedCheckoutIntegration?.label ?? "checkout"} neste
+                      funil
+                    </label>
+                  ) : null}
+
+                  {checkoutEnabled
+                    && selectedCheckoutIntegration?.provider === "hotmart" ? (
+                      selectedCheckoutCatalog.length === 0 ? (
+                        <MissingResource
+                          message="O catálogo Hotmart ainda não possui produtos. Atualize-o nas integrações do cliente."
+                          onAdd={
+                            isWorkspaceAdmin
+                              ? () => navigate(integrationsPath)
+                              : undefined
+                          }
+                        />
+                      ) : (
+                        <HotmartProductBindings
+                          catalog={selectedCheckoutCatalog}
+                          value={checkoutProducts}
+                          disabled={!isWorkspaceAdmin}
+                          onChange={setCheckoutProducts}
+                        />
+                      )
+                    ) : null}
+
+                  {checkoutEnabled
+                  && checkoutBinding
+                  && checkoutBinding.checkout_integration_id
+                    === checkoutIntegrationId
+                  && !checkoutConfigurationDirty
+                  && isWorkspaceAdmin ? (
+                    <div className="rounded-lg border border-border/60 bg-muted/20 p-4">
+                      {selectedCheckoutIntegration?.provider === "hotmart" ? (
+                        <HotmartWebhookGuide
+                          lastEventAt={
+                            selectedCheckoutIntegration.last_event_at
+                          }
+                        />
+                      ) : (
+                        <p className="mb-3 text-sm text-muted-foreground">
+                          Este webhook já foi persistido e pode ser configurado no
+                          provedor.
+                        </p>
+                      )}
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          variant="outline"
+                          className="min-h-11 gap-2"
+                          onClick={() => {
+                            if (!gatewayWebhookUrl) return;
+                            void navigator.clipboard.writeText(gatewayWebhookUrl);
+                            toast.success("Webhook copiado");
+                          }}
+                        >
+                          <Copy className="h-4 w-4" />
+                          Copiar webhook
+                        </Button>
+                        {project
+                        && selectedCheckoutIntegration?.provider === "hotmart" ? (
+                          <HotmartBackfillDialog
+                            workspaceId={project.workspace_id}
+                            projectId={project.id}
+                            integrationId={selectedCheckoutIntegration.id}
+                          />
+                        ) : null}
+                      </div>
                     </div>
-                  ) : checkoutEnabled && !checkoutBinding ? (
+                  ) : checkoutEnabled && checkoutIntegrationId ? (
                     <p className="text-sm text-muted-foreground">
-                      Salve as fontes para persistir e liberar a URL do webhook.
+                      Salve as fontes para persistir o vínculo e liberar a URL do
+                      webhook.
                     </p>
                   ) : null}
                 </>
               )}
 
-              {isWorkspaceAdmin && (!integration?.gateway_provider || integration.gateway_provider === "hubla") && project && (
+              {isWorkspaceAdmin
+              && (!selectedCheckoutIntegration
+                || selectedCheckoutIntegration.provider === "hubla")
+              && project ? (
                 <div className="flex flex-col items-start justify-between gap-3 rounded-lg border border-border/60 bg-muted/10 p-4 sm:flex-row sm:items-center">
                   <div>
                     <p className="text-sm font-medium">Histórico de vendas da Hubla</p>
@@ -555,7 +784,7 @@ export default function Connections({ mode = "sources" }: { mode?: ConnectionsMo
                     onImported={() => load(false)}
                   />
                 </div>
-              )}
+              ) : null}
             </div>
           </SourceSection>
 
@@ -629,6 +858,60 @@ function SourceSection({
       </div>
       {children}
     </section>
+  );
+}
+
+function HotmartWebhookGuide({
+  lastEventAt,
+}: {
+  lastEventAt: string | null;
+}) {
+  const steps = [
+    "Abra Ferramentas → Webhook na Hotmart.",
+    "Crie uma configuração na versão 2.0.0.",
+    "Selecione somente os produtos vinculados acima.",
+    "Marque compra aprovada, completa, reembolso, chargeback, recusa, boleto e abandono.",
+    "Cole a URL persistida abaixo.",
+    "Envie um evento de teste e acompanhe a Saúde do funil.",
+  ];
+  return (
+    <div className="mb-4">
+      <p className="text-sm font-semibold">Ativar vendas novas da Hotmart</p>
+      <ol className="mt-3 space-y-2">
+        {steps.map((step, index) => (
+          <li key={step} className="flex gap-3 text-sm text-muted-foreground">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-background text-xs font-semibold text-foreground">
+              {index + 1}
+            </span>
+            <span className="pt-0.5">{step}</span>
+          </li>
+        ))}
+      </ol>
+      <div
+        className={cn(
+          "mt-4 flex min-h-11 items-center gap-3 rounded-lg border px-3 text-sm",
+          lastEventAt
+            ? "border-green-500/25 bg-green-500/5 text-green-700"
+            : "border-blue-500/20 bg-blue-500/5 text-foreground",
+        )}
+        role="status"
+      >
+        {lastEventAt ? (
+          <CheckCircle2 className="h-4 w-4 shrink-0" />
+        ) : (
+          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-blue-600 motion-reduce:animate-none" />
+        )}
+        <span>
+          {lastEventAt
+            ? `Primeiro evento confirmado em ${format(
+                new Date(lastEventAt),
+                "dd/MM/yyyy 'às' HH:mm",
+                { locale: ptBR },
+              )}`
+            : "Aguardando o evento de teste da Hotmart"}
+        </span>
+      </div>
+    </div>
   );
 }
 
@@ -816,4 +1099,20 @@ function InlineError({
       )}
     </div>
   );
+}
+
+function checkoutProductFingerprint(value: CheckoutProductBinding[]) {
+  return [...value]
+    .sort((left, right) => left.product_id.localeCompare(right.product_id))
+    .map(
+      (item) =>
+        `${item.product_id}:${item.offer_id ?? "*"}:${item.role}`,
+    )
+    .join("|");
+}
+
+function providerName(provider: WorkspaceCheckoutIntegrationSafeRow["provider"]) {
+  if (provider === "hotmart") return "Hotmart";
+  if (provider === "hubla") return "Hubla";
+  return "Kiwify";
 }

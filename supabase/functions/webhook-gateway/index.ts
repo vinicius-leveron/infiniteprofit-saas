@@ -12,7 +12,7 @@ import {
   isGatewayProvider,
 } from "../gateway-queue/core.ts";
 import { buildAggregateJobInput } from "../sync-jobs/core.ts";
-import { normalizeEvent } from "./core.ts";
+import { normalizeEvent, validateHotmartHottok } from "./core.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -23,6 +23,8 @@ const corsHeaders = {
 const HUBLA_RULESET_VERSION = "hubla-subtotal-without-installment-fee-v1";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+type SupabaseClientAny = ReturnType<typeof createClient<any, "public", any>>;
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -121,7 +123,7 @@ Deno.serve(async (req) => {
     const sb = createClient(SUPABASE_URL, SERVICE_KEY);
     let { data: binding, error: bindingError } = await sb
       .from("project_checkout_bindings")
-      .select("project_id, webhook_token, enabled")
+      .select("project_id, webhook_token, enabled, checkout_integration_id")
       .eq("webhook_token", token)
       .maybeSingle();
 
@@ -134,7 +136,7 @@ Deno.serve(async (req) => {
       await wait(250);
       ({ data: binding, error: bindingError } = await sb
         .from("project_checkout_bindings")
-        .select("project_id, webhook_token, enabled")
+        .select("project_id, webhook_token, enabled, checkout_integration_id")
         .eq("webhook_token", token)
         .maybeSingle());
     }
@@ -172,33 +174,31 @@ Deno.serve(async (req) => {
       return json({ error: "project not found" }, 404);
     }
 
-    let { data: integration, error: integrationError } = await sb
-      .from("workspace_integrations")
-      .select("workspace_id, gateway_provider, gateway_webhook_secret")
-      .eq("workspace_id", project.workspace_id)
-      .maybeSingle();
-
-    if (integrationError) {
-      console.error("webhook-gateway integration lookup failed", safeLookupError(integrationError, provider));
-      await wait(250);
-      ({ data: integration, error: integrationError } = await sb
-        .from("workspace_integrations")
-        .select("workspace_id, gateway_provider, gateway_webhook_secret")
-        .eq("workspace_id", project.workspace_id)
-        .maybeSingle());
-    }
-    if (integrationError) {
-      console.error("webhook-gateway integration lookup retry failed", safeLookupError(integrationError, provider));
+    const integrationLookup = await loadCheckoutIntegration(sb, {
+      integrationId: binding.checkout_integration_id,
+      workspaceId: project.workspace_id,
+    });
+    if (integrationLookup.error) {
+      console.error(
+        "webhook-gateway integration lookup failed",
+        safeLookupError(integrationLookup.error, provider),
+      );
       return json({ error: "temporary integration lookup failure", retryable: true }, 503);
     }
-    if (!integration) {
-      return json({ error: "workspace integration not found" }, 404);
+    if (!integrationLookup.integration) {
+      return json({ error: "checkout integration not found" }, 404);
     }
-    if (!integration.gateway_webhook_secret) {
+    if (!integrationLookup.secret) {
       return json({ error: "gateway secret not configured" }, 401);
     }
-    if (integration.gateway_provider && integration.gateway_provider !== provider) {
-      return json({ error: `workspace configured for ${integration.gateway_provider}, not ${provider}` }, 400);
+    if (
+      integrationLookup.integration.provider
+      && integrationLookup.integration.provider !== provider
+    ) {
+      return json({
+        error:
+          `checkout configured for ${integrationLookup.integration.provider}, not ${provider}`,
+      }, 400);
     }
 
     const rawBody = await req.text();
@@ -206,7 +206,7 @@ Deno.serve(async (req) => {
       provider,
       req.headers,
       rawBody,
-      integration.gateway_webhook_secret,
+      integrationLookup.secret,
     );
     if (!valid) {
       return json({ error: "invalid signature" }, 401);
@@ -219,7 +219,14 @@ Deno.serve(async (req) => {
       return json({ error: "invalid json" }, 400);
     }
 
-    const events = normalizeEvent(provider, payload);
+    const hotmartContext = provider === "hotmart"
+      ? await loadHotmartNormalizationContext(
+        sb,
+        project.id,
+        Boolean(binding.checkout_integration_id),
+      )
+      : undefined;
+    const events = normalizeEvent(provider, payload, hotmartContext);
     if (events.length === 0) {
       console.warn("webhook-gateway ignored event", {
         provider,
@@ -231,6 +238,7 @@ Deno.serve(async (req) => {
 
     const runId = await createSyncRun(sb, project.workspace_id, project.id);
     const datesTouched = new Set<string>();
+    const hotmartEnrichmentDates = new Set<string>();
     let inserted = 0;
 
     try {
@@ -256,6 +264,14 @@ Deno.serve(async (req) => {
 
         inserted++;
         datesTouched.add(event.event_date);
+        if (
+          provider === "hotmart"
+          && binding.checkout_integration_id
+          && event.payload?.exclusion_reason
+            === "financial_enrichment_required"
+        ) {
+          hotmartEnrichmentDates.add(event.event_date);
+        }
 
         if (event.event_type === "purchase.approved" && Array.isArray(event.payload.items)) {
           for (const item of event.payload.items) {
@@ -285,10 +301,56 @@ Deno.serve(async (req) => {
         .update({ gateway_last_event_at: syncedAt })
         .eq("workspace_id", project.workspace_id);
 
+      if (binding.checkout_integration_id) {
+        await sb
+          .from("workspace_checkout_integrations")
+          .update({
+            last_event_at: syncedAt,
+            status: "connected",
+            last_error_code: null,
+            last_error_message: null,
+          })
+          .eq("id", binding.checkout_integration_id);
+      }
+
       await sb
         .from("projects")
         .update({ last_synced_at: syncedAt })
         .eq("id", project.id);
+
+      for (const date of hotmartEnrichmentDates) {
+        try {
+          await enqueueSyncJob(sb, {
+            workspaceId: project.workspace_id,
+            projectId: project.id,
+            source: "gateway",
+            entityType: "hotmart_sales_backfill",
+            entityId: binding.checkout_integration_id,
+            dateStart: date,
+            dateEnd: date,
+            priority: 0,
+            maxAttempts: 8,
+            payload: {
+              integration_id: binding.checkout_integration_id,
+              reason: "financial_enrichment_required",
+            },
+          }, {
+            requeueSucceededAfterMinutes: 0,
+            reviveDeadLetter: true,
+          });
+        } catch (enrichmentError) {
+          console.error(JSON.stringify({
+            event: "hotmart_enrichment_enqueue_failed",
+            trace_id: traceId,
+            project_id: project.id,
+            event_date: date,
+            error:
+              enrichmentError instanceof Error
+                ? enrichmentError.message
+                : "Falha ao enfileirar enriquecimento Hotmart",
+          }));
+        }
+      }
 
       if (datesTouched.size > 0) {
         const aggregateJob = buildAggregateJobInput({
@@ -363,7 +425,7 @@ Deno.serve(async (req) => {
 });
 
 async function createSyncRun(
-  sb: ReturnType<typeof createClient>,
+  sb: SupabaseClientAny,
   workspaceId: string,
   projectId: string,
 ) {
@@ -384,7 +446,7 @@ async function createSyncRun(
 }
 
 async function finishSyncRun(
-  sb: ReturnType<typeof createClient>,
+  sb: SupabaseClientAny,
   runId: string | undefined,
   args: {
     status: "succeeded" | "failed";
@@ -442,6 +504,131 @@ function hublaDiagnosticValue(provider: string, payload: unknown, field: "event_
   return values.find((value) => typeof value === "string" && value.trim()) ?? null;
 }
 
+async function loadCheckoutIntegration(
+  sb: SupabaseClientAny,
+  args: { integrationId?: string | null; workspaceId: string },
+): Promise<{
+  integration: { id: string | null; provider: string | null } | null;
+  secret: string | null;
+  error: any;
+}> {
+  if (args.integrationId) {
+    const { data: integration, error } = await sb
+      .from("workspace_checkout_integrations")
+      .select("id, workspace_id, provider, status")
+      .eq("id", args.integrationId)
+      .eq("workspace_id", args.workspaceId)
+      .eq("status", "connected")
+      .maybeSingle();
+    if (error) return { integration: null, secret: null, error };
+    if (!integration) return { integration: null, secret: null, error: null };
+
+    const { data: secret, error: secretError } = await sb.rpc(
+      "read_checkout_integration_secret",
+      {
+        _integration_id: integration.id,
+        _kind: "webhook",
+      },
+    );
+    return {
+      integration: {
+        id: integration.id,
+        provider: String(integration.provider),
+      },
+      secret: typeof secret === "string" ? secret : null,
+      error: secretError,
+    };
+  }
+
+  // Dual-read fallback for bindings created before the expanded checkout
+  // catalog migration.
+  const { data: integration, error } = await sb
+    .from("workspace_integrations")
+    .select("workspace_id, gateway_provider, gateway_webhook_secret")
+    .eq("workspace_id", args.workspaceId)
+    .maybeSingle();
+  return {
+    integration: integration
+      ? {
+        id: null,
+        provider: integration.gateway_provider
+          ? String(integration.gateway_provider)
+          : null,
+      }
+      : null,
+    secret: integration?.gateway_webhook_secret ?? null,
+    error,
+  };
+}
+
+async function loadHotmartNormalizationContext(
+  sb: SupabaseClientAny,
+  projectId: string,
+  requireProductBinding: boolean,
+) {
+  const { data: bindings, error } = await sb
+    .from("project_checkout_products")
+    .select("checkout_product_id, checkout_offer_id, role")
+    .eq("project_id", projectId);
+  if (error) throw new Error(error.message);
+
+  const productIds = [...new Set(
+    (bindings ?? []).map((row) => row.checkout_product_id).filter(Boolean),
+  )];
+  const offerIds = [...new Set(
+    (bindings ?? []).map((row) => row.checkout_offer_id).filter(Boolean),
+  )];
+  const [{ data: products, error: productError }, { data: offers, error: offerError }] =
+    await Promise.all([
+      productIds.length > 0
+        ? sb
+          .from("workspace_checkout_products")
+          .select("id, provider_product_id, product_ucode")
+          .in("id", productIds)
+        : Promise.resolve({ data: [], error: null }),
+      offerIds.length > 0
+        ? sb
+          .from("workspace_checkout_offers")
+          .select("id, provider_offer_code")
+          .in("id", offerIds)
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+  if (productError) throw new Error(productError.message);
+  if (offerError) throw new Error(offerError.message);
+
+  const productById = new Map(
+    (products ?? []).map((product) => [product.id, product]),
+  );
+  const offerById = new Map(
+    (offers ?? []).map((offer) => [offer.id, offer]),
+  );
+  const productRoles: Record<string, "front" | "order_bump" | "upsell"> = {};
+  const offerRoles: Record<string, "front" | "order_bump" | "upsell"> = {};
+  for (const binding of bindings ?? []) {
+    const role = binding.role as "front" | "order_bump" | "upsell";
+    const product = productById.get(binding.checkout_product_id);
+    if (product?.provider_product_id) {
+      productRoles[String(product.provider_product_id)] = role;
+    }
+    if (product?.product_ucode) {
+      productRoles[String(product.product_ucode)] = role;
+    }
+    const offer = binding.checkout_offer_id
+      ? offerById.get(binding.checkout_offer_id)
+      : null;
+    if (offer?.provider_offer_code) {
+      offerRoles[String(offer.provider_offer_code)] = role;
+    }
+  }
+
+  return {
+    productRoles,
+    offerRoles,
+    requireProductBinding,
+    source: "webhook" as const,
+  };
+}
+
 async function validateSignature(
   provider: string,
   headers: Headers,
@@ -449,8 +636,10 @@ async function validateSignature(
   secret: string,
 ) {
   if (provider === "hotmart") {
-    const token = headers.get("x-hotmart-hottok") ?? "";
-    return safeEqual(token, secret);
+    return validateHotmartHottok(
+      headers.get("x-hotmart-hottok"),
+      secret,
+    );
   }
 
   if (provider === "hubla") {

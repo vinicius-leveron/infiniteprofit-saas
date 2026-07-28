@@ -43,6 +43,7 @@ export interface ActivationExperience {
   hasTrustedSignal: boolean;
   hasDataSignal: boolean;
   progress: number;
+  progressLabel?: string;
   headline: string;
   description: string;
 }

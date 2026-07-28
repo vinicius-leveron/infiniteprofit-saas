@@ -53,6 +53,12 @@ verify_jwt = false
 [functions.hubla-csv-import]
 verify_jwt = true
 
+[functions.hotmart-auth]
+verify_jwt = true
+
+[functions.hotmart-sync]
+verify_jwt = false
+
 [functions.vturb-test]
 verify_jwt = true
 
