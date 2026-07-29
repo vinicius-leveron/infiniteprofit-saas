@@ -15,8 +15,8 @@ services:
         value: "false"
       - key: VITE_ENABLE_PUBLIC_SIGNUP
         value: "false"
-      - key: VITE_ENABLE_HOTMART_CHECKOUT
-        value: "true"
+      - key: VITE_DISABLE_HOTMART_CHECKOUT
+        value: "false"
       - key: VITE_HOTMART_CANARY_WORKSPACE_IDS
         value: ""
       - key: VITE_APP_PUBLIC_URL
