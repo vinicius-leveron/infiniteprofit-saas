@@ -1,5 +1,7 @@
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const AUTOMATION_KEY = Deno.env.get("AUTOMATION_KEY")?.trim() || null;
+const RELEASE_AUTOMATION_KEY =
+  Deno.env.get("RELEASE_AUTOMATION_KEY")?.trim() || null;
 
 export function isAutomationRequest(req: Request) {
   const apiKey = req.headers.get("apikey")?.trim() || null;
@@ -8,6 +10,16 @@ export function isAutomationRequest(req: Request) {
   // The service-role credential is the root backend identity and is used by
   // release/recovery jobs running in an ephemeral, masked CI environment.
   if (authHeader === `Bearer ${SERVICE_KEY}`) {
+    return true;
+  }
+
+  if (
+    RELEASE_AUTOMATION_KEY &&
+    (
+      apiKey === RELEASE_AUTOMATION_KEY ||
+      authHeader === `Bearer ${RELEASE_AUTOMATION_KEY}`
+    )
+  ) {
     return true;
   }
 
