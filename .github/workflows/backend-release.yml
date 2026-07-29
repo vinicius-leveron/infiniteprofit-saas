@@ -25,6 +25,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production
+    defaults:
+      run:
+        shell: bash --noprofile --norc -eo pipefail {0}
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
@@ -46,6 +49,7 @@ jobs:
           test "${{ inputs.confirm_project_ref }}" = "$SUPABASE_PROJECT_REF" || (echo "Production project confirmation does not match" && exit 1)
           test -n "$SUPABASE_ACCESS_TOKEN" || (echo "SUPABASE_ACCESS_TOKEN secret is required" && exit 1)
           test -n "$SUPABASE_DB_PASSWORD" || (echo "SUPABASE_DB_PASSWORD secret is required" && exit 1)
+          test -n "${{ secrets.RELEASE_AUTOMATION_KEY }}" || (echo "RELEASE_AUTOMATION_KEY secret is required" && exit 1)
           test -n "$APP_PUBLIC_URL" || (echo "APP_PUBLIC_URL variable is required" && exit 1)
           case "${{ inputs.canary_project_id }}" in
             ????????-????-????-????-????????????) ;;
@@ -136,6 +140,7 @@ jobs:
       - name: Backfill and reconcile internal canary
         env:
           FEEDBACK_METRICS_BACKFILL_ACK: ${{ inputs.confirm_project_ref }}
+          AUTOMATION_KEY: ${{ secrets.RELEASE_AUTOMATION_KEY }}
         run: |
           npm run ops:backfill-feedback-metrics -- \
             --project="${{ inputs.canary_project_id }}" \
