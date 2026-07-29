@@ -3,6 +3,7 @@ import { useNavigate, useOutletContext, useSearchParams } from "react-router-dom
 import { format, formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { HublaImportDialog } from "@/components/hubla/HublaImportDialog";
+import { HotmartImportDialog } from "@/components/checkout/HotmartImportDialog";
 import { OverviewPanel } from "@/components/OverviewPanel";
 import { TrafficPanel } from "@/components/TrafficPanel";
 import { FunnelPanel } from "@/components/FunnelPanel";
@@ -39,8 +40,10 @@ import {
   type DashboardAttributionCoverage,
 } from "@/lib/dashboardDimensions";
 import {
+  getFunnelCheckoutBindingSafe,
   getProjectSyncSettingsSafe,
   listSourceHealthSignals,
+  type CheckoutProvider,
   type SourceHealthSignalRow,
 } from "@/lib/operationalReadApi";
 
@@ -110,6 +113,8 @@ const Index = () => {
     useState<SourceHealthSignalRow | null>(null);
   const [syncingNow, setSyncingNow] = useState(false);
   const [projectSource, setProjectSource] = useState<"csv" | "sheet" | "api">("csv");
+  const [checkoutProvider, setCheckoutProvider] =
+    useState<CheckoutProvider | null>(null);
   const [rawApiRows, setRawApiRows] = useState<DailyRow[]>([]);
   const [mediaFilters, setMediaFilters] = useState<DashboardFilterState>({
     accountIds: [],
@@ -262,7 +267,12 @@ const Index = () => {
         setLastSyncedAt(data.last_synced_at ?? null);
 
         if (src === "api") {
-          const [{ data: metrics }, { data: bindings }, sourceSignals] =
+          const [
+            { data: metrics },
+            { data: bindings },
+            sourceSignals,
+            checkoutBinding,
+          ] =
             await Promise.all([
             supabase
               .from("daily_metrics")
@@ -274,7 +284,11 @@ const Index = () => {
               .select("meta_account_id")
               .eq("project_id", data.id),
             listSourceHealthSignals(data.workspace_id),
+            isWorkspaceAdmin
+              ? getFunnelCheckoutBindingSafe(data.id).catch(() => null)
+              : Promise.resolve(null),
           ]);
+          setCheckoutProvider(checkoutBinding?.provider ?? null);
           const metaSignal =
             sourceSignals.find(
               (signal) =>
@@ -294,11 +308,13 @@ const Index = () => {
           setRows(apiRows);
           setCsvText("");
         } else if (data.csv_content) {
+          setCheckoutProvider(null);
           setMetaSourceSignal(null);
           const parsed = parseCsv(data.csv_content);
           setRows(parsed.rows);
           setCsvText(data.csv_content);
         } else {
+          setCheckoutProvider(null);
           setMetaSourceSignal(null);
           setRows([]);
           setCsvText("");
@@ -750,7 +766,9 @@ const Index = () => {
             </h3>
             <p className="mx-auto mt-2 max-w-lg text-sm leading-5 text-muted-foreground">
               {isWorkspaceAdmin
-                ? "Conecte uma fonte, importe o histórico da Hubla ou revise a saúde do funil. Assim que houver um sinal confiável, o dashboard será preenchido automaticamente."
+                ? `Conecte uma fonte, importe o histórico ${
+                  checkoutProvider === "hotmart" ? "da Hotmart" : "da Hubla"
+                } ou revise a saúde do funil. Assim que houver um sinal confiável, o dashboard será preenchido automaticamente.`
                 : "Um administrador ainda está conectando as fontes deste funil. Você pode acompanhar o status permitido sem acessar credenciais ou ações operacionais."}
             </p>
             <div className="mt-6 flex flex-wrap justify-center gap-2">
@@ -763,10 +781,17 @@ const Index = () => {
                     <Settings2 className="h-4 w-4" />
                     Conectar fonte
                   </Button>
-                  <HublaImportDialog
-                    projectId={currentProjectId}
-                    onImported={() => reloadProject()}
-                  />
+                  {checkoutProvider === "hotmart" ? (
+                    <HotmartImportDialog
+                      projectId={currentProjectId}
+                      onImported={() => reloadProject()}
+                    />
+                  ) : (
+                    <HublaImportDialog
+                      projectId={currentProjectId}
+                      onImported={() => reloadProject()}
+                    />
+                  )}
                 </>
               )}
               <Button

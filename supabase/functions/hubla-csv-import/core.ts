@@ -1,4 +1,8 @@
-import { normalizeEvent, type NormalizedEvent } from "../webhook-gateway/core.ts";
+import {
+  normalizeEvent,
+  type CheckoutProductRole,
+  type NormalizedEvent,
+} from "../webhook-gateway/core.ts";
 
 export type HublaCsvEvent = NormalizedEvent & { line: number };
 
@@ -7,6 +11,22 @@ export type HublaCsvParseResult = {
   warnings: string[];
   dataRows: number;
   headers: string[];
+};
+
+export type HotmartCsvEvent = NormalizedEvent & { line: number };
+
+export type HotmartCsvParseContext = {
+  productRoles: Record<string, CheckoutProductRole>;
+  offerRoles: Record<string, CheckoutProductRole>;
+};
+
+export type HotmartCsvParseResult = {
+  events: HotmartCsvEvent[];
+  warnings: string[];
+  dataRows: number;
+  headers: string[];
+  imported: number;
+  excluded: number;
 };
 
 export type DailyMetricsCsvOverride = {
@@ -54,6 +74,369 @@ export function parseHublaCsv(csv: string): HublaCsvParseResult {
   }
 
   return { events, warnings, dataRows: dataRows.length, headers };
+}
+
+export function parseHotmartCsv(
+  csv: string,
+  context: HotmartCsvParseContext,
+): HotmartCsvParseResult {
+  const rows = parseCsv(csv);
+  if (rows.length < 2) {
+    throw new Error("Planilha Hotmart sem linhas de venda");
+  }
+
+  const headers = rows[0].map(normalizeHeader);
+  assertHotmartHeaders(headers);
+  const dataRows = rows.slice(1).filter((row) => row.some((cell) => cell.trim()));
+  const warnings: string[] = [];
+  const eventByKey = new Map<string, HotmartCsvEvent>();
+
+  for (const [index, row] of dataRows.entries()) {
+    const line = index + 2;
+    const converted = rowToHotmartRaw(headers, row, line, context);
+    if (!converted.raw) {
+      warnings.push(converted.warning);
+      continue;
+    }
+
+    const normalized = normalizeEvent("hotmart", converted.raw, {
+      productRoles: context.productRoles,
+      offerRoles: context.offerRoles,
+      requireProductBinding: true,
+      source: "spreadsheet",
+    });
+    if (normalized.length === 0) {
+      warnings.push(
+        `Linha ${line}: status ou valores da Hotmart não reconhecidos`,
+      );
+      continue;
+    }
+
+    for (const event of normalized) {
+      const payload = {
+        ...event.payload,
+        transaction_id:
+          event.event_type === "purchase.approved" && converted.parentTransaction
+            ? converted.parentTransaction
+            : event.payload?.transaction_id || converted.transaction,
+        parent_transaction_id: converted.parentTransaction || null,
+        spreadsheet_sale_tool: converted.saleTool || null,
+      };
+
+      if (converted.roleMismatch) {
+        payload.metrics_ready = false;
+        payload.exclusion_reason = "product_role_mismatch";
+        warnings.push(
+          `Linha ${line}: o papel de “${converted.productName}” na planilha não `
+          + "confere com o vínculo do funil; a linha foi preservada sem afetar métricas",
+        );
+      } else if (
+        event.payload?.product_role !== "front"
+        && !converted.parentTransaction
+      ) {
+        payload.metrics_ready = false;
+        payload.exclusion_reason = "missing_parent_transaction";
+        warnings.push(
+          `Linha ${line}: oferta sem “Transação do Produto Principal”; `
+          + "a linha foi preservada sem afetar métricas",
+        );
+      }
+
+      if (payload.metrics_ready === false) {
+        const reason = String(payload.exclusion_reason ?? "");
+        if (reason === "unbound_product") {
+          warnings.push(
+            `Linha ${line}: produto “${converted.productName}” não está vinculado `
+            + "a este funil e não entrará nas métricas",
+          );
+        } else if (reason === "unsupported_currency") {
+          warnings.push(
+            `Linha ${line}: moeda sem conversão autoritativa para BRL; `
+            + "a venda foi preservada sem entrar no financeiro",
+          );
+        }
+      }
+
+      const importedEvent: HotmartCsvEvent = {
+        ...event,
+        payload,
+        line,
+      };
+      const key = `${event.event_type}:${event.external_id}`;
+      if (eventByKey.has(key)) {
+        warnings.push(
+          `Linha ${line}: transação duplicada no arquivo; mantida somente uma ocorrência`,
+        );
+      }
+      eventByKey.set(key, importedEvent);
+    }
+  }
+
+  const events = [...eventByKey.values()];
+  const imported = events.filter(
+    (event) => event.payload?.metrics_ready !== false,
+  ).length;
+  return {
+    events,
+    warnings: uniqueStrings(warnings),
+    dataRows: dataRows.length,
+    headers,
+    imported,
+    excluded: events.length - imported,
+  };
+}
+
+type HotmartRowConversion =
+  | {
+    raw: Record<string, unknown>;
+    line: number;
+    transaction: string;
+    parentTransaction: string;
+    productName: string;
+    saleTool: string;
+    roleMismatch: boolean;
+  }
+  | {
+    raw: null;
+    line: number;
+    warning: string;
+  };
+
+function rowToHotmartRaw(
+  headers: string[],
+  row: string[],
+  line: number,
+  context: HotmartCsvParseContext,
+): HotmartRowConversion {
+  const record = new Map(headers.map((header, index) => [
+    header,
+    cleanSpreadsheetValue(row[index]),
+  ]));
+  const get = (...keys: string[]) => {
+    for (const key of keys) {
+      const value = record.get(key);
+      if (value) return value;
+    }
+    return "";
+  };
+
+  const transaction = get("codigo_da_transacao", "transacao");
+  if (!transaction) {
+    return { raw: null, line, warning: `Linha ${line}: código da transação ausente` };
+  }
+  const event = hotmartSpreadsheetEvent(get("status_da_transacao", "status"));
+  if (!event) {
+    return {
+      raw: null,
+      line,
+      warning: `Linha ${line}: status Hotmart não reconhecido`,
+    };
+  }
+
+  const productId = get("codigo_do_produto", "produto_id");
+  const productName = get("produto", "nome_do_produto") || productId;
+  if (!productId) {
+    return { raw: null, line, warning: `Linha ${line}: código do produto ausente` };
+  }
+
+  const occurredAt = parseDateStrict(
+    event === "PURCHASE_APPROVED" || event === "PURCHASE_COMPLETE"
+      ? get("confirmacao_do_pagamento", "data_da_transacao")
+      : get("data_da_transacao", "confirmacao_do_pagamento"),
+  );
+  if (!occurredAt) {
+    return { raw: null, line, warning: `Linha ${line}: data da transação inválida` };
+  }
+
+  const currency = get(
+    "moeda_de_recebimento",
+    "moeda_de_compra",
+  ).toUpperCase();
+  const gross = positiveMoney(get(
+    "faturamento_bruto_sem_impostos",
+    "valor_de_compra_sem_impostos",
+  ));
+  const producerNet = positiveMoney(get(
+    "faturamento_liquido_do_a_produtor_a",
+    "faturamento_liquido",
+  ));
+  const affiliateNet = positiveMoney(get("comissao_do_a_afiliado_a"));
+  const coproducerNet = positiveMoney(get("faturamento_do_a_coprodutor_a"));
+  const payoutNet = roundMoney(producerNet + affiliateNet + coproducerNet);
+  const processingFee = positiveMoney(get("taxa_de_processamento"));
+  const streamingFee = positiveMoney(get("taxa_de_streaming"));
+  const otherFees = positiveMoney(get("outras_taxas"));
+  const serviceTax = positiveMoney(get("imposto_sobre_servico_hotmart"));
+  const platformFee = roundMoney(
+    processingFee + streamingFee + otherFees + serviceTax,
+  );
+  const fallbackNet = positiveMoney(get("faturamento_liquido"));
+  const canonicalNet = roundMoney(
+    payoutNet || fallbackNet || Math.max(0, gross - platformFee),
+  );
+
+  if (
+    (event === "PURCHASE_APPROVED" || event === "PURCHASE_COMPLETE")
+    && gross <= 0
+  ) {
+    return {
+      raw: null,
+      line,
+      warning: `Linha ${line}: faturamento bruto inválido`,
+    };
+  }
+
+  const offerCode = get("codigo_do_preco", "codigo_da_oferta");
+  const boundRole = context.offerRoles[offerCode]
+    ?? context.productRoles[productId]
+    ?? null;
+  const saleTool = get("ferramenta_de_venda");
+  const spreadsheetRole = hotmartSpreadsheetRole(saleTool);
+  const roleMismatch = Boolean(
+    boundRole && spreadsheetRole && boundRole !== spreadsheetRole,
+  );
+  const parentTransaction = get("transacao_do_produto_principal");
+  const src = get("codigo_src");
+  const sck = get("codigo_sck");
+
+  return {
+    line,
+    transaction,
+    parentTransaction,
+    productName,
+    saleTool,
+    roleMismatch,
+    raw: {
+      id: `spreadsheet-${transaction}-${event}`,
+      event,
+      creation_date: occurredAt,
+      data: {
+        product: {
+          id: productId,
+          name: productName,
+        },
+        purchase: {
+          transaction,
+          status: get("status_da_transacao", "status"),
+          order_date: parseDateStrict(get("data_da_transacao")) ?? occurredAt,
+          approved_date: parseDateStrict(
+            get("confirmacao_do_pagamento"),
+          ) ?? occurredAt,
+          full_price: {
+            value: gross,
+            currency_value: currency,
+          },
+          hotmart_fee: {
+            total: platformFee,
+            currency_value: currency,
+          },
+          offer: { code: offerCode },
+          payment: {
+            type: get("metodo_de_pagamento"),
+          },
+          refund_value: event === "PURCHASE_PARTIALLY_REFUNDED"
+            ? { value: gross, currency_value: currency }
+            : undefined,
+          origin: {
+            src,
+            sck,
+          },
+        },
+        commissions: canonicalNet > 0
+          ? [{
+            source: "PRODUCER",
+            commission: {
+              value: canonicalNet,
+              currency_value: currency,
+            },
+          }]
+          : [],
+      },
+    },
+  };
+}
+
+function assertHotmartHeaders(headers: string[]) {
+  const set = new Set(headers);
+  const required = [
+    ["codigo_da_transacao", "Código da transação"],
+    ["status_da_transacao", "Status da transação"],
+    ["data_da_transacao", "Data da transação"],
+    ["codigo_do_produto", "Código do produto"],
+    ["faturamento_bruto_sem_impostos", "Faturamento bruto (sem impostos)"],
+  ] as const;
+  const missing = required
+    .filter(([key]) => !set.has(key))
+    .map(([, label]) => label);
+  if (missing.length > 0) {
+    throw new Error(
+      `Planilha Hotmart inválida. Colunas ausentes: ${missing.join(", ")}`,
+    );
+  }
+}
+
+function hotmartSpreadsheetEvent(status: string) {
+  const value = normalizeHeader(status);
+  if (/(aprov|complet|conclu)/.test(value)) return "PURCHASE_APPROVED";
+  if (/reemb.*parcial|parcial.*reemb/.test(value)) {
+    return "PURCHASE_PARTIALLY_REFUNDED";
+  }
+  if (/(reemb|chargeback|estorn)/.test(value)) return "PURCHASE_REFUNDED";
+  if (/(cancel|recus|declin|expir|atras|protest)/.test(value)) {
+    return "PURCHASE_CANCELED";
+  }
+  if (/(boleto|pix_gerado|aguardando_pagamento|pendente)/.test(value)) {
+    return "PURCHASE_BILLET_PRINTED";
+  }
+  return "";
+}
+
+function hotmartSpreadsheetRole(value: string): CheckoutProductRole | null {
+  const normalized = normalizeHeader(value);
+  if (!normalized) return null;
+  if (normalized.includes("upsell")) return "upsell";
+  if (normalized.includes("order_bump") || normalized.includes("orderbump")) {
+    return "order_bump";
+  }
+  if (normalized.includes("principal") || normalized.includes("front")) {
+    return "front";
+  }
+  return null;
+}
+
+function cleanSpreadsheetValue(value: unknown) {
+  const text = String(value ?? "").trim();
+  if (!text || /^\((none|empty)\)$/i.test(text)) return "";
+  return text;
+}
+
+function positiveMoney(value: string) {
+  return Math.abs(parseMoney(value));
+}
+
+function roundMoney(value: number) {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function parseDateStrict(value: string) {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) return "";
+  const br =
+    /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/
+      .exec(trimmed);
+  if (br) {
+    const year = br[3].length === 2 ? `20${br[3]}` : br[3];
+    const hour = br[4]?.padStart(2, "0") ?? "12";
+    const minute = br[5] ?? "00";
+    const second = br[6] ?? "00";
+    return `${year}-${br[2].padStart(2, "0")}-${br[1].padStart(2, "0")}T${hour}:${minute}:${second}-03:00`;
+  }
+  const parsed = Date.parse(trimmed);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : "";
+}
+
+function uniqueStrings(values: string[]) {
+  return [...new Set(values)];
 }
 
 export function parseDailyMetricsCsv(csv: string): DailyMetricsCsvParseResult {

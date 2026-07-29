@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { HublaImportDialog } from "@/components/hubla/HublaImportDialog";
+import { HotmartImportDialog } from "@/components/checkout/HotmartImportDialog";
 import { HotmartProductBindings } from "@/components/checkout/HotmartProductBindings";
 import { HotmartBackfillDialog } from "@/components/checkout/HotmartBackfillDialog";
 import { Button } from "@/components/ui/button";
@@ -751,11 +752,17 @@ export default function Connections({ mode = "sources" }: { mode?: ConnectionsMo
                         </Button>
                         {project
                         && selectedCheckoutIntegration?.provider === "hotmart" ? (
-                          <HotmartBackfillDialog
-                            workspaceId={project.workspace_id}
-                            projectId={project.id}
-                            integrationId={selectedCheckoutIntegration.id}
-                          />
+                          <>
+                            <HotmartImportDialog
+                              projectId={project.id}
+                              onImported={() => load(false)}
+                            />
+                            <HotmartBackfillDialog
+                              workspaceId={project.workspace_id}
+                              projectId={project.id}
+                              integrationId={selectedCheckoutIntegration.id}
+                            />
+                          </>
                         ) : null}
                       </div>
                     </div>

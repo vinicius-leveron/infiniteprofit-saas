@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { HublaImportPicker } from "@/components/hubla/HublaImportPicker";
+import { HotmartImportPicker } from "@/components/checkout/HotmartImportPicker";
 import { HotmartProductBindings } from "@/components/checkout/HotmartProductBindings";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -47,6 +48,10 @@ import {
   runHublaImport,
   type PreparedHublaImport,
 } from "@/lib/hublaImport";
+import {
+  runHotmartImport,
+  type PreparedHotmartImport,
+} from "@/lib/hotmartImport";
 import {
   type CheckoutProductBinding,
   type WorkspaceCheckoutCatalogSafeRow,
@@ -158,6 +163,8 @@ export default function SetupOperation() {
   const [hotmartProducts, setHotmartProducts] = useState<
     CheckoutProductBinding[]
   >([]);
+  const [hotmartHistory, setHotmartHistory] =
+    useState<PreparedHotmartImport | null>(null);
   const [hotmartClientId, setHotmartClientId] = useState("");
   const [hotmartClientSecret, setHotmartClientSecret] = useState("");
   const [hotmartBasicToken, setHotmartBasicToken] = useState("");
@@ -261,6 +268,7 @@ export default function SetupOperation() {
     }
     setHublaSecret("");
     setHublaHistory(null);
+    setHotmartHistory(null);
     resumeSource("gateway");
     setHotmartWorking(true);
     setHotmartWorkingStage("authorizing");
@@ -871,6 +879,32 @@ export default function SetupOperation() {
         }
         if (checkoutData?.ok === false) throw new Error(checkoutData.error);
 
+        if (hotmartHistory) {
+          setSavingLabel("Validando sua planilha da Hotmart");
+          const preview = await runHotmartImport(
+            project.id,
+            hotmartHistory.csv,
+            true,
+          );
+          if (preview.imported === 0) {
+            throw new Error(
+              "A planilha Hotmart não contém vendas elegíveis para os produtos deste funil.",
+            );
+          }
+
+          setSavingLabel("Importando sua planilha da Hotmart");
+          const imported = await runHotmartImport(
+            project.id,
+            hotmartHistory.csv,
+            false,
+          );
+          if (imported.imported === 0) {
+            throw new Error(
+              "A planilha Hotmart não gerou vendas para este funil.",
+            );
+          }
+        }
+
         setSavingLabel("Importando 90 dias da Hotmart");
         const { data: backfillData, error: backfillError } =
           await supabase.functions.invoke("hotmart-sync", {
@@ -954,7 +988,9 @@ export default function SetupOperation() {
             source,
             method:
               source === "gateway" && hotmartStatus === "configured"
-                ? "hotmart_api"
+                ? hotmartHistory
+                  ? "hotmart_spreadsheet_and_api"
+                  : "hotmart_api"
                 : source === "gateway" && hublaHistory
                   ? "hubla_history"
                   : "credential",
@@ -970,6 +1006,7 @@ export default function SetupOperation() {
           source_count: configuredSources.length,
           has_hubla_history: Boolean(hublaHistory),
           has_hotmart_backfill: hotmartStatus === "configured",
+          has_hotmart_spreadsheet: Boolean(hotmartHistory),
           setup_session_id: setupSessionId.current,
         },
       });
@@ -1528,6 +1565,7 @@ export default function SetupOperation() {
                     resumeSource("gateway");
                     setHublaSecret("");
                     setHublaHistory(null);
+                    setHotmartHistory(null);
                     setHotmartIntegrationId(value);
                     setHotmartProducts([]);
                     setShowHotmartCredentials(false);
@@ -1742,6 +1780,27 @@ export default function SetupOperation() {
                     </p>
                   </div>
                 )}
+
+                {hotmartProducts.some((item) => item.role === "front") ? (
+                  <div className="rounded-xl border border-primary/20 bg-primary/[0.03] p-4">
+                    <div className="mb-3">
+                      <p className="text-sm font-medium">
+                        Planilha de vendas anteriores — opcional
+                      </p>
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                        Se você já exportou o relatório de vendas da Hotmart,
+                        importe agora para abrir o primeiro dashboard enquanto
+                        o backfill da API é processado.
+                      </p>
+                    </div>
+                    <HotmartImportPicker
+                      value={hotmartHistory}
+                      onChange={setHotmartHistory}
+                      disabled={saving || hotmartWorking}
+                      compact
+                    />
+                  </div>
+                ) : null}
               </>
             ) : null}
 
