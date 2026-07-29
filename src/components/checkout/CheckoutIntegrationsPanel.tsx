@@ -505,7 +505,6 @@ export function CheckoutIntegrationsPanel({
                     {hotmartEnabled ? (
                       <SelectItem value="hotmart">Hotmart</SelectItem>
                     ) : null}
-                    <SelectItem value="kiwify">Kiwify</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

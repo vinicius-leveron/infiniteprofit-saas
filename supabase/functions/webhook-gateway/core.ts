@@ -21,7 +21,7 @@ export type HotmartNormalizationContext = {
   offerRoles?: Record<string, CheckoutProductRole>;
   requireProductBinding?: boolean;
   priceDetail?: Record<string, any> | null;
-  source?: "webhook" | "api";
+  source?: "webhook" | "api" | "spreadsheet";
 };
 
 type MoneyPath = {

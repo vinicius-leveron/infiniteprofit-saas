@@ -1,7 +1,12 @@
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { buildAutomationHeaders } from "../_shared/automation.ts";
-import { parseDailyMetricsCsv, parseHublaCsv } from "./core.ts";
+import {
+  parseDailyMetricsCsv,
+  parseHotmartCsv,
+  parseHublaCsv,
+} from "./core.ts";
+import type { CheckoutProductRole } from "../webhook-gateway/core.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -11,6 +16,7 @@ const corsHeaders = {
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
+const MAX_IMPORT_BYTES = 8 * 1024 * 1024;
 
 type ProjectContext = {
   id: string;
@@ -32,13 +38,117 @@ Deno.serve(async (req) => {
     const projectId = stringOrNull(body.project_id ?? body.projectId);
     const csv = String(body.csv ?? "").trim();
     const dryRun = Boolean(body.dry_run ?? body.dryRun);
+    const provider = String(body.provider ?? "hubla").trim().toLowerCase();
 
     if (!projectId) return json({ error: "project_id é obrigatório" }, 400);
     if (!csv) return json({ error: "csv é obrigatório" }, 400);
+    if (new TextEncoder().encode(csv).byteLength > MAX_IMPORT_BYTES) {
+      return json({ error: "A planilha excede o limite de 8 MB" }, 413);
+    }
+    if (provider !== "hubla" && provider !== "hotmart") {
+      return json({ error: "provider deve ser hubla ou hotmart" }, 400);
+    }
 
     const sb = createClient(SUPABASE_URL, SERVICE_KEY);
     const project = await getProjectOrThrow(sb, projectId);
     await assertWorkspaceAdmin(sb, project.workspace_id, user.id);
+
+    if (provider === "hotmart") {
+      const context = await loadHotmartImportContext(sb, project);
+      let parsed: ReturnType<typeof parseHotmartCsv>;
+      try {
+        parsed = parseHotmartCsv(csv, {
+          productRoles: context.productRoles,
+          offerRoles: context.offerRoles,
+        });
+      } catch (error) {
+        return json({
+          error: error instanceof Error
+            ? error.message
+            : "Planilha Hotmart inválida",
+        }, 400);
+      }
+
+      const { events, warnings, dataRows, headers, imported, excluded } = parsed;
+      if (events.length === 0) {
+        return json({
+          ok: true,
+          kind: "hotmart_sales_export",
+          dry_run: dryRun,
+          imported: 0,
+          excluded: 0,
+          skipped: dataRows,
+          headers,
+          warnings: warnings.slice(0, 50),
+          dates: [],
+        });
+      }
+
+      const datesTouched = [...new Set(
+        events.map((event) => event.event_date),
+      )].sort();
+      if (!dryRun) {
+        const importedAt = new Date().toISOString();
+        const payload = events.map((event) => ({
+          project_id: project.id,
+          workspace_id: project.workspace_id,
+          user_id: project.user_id,
+          source: "gateway",
+          event_type: event.event_type,
+          event_date: event.event_date,
+          event_occurred_at: event.event_occurred_at,
+          external_id: event.external_id,
+          account_id: `hotmart:${context.integrationId}`,
+          payload: {
+            ...event.payload,
+            import_source: "hotmart_spreadsheet",
+            import_line: event.line,
+            imported_at: importedAt,
+          },
+        }));
+
+        const { error } = await sb
+          .from("raw_events")
+          .upsert(payload, {
+            onConflict: "project_id,source,event_type,external_id",
+          });
+        if (error) throw new Error(error.message);
+
+        const { error: integrationUpdateError } = await sb
+          .from("workspace_checkout_integrations")
+          .update({
+            last_backfill_at: importedAt,
+            last_error_code: null,
+            last_error_message: null,
+          })
+          .eq("id", context.integrationId);
+        if (integrationUpdateError) {
+          throw new Error(integrationUpdateError.message);
+        }
+
+        await triggerAggregateDaily(project.id, datesTouched);
+      }
+
+      return json({
+        ok: true,
+        kind: "hotmart_sales_export",
+        dry_run: dryRun,
+        imported,
+        excluded,
+        skipped: Math.max(0, dataRows - events.length),
+        headers,
+        dates: datesTouched,
+        warnings: warnings.slice(0, 50),
+        preview: events.slice(0, 5).map((event) => ({
+          line: event.line,
+          type: event.event_type,
+          date: event.event_date,
+          external_id: event.external_id,
+          total: event.payload.total,
+          metrics_ready: event.payload.metrics_ready !== false,
+        })),
+      });
+    }
 
     let parsedDailyMetrics: ReturnType<typeof parseDailyMetricsCsv>;
     try {
@@ -183,6 +293,105 @@ async function getProjectOrThrow(sb: ReturnType<typeof createClient>, projectId:
     .maybeSingle();
   if (error || !data?.workspace_id) throw new Error("Projeto não encontrado");
   return data as ProjectContext;
+}
+
+async function loadHotmartImportContext(
+  sb: ReturnType<typeof createClient>,
+  project: ProjectContext,
+) {
+  const { data: binding, error: bindingError } = await sb
+    .from("project_checkout_bindings")
+    .select("checkout_integration_id, enabled")
+    .eq("project_id", project.id)
+    .eq("enabled", true)
+    .maybeSingle();
+  if (bindingError) throw new Error(bindingError.message);
+  if (!binding?.checkout_integration_id) {
+    throw new Error(
+      "Vincule uma integração Hotmart a este funil antes de importar a planilha",
+    );
+  }
+  const { data: integration, error: integrationError } = await sb
+    .from("workspace_checkout_integrations")
+    .select("id")
+    .eq("id", binding.checkout_integration_id)
+    .eq("workspace_id", project.workspace_id)
+    .eq("provider", "hotmart")
+    .maybeSingle();
+  if (integrationError) throw new Error(integrationError.message);
+  if (!integration) {
+    throw new Error(
+      "A integração vinculada a este funil não é uma conta Hotmart válida",
+    );
+  }
+
+  const { data: productBindings, error: productBindingError } = await sb
+    .from("project_checkout_products")
+    .select("checkout_product_id, checkout_offer_id, role")
+    .eq("project_id", project.id);
+  if (productBindingError) throw new Error(productBindingError.message);
+
+  const productIds = (productBindings ?? []).map(
+    (item) => item.checkout_product_id,
+  );
+  const offerIds = (productBindings ?? [])
+    .map((item) => item.checkout_offer_id)
+    .filter(Boolean);
+  const [{ data: products, error: productError }, {
+    data: offers,
+    error: offerError,
+  }] = await Promise.all([
+    productIds.length > 0
+      ? sb
+        .from("workspace_checkout_products")
+        .select("id, provider_product_id, product_ucode")
+        .in("id", productIds)
+      : Promise.resolve({ data: [], error: null }),
+    offerIds.length > 0
+      ? sb
+        .from("workspace_checkout_offers")
+        .select("id, provider_offer_code")
+        .in("id", offerIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (productError) throw new Error(productError.message);
+  if (offerError) throw new Error(offerError.message);
+
+  const productById = new Map(
+    (products ?? []).map((item) => [item.id, item]),
+  );
+  const offerById = new Map(
+    (offers ?? []).map((item) => [item.id, item]),
+  );
+  const productRoles: Record<string, CheckoutProductRole> = {};
+  const offerRoles: Record<string, CheckoutProductRole> = {};
+  for (const bindingRow of productBindings ?? []) {
+    const role = bindingRow.role as CheckoutProductRole;
+    const product = productById.get(bindingRow.checkout_product_id);
+    if (product?.provider_product_id) {
+      productRoles[String(product.provider_product_id)] = role;
+    }
+    if (product?.product_ucode) {
+      productRoles[String(product.product_ucode)] = role;
+    }
+    const offer = bindingRow.checkout_offer_id
+      ? offerById.get(bindingRow.checkout_offer_id)
+      : null;
+    if (offer?.provider_offer_code) {
+      offerRoles[String(offer.provider_offer_code)] = role;
+    }
+  }
+  if (!Object.values(productRoles).includes("front")) {
+    throw new Error(
+      "Selecione exatamente um produto front da Hotmart antes da importação",
+    );
+  }
+
+  return {
+    integrationId: String(binding.checkout_integration_id),
+    productRoles,
+    offerRoles,
+  };
 }
 
 async function assertWorkspaceAdmin(

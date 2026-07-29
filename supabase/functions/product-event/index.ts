@@ -19,6 +19,8 @@ const EVENT_PROPERTIES: Record<string, Set<string>> = {
   funnel_created: new Set([
     "source_count",
     "has_hubla_history",
+    "has_hotmart_backfill",
+    "has_hotmart_spreadsheet",
     "setup_session_id",
   ]),
   activation_viewed: new Set(["state"]),
