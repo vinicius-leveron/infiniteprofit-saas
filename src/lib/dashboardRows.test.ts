@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DailyRow } from "./csv";
 import { getDashboardPeriodRows, getDashboardSelectedDateRange, hasDashboardSignal } from "./dashboardRows";
 
@@ -55,6 +55,9 @@ function row(day: string, patch: Partial<DailyRow>): DailyRow {
 }
 
 describe("dashboardRows", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
   it("keeps days with VTurb or Hubla signals even without spend or sales", () => {
     expect(hasDashboardSignal(row("2026-06-20", { pageviews: 10 }))).toBe(true);
     expect(hasDashboardSignal(row("2026-06-21", { checkouts: 2 }))).toBe(true);
@@ -70,9 +73,51 @@ describe("dashboardRows", () => {
       row("2026-06-22", { investimento: 909 }),
     ];
 
-    const { current } = getDashboardPeriodRows(rows, "30d");
+    const { current } = getDashboardPeriodRows(rows, "15d");
 
     expect(current.map((item) => item.data)).toEqual(["16/06/2026", "17/06/2026", "22/06/2026"]);
+  });
+
+  it("uses calendar boundaries for this month and last month", () => {
+    const now = new Date();
+    const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
+    const rows = [
+      row(localKey(lastMonthStart), { investimento: 1 }),
+      row(localKey(lastMonthEnd), { investimento: 1 }),
+      row(localKey(thisMonthStart), { investimento: 1 }),
+      row(localKey(now), { investimento: 1 }),
+    ];
+
+    expect(getDashboardPeriodRows(rows, "this_month").current).toHaveLength(2);
+    expect(getDashboardSelectedDateRange(rows, "last_month")).toEqual({
+      from: localKey(lastMonthStart),
+      to: localKey(lastMonthEnd),
+    });
+  });
+
+  it("uses America/Sao_Paulo at a year boundary", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2027-01-05T02:30:00.000Z"));
+    const rows = [
+      row("2026-12-01", { investimento: 1 }),
+      row("2026-12-31", { investimento: 1 }),
+      row("2027-01-01", { investimento: 1 }),
+      row("2027-01-04", { investimento: 1 }),
+      row("2027-01-05", { investimento: 1 }),
+    ];
+
+    expect(getDashboardSelectedDateRange(rows, "this_month")).toEqual({
+      from: "2027-01-01",
+      to: "2027-01-04",
+    });
+    expect(getDashboardPeriodRows(rows, "this_month").current.map((item) => item.data))
+      .toEqual(["01/01/2027", "04/01/2027"]);
+    expect(getDashboardSelectedDateRange(rows, "last_month")).toEqual({
+      from: "2026-12-01",
+      to: "2026-12-31",
+    });
   });
 
   it("filters custom dates using local yyyy-mm-dd keys to avoid timezone shifts", () => {
@@ -103,3 +148,8 @@ describe("dashboardRows", () => {
     expect(selectedRange).toEqual({ from: "2026-07-01", to: "2026-07-05" });
   });
 });
+
+function localKey(date: Date) {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}

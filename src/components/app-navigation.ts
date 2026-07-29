@@ -4,10 +4,8 @@ import {
   BarChart3,
   Building2,
   Cable,
-  FileText,
   Gift,
   HeartPulse,
-  Map,
   Megaphone,
   PlugZap,
   Radio,
@@ -26,8 +24,6 @@ export type DashboardTab =
   | "funil"
   | "bumps"
   | "anuncios"
-  | "atribuicao"
-  | "relatorio"
   | "diagnostico"
   | "simulador";
 
@@ -83,10 +79,8 @@ export const DASHBOARD_NAVIGATION: readonly DashboardNavigationDefinition[] = [
   { id: "dashboard-funnel", label: "Funil VSL", icon: Target, dashboardTab: "funil", shortcut: "3" },
   { id: "dashboard-bumps", label: "Bumps & Upsell", icon: Gift, dashboardTab: "bumps", shortcut: "4" },
   { id: "dashboard-ads", label: "Anúncios", icon: Megaphone, dashboardTab: "anuncios", shortcut: "5" },
-  { id: "dashboard-attribution", label: "Atribuição", icon: Map, dashboardTab: "atribuicao", shortcut: "6" },
-  { id: "dashboard-report", label: "Relatório", icon: FileText, dashboardTab: "relatorio", shortcut: "7" },
-  { id: "dashboard-alerts", label: "Alertas", icon: Activity, dashboardTab: "diagnostico", shortcut: "8" },
-  { id: "dashboard-simulator", label: "Simulador", icon: Sliders, dashboardTab: "simulador", shortcut: "9" },
+  { id: "dashboard-diagnostics", label: "Diagnóstico", icon: Activity, dashboardTab: "diagnostico", shortcut: "6" },
+  { id: "dashboard-simulator", label: "Simulador", icon: Sliders, dashboardTab: "simulador", shortcut: "7" },
 ] as const;
 
 function createNavigationRegistry({

@@ -323,4 +323,47 @@ describe("creative assets view helpers", () => {
       analysisErrorMessage: null,
     })).toBe("missing_transcript");
   });
+
+  it("does not expose automatic or unmarked historical failures as manual failures", () => {
+    const automatic = buildCreativeAssetCards({
+      assets,
+      ads,
+      metrics,
+      analyses,
+      jobs: [{
+        asset_id: "asset-2",
+        status: "failed",
+        job_trigger: "auto",
+        manual_requested_at: null,
+      }],
+    }).find((card) => card.id === "asset-2");
+    const unmarkedManual = buildCreativeAssetCards({
+      assets,
+      ads,
+      metrics,
+      analyses,
+      jobs: [{
+        asset_id: "asset-2",
+        status: "failed",
+        job_trigger: "manual",
+        manual_requested_at: null,
+      }],
+    }).find((card) => card.id === "asset-2");
+    const explicitManual = buildCreativeAssetCards({
+      assets,
+      ads,
+      metrics,
+      analyses,
+      jobs: [{
+        asset_id: "asset-2",
+        status: "failed",
+        job_trigger: "manual",
+        manual_requested_at: "2026-07-29T12:00:00Z",
+      }],
+    }).find((card) => card.id === "asset-2");
+
+    expect(automatic?.activeJobStatus).toBeNull();
+    expect(unmarkedManual?.activeJobStatus).toBeNull();
+    expect(explicitManual?.activeJobStatus).toBe("failed");
+  });
 });

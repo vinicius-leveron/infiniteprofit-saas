@@ -46,6 +46,14 @@ export const BumpsPanel = ({ rows }: Props) => {
     const fatOrderbump = rows.reduce((s, r) => s + (r.fatOrderbump ?? 0), 0);
     const fatFunil = rows.reduce((s, r) => s + (r.fatFunil ?? 0), 0);
     const vendasFront = rows.reduce((s, r) => s + (r.vendasFront ?? 0), 0);
+    const orderBumpOrders = rows.reduce(
+      (sum, row) => sum + (row.orderBumpOrders ?? dailyOfferOrders(row, "orderbump")),
+      0,
+    );
+    const upsellOrders = rows.reduce(
+      (sum, row) => sum + (row.upsellOrders ?? dailyOfferOrders(row, "upsell")),
+      0,
+    );
 
     // Per-bump aggregates
     const bumpMap = new Map<
@@ -85,11 +93,6 @@ export const BumpsPanel = ({ rows }: Props) => {
     const upsellsRev = bumpsAgg.filter((b) => b.type === "upsell").reduce((s, b) => s + b.revenue, 0);
     const orderbumpsRev = bumpsAgg.filter((b) => b.type === "orderbump").reduce((s, b) => s + b.revenue, 0);
 
-    // Total de vendas de orderbumps (somando todos os orderbumps detectados)
-    const totalOrderbumpSales = bumpsAgg
-      .filter((b) => b.type === "orderbump")
-      .reduce((s, b) => s + b.count, 0);
-
     return {
       fatFront,
       fatOrderbump,
@@ -101,8 +104,11 @@ export const BumpsPanel = ({ rows }: Props) => {
       orderbumpsRev,
       // Proporção Faturamento Front x Funil = Σ(fatFunil) / Σ(fatFront) — em %
       proporcaoFunilFront: fatFront ? (fatFunil / fatFront) * 100 : null,
-      // % Conversão Geral Orderbump = Σ(vendas orderbumps) / Σ(vendas front) — em %
-      convGeralOrderbump: vendasFront ? (totalOrderbumpSales / vendasFront) * 100 : null,
+      orderBumpOrders,
+      upsellOrders,
+      // Each front order contributes at most once to each conversion.
+      convGeralOrderbump: vendasFront ? (orderBumpOrders / vendasFront) * 100 : null,
+      convGeralUpsell: vendasFront ? (upsellOrders / vendasFront) * 100 : null,
     };
   }, [rows]);
 
@@ -116,6 +122,8 @@ export const BumpsPanel = ({ rows }: Props) => {
         fatFunil: r.fatFunil ?? 0,
         convGeralOrderbump:
           r.convGeralOrderbump ?? dailyOrderbumpConversion(r),
+        convGeralUpsell:
+          r.convGeralUpsell ?? dailyUpsellConversion(r),
         proporcaoFunilFront: normalizeFunnelProportion(
           r.proporcaoFunilFront ?? dailyFunnelProportion(r),
         ),
@@ -152,7 +160,7 @@ export const BumpsPanel = ({ rows }: Props) => {
   return (
     <div className="space-y-6 animate-fade-in">
       {/* KPI cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
         <KpiCard
           label="Faturamento Total · Funil"
           value={fBRL(totals.fatFunil)}
@@ -170,9 +178,16 @@ export const BumpsPanel = ({ rows }: Props) => {
         <KpiCard
           label="% Conv. Geral Orderbump"
           value={fPct(totals.convGeralOrderbump)}
-          hint="Vendas orderbump ÷ vendas Front"
+          hint={`${fNum(totals.orderBumpOrders)} pedidos únicos ÷ vendas Front`}
           icon={Percent}
           tone="orange"
+        />
+        <KpiCard
+          label="% Conv. Geral Upsell"
+          value={fPct(totals.convGeralUpsell)}
+          hint={`${fNum(totals.upsellOrders)} pedidos únicos ÷ vendas Front`}
+          icon={ArrowUpRight}
+          tone="violet"
         />
         <KpiCard
           label="Receita Bumps"
@@ -407,8 +422,8 @@ export const BumpsPanel = ({ rows }: Props) => {
 
       <div className="grid gap-6 xl:grid-cols-2">
         <ChartSection
-          title="Conversão Geral de Order Bump"
-          description="Vendas de todos os order bumps ÷ vendas Front, dia a dia"
+          title="Conversão de Bump e Upsell"
+          description="Pedidos front únicos que aceitaram cada tipo de oferta"
         >
           <div className="h-72">
             <ResponsiveContainer>
@@ -420,10 +435,19 @@ export const BumpsPanel = ({ rows }: Props) => {
                 <Line
                   type="monotone"
                   dataKey="convGeralOrderbump"
-                  name="Conversão geral"
+                  name="Order bump"
                   stroke={chartColors.positive}
                   strokeWidth={2.6}
                   dot={{ r: 3, fill: chartColors.positive }}
+                  connectNulls
+                />
+                <Line
+                  type="monotone"
+                  dataKey="convGeralUpsell"
+                  name="Upsell"
+                  stroke={chartColors.secondary}
+                  strokeWidth={2.6}
+                  dot={{ r: 3, fill: chartColors.secondary }}
                   connectNulls
                 />
               </LineChart>
@@ -472,10 +496,19 @@ export const BumpsPanel = ({ rows }: Props) => {
 };
 
 function dailyOrderbumpConversion(row: DailyRow) {
-  const orderbumpSales = row.bumps
-    ?.filter((bump) => bump.type === "orderbump")
-    .reduce((sum, bump) => sum + (bump.count ?? 0), 0) ?? 0;
-  return row.vendasFront ? (orderbumpSales / row.vendasFront) * 100 : null;
+  const orders = row.orderBumpOrders ?? dailyOfferOrders(row, "orderbump");
+  return row.vendasFront ? (orders / row.vendasFront) * 100 : null;
+}
+
+function dailyUpsellConversion(row: DailyRow) {
+  const orders = row.upsellOrders ?? dailyOfferOrders(row, "upsell");
+  return row.vendasFront ? (orders / row.vendasFront) * 100 : null;
+}
+
+function dailyOfferOrders(row: DailyRow, type: "orderbump" | "upsell") {
+  return row.bumps
+    ?.filter((bump) => bump.type === type)
+    .reduce((highest, bump) => Math.max(highest, bump.count ?? 0), 0) ?? 0;
 }
 
 function dailyFunnelProportion(row: DailyRow) {

@@ -91,7 +91,7 @@ export function ContextSwitcher({
             compact ? "h-10 px-2.5" : "h-12 px-3",
             className,
           )}
-          aria-label="Trocar organização ou cliente"
+          aria-label="Trocar cliente"
         >
           <span
             className={cn(
@@ -103,7 +103,7 @@ export function ContextSwitcher({
           </span>
           <span className="min-w-0 flex-1">
             <span className="block truncate text-[11px] leading-4 text-muted-foreground">
-              {currentOrganization?.name ?? "Organização"}
+              Trocar cliente · {currentOrganization?.name ?? "Organização"}
             </span>
             <span className="block truncate text-sm font-semibold leading-4 text-foreground">
               {currentWorkspace?.name ?? "Selecionar cliente"}

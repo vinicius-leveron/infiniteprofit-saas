@@ -30,7 +30,8 @@ type TeamAction =
   | "resend_invite"
   | "revoke_invite"
   | "update_member_role"
-  | "remove_member";
+  | "remove_member"
+  | "transfer_ownership";
 
 class HttpError extends Error {
   constructor(message: string, readonly status: number) {
@@ -78,6 +79,8 @@ Deno.serve(async (req) => {
         return json(await updateMemberRole(admin, body, scopeType, scopeId, caller.userId, access.role));
       case "remove_member":
         return json(await removeMember(admin, body, scopeType, scopeId, caller.userId, access.role));
+      case "transfer_ownership":
+        return json(await transferOwnership(admin, body, scopeType, scopeId, caller.userId, access.role));
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Erro inesperado";
@@ -108,7 +111,7 @@ async function createInvite(
   actorRole: EffectiveRole,
 ) {
   const email = normalizeEmail(body.email);
-  const role = normalizeRole(body.role, scopeType);
+  const role = normalizeRole(body.role, scopeType, false);
   assertCanGrantRole(actorRole, role);
 
   const table = inviteTable(scopeType);
@@ -299,7 +302,7 @@ async function updateMemberRole(
   actorRole: EffectiveRole,
 ) {
   const userId = requiredUuid(body.user_id, "user_id");
-  const nextRole = normalizeRole(body.role, scopeType);
+  const nextRole = normalizeRole(body.role, scopeType, false);
   assertCanGrantRole(actorRole, nextRole);
   const member = await directMember(admin, scopeType, scopeId, userId);
   if (!member) {
@@ -358,6 +361,30 @@ async function removeMember(
   });
   if (error) throw membershipMutationError(error.message);
   return { ok: true, user_id: userId };
+}
+
+async function transferOwnership(
+  admin: SupabaseClientAny,
+  body: Record<string, unknown>,
+  scopeType: ScopeType,
+  scopeId: string,
+  actorUserId: string,
+  actorRole: EffectiveRole,
+) {
+  if (scopeType !== "organization") {
+    throw new HttpError("A propriedade existe somente na organização.", 400);
+  }
+  if (actorRole !== "owner") {
+    throw new HttpError("Somente o Administrador principal pode transferir a propriedade.", 403);
+  }
+  const newOwnerUserId = requiredUuid(body.user_id, "user_id");
+  const { error } = await admin.rpc("transfer_organization_ownership", {
+    p_organization_id: scopeId,
+    p_new_owner_user_id: newOwnerUserId,
+    p_actor_user_id: actorUserId,
+  });
+  if (error) throw membershipMutationError(error.message);
+  return { ok: true, user_id: newOwnerUserId, role: "owner" };
 }
 
 async function deliverInvite({
@@ -573,16 +600,22 @@ function normalizeAction(value: unknown): TeamAction {
     "revoke_invite",
     "update_member_role",
     "remove_member",
+    "transfer_ownership",
   ]);
   if (!actions.has(value as TeamAction)) throw new HttpError("action inválida.", 400);
   return value as TeamAction;
 }
 
-function normalizeRole(value: unknown, scopeType: ScopeType): EffectiveRole {
-  const role = String(value ?? "").trim() as EffectiveRole;
-  const allowed = scopeType === "organization"
-    ? new Set<EffectiveRole>(["owner", "admin"])
-    : new Set<EffectiveRole>(["owner", "admin", "moderator", "member"]);
+function normalizeRole(
+  value: unknown,
+  scopeType: ScopeType,
+  allowLegacyOwner = true,
+): EffectiveRole {
+  const rawRole = String(value ?? "").trim();
+  const role = (rawRole === "moderator" ? "member" : rawRole) as EffectiveRole;
+  const allowed = allowLegacyOwner
+    ? new Set<EffectiveRole>(["owner", "admin", "member"])
+    : new Set<EffectiveRole>(["admin", "member"]);
   if (!allowed.has(role)) throw new HttpError("Papel inválido para este escopo.", 400);
   return role;
 }

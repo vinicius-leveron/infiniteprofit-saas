@@ -37,8 +37,8 @@ const map: Record<string, { formula?: string; description: string }> = {
     description: "Vendas do produto principal (entrada do funil).",
   },
   "aov": {
-    formula: "Faturamento Líquido ÷ Vendas Totais",
-    description: "Average Order Value — ticket médio da venda completa.",
+    formula: "Faturamento Bruto do Funil ÷ Vendas Front",
+    description: "Quanto cada venda front gerou somando front, order bumps e upsells.",
   },
   "cac": {
     formula: "Investimento ÷ Vendas Totais",

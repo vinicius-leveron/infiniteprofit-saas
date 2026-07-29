@@ -107,15 +107,12 @@ const tableData: Record<string, unknown> = {
       created_at: "2026-06-03T12:30:00Z",
     },
   ],
-  raw_events: [
+  daily_ad_dimension_metrics: [
     {
-      payload: {
-        query_key: "utm_content",
-        grouped_field: "campaign-ad-1-feed",
-        total_viewed_session_uniq: 20,
-        total_started_session_uniq: 10,
-        total_over_pitch: 5,
-      },
+      ad_id: "ad-1",
+      pageviews: 20,
+      plays_unicos: 10,
+      chegaram_pitch: 5,
     },
   ],
 };
@@ -157,17 +154,23 @@ vi.mock("@/components/ads/AdsFunnelView", () => ({
   ),
 }));
 
-vi.mock("@/components/ads/AdsPathsView", () => ({
-  AdsPathsView: ({ dateRange }: { dateRange?: { from: string | null; to: string | null } }) => (
-    <div data-testid="paths-range">
-      Caminhos mockado {dateRange?.from} {dateRange?.to}
-    </div>
-  ),
-}));
-
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
     from: vi.fn((tableName: string) => createQuery(tableName)),
+    rpc: vi.fn((functionName: string) => {
+      if (functionName === "list_creative_processing_status_safe") {
+        return Promise.resolve({
+          data: tableData.creative_asset_jobs,
+          error: null,
+        });
+      }
+      return Promise.resolve({ data: [], error: null });
+    }),
+    channel: vi.fn(() => ({
+      on: vi.fn().mockReturnThis(),
+      subscribe: vi.fn().mockReturnValue({ topic: "creative-analysis" }),
+    })),
+    removeChannel: vi.fn().mockResolvedValue("ok"),
     functions: {
       invoke: vi.fn().mockResolvedValue({ data: { ok: true }, error: null }),
     },
@@ -195,15 +198,20 @@ describe("AdsPanel", () => {
     expect(screen.getAllByText("50.0%")).toHaveLength(2);
     expect(screen.getByText("AOV")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Ver order bump e upsell" }));
     expect(screen.getByText("Order bump")).toBeInTheDocument();
     expect(screen.getByText("Upsell")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /Detalhes/i }));
-    expect(screen.getByRole("tab", { name: "Resumo" })).toBeInTheDocument();
-    expect(screen.getByText("Resumo do criativo")).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Transcrição" })).toBeInTheDocument();
-    expect(screen.getByText(/Abertura/)).toBeInTheDocument();
+    const insightsTab = screen.getByRole("tab", { name: "Insights" });
+    expect(insightsTab).toBeInTheDocument();
+    expect(screen.getAllByText("Transcrição pronta").length).toBeGreaterThan(0);
+    fireEvent.mouseDown(insightsTab, { button: 0, ctrlKey: false });
+    fireEvent.click(insightsTab);
+    await waitFor(() => {
+      expect(screen.getByText("Resumo do criativo")).toBeInTheDocument();
+      expect(screen.getByText(/Abertura/)).toBeInTheDocument();
+    });
 
     fireEvent.click(screen.getByRole("button", { name: "Funil" }));
     expect(screen.getByText(/Funil mockado/)).toBeInTheDocument();
@@ -243,7 +251,7 @@ describe("AdsPanel", () => {
       expect(screen.getByText("Hook criativo forte")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /Reanalisar/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Transcrever/i }));
 
     await waitFor(() => {
       expect(supabase.functions.invoke).toHaveBeenCalledWith("creative-sync", {

@@ -1,4 +1,8 @@
 import { createClient } from "@supabase/supabase-js";
+import {
+  buildCreativeAnalysisPrompt,
+  CREATIVE_ANALYSIS_PROMPT_VERSION,
+} from "./prompt-v5.mjs";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
@@ -20,7 +24,7 @@ const TRANSCRIPTION_PROVIDER = process.env.CREATIVE_TRANSCRIPTION_PROVIDER || "o
 const TRANSCRIPTION_MODEL = process.env.CREATIVE_TRANSCRIPTION_MODEL || "gpt-4o-mini-transcribe";
 const ANALYSIS_PROVIDER = process.env.CREATIVE_ANALYSIS_PROVIDER || "lovable";
 const ANALYSIS_MODEL = process.env.CREATIVE_ANALYSIS_MODEL || "google/gemini-3-flash-preview";
-const PROMPT_VERSION = process.env.CREATIVE_ANALYSIS_PROMPT_VERSION || "creative-sync-v4";
+const PROMPT_VERSION = process.env.CREATIVE_ANALYSIS_PROMPT_VERSION || CREATIVE_ANALYSIS_PROMPT_VERSION;
 const CUSTOM_ANALYSIS_INSTRUCTIONS = String(process.env.CREATIVE_ANALYSIS_PROMPT || "").trim();
 const POLL_INTERVAL_MS = Number(process.env.CREATIVE_WORKER_POLL_INTERVAL_MS || "5000");
 const MAX_POLL_INTERVAL_MS = Math.max(
@@ -366,31 +370,15 @@ async function analyzeCreative({ mediaType, payload, transcript, transcriptSegme
       .join("\n")
     : transcript || "—";
 
-  const prompt = [
-    "Analise este criativo de anúncio usando principalmente a transcrição com timestamps. Responda somente JSON válido.",
-    "Campos obrigatórios: summary, hook, hook_timestamps, angle, copy, cta, visual, visual_evidence, tags, scores, analysis_coverage, errorMessage.",
-    "Use PT-BR, linguagem direta, específica e sem inventar informações que não aparecem nos dados.",
-    "summary: síntese original de 2 a 4 frases sobre problema, promessa, mecanismo, prova e oferta. Não copie a legenda nem repita a transcrição.",
-    "hook: descreva somente o que acontece ou é dito entre 0 e 3 segundos. Use o primeiro trecho falado do vídeo; nunca use o headline/título como substituto. Se não houver evidência confiável, retorne null.",
-    "hook_timestamps: array de { start_ms, end_ms, label, reason }. O primeiro item deve cobrir a abertura real, preferencialmente 0-3000 ms.",
-    "angle: uma frase explicando o ângulo estratégico de persuasão (dor, desejo, crença ou mecanismo). Não copie a legenda.",
-    "copy: reproduza a legenda/texto principal informado, sem transformá-la em resumo ou ângulo.",
-    "cta: identifique a ação pedida. visual e visual_evidence devem deixar claro quando não há evidência visual suficiente no input.",
-    "scores.hook (0-100): poder de interromper, curiosidade e clareza dos primeiros 3 segundos.",
-    "scores.clareza (0-100): compreensão do problema, promessa, mecanismo, oferta e CTA.",
-    "scores.potencial_de_escala (0-100): apelo amplo, replicabilidade, baixa dependência de contexto e risco de saturação/compliance.",
-    "analysis_coverage: full apenas se a transcrição permitir todos os campos; caso contrário partial e explique em errorMessage.",
-    CUSTOM_ANALYSIS_INSTRUCTIONS ? `Instruções personalizadas do workspace:\n${CUSTOM_ANALYSIS_INSTRUCTIONS}` : "",
-    "",
-    `Tipo: ${mediaType}`,
-    `Headline: ${payload.headline ?? "—"}`,
-    `Texto principal: ${payload.primary_text ?? "—"}`,
-    `CTA: ${payload.cta ?? "—"}`,
-    `Landing URL: ${payload.landing_url ?? "—"}`,
-    "",
-    "Transcrição com timestamps:",
+  const prompt = buildCreativeAnalysisPrompt({
+    mediaType,
+    headline: payload.headline,
+    primaryText: payload.primary_text,
+    cta: payload.cta,
+    landingUrl: payload.landing_url,
     transcriptExcerpt,
-  ].join("\n");
+    approvedInstructions: CUSTOM_ANALYSIS_INSTRUCTIONS,
+  });
 
   let contentText;
 
@@ -452,7 +440,10 @@ async function analyzeCreative({ mediaType, payload, transcript, transcriptSegme
   const jsonMatch = contentText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
   const cleanJson = jsonMatch ? jsonMatch[1] : contentText;
 
-  return normalizeAnalysisResponse(JSON.parse(cleanJson.trim()));
+  return {
+    ...normalizeAnalysisResponse(JSON.parse(cleanJson.trim())),
+    prompt_hash: sha256Text(prompt),
+  };
 }
 
 async function transcribeFile(filePath) {
@@ -514,7 +505,7 @@ async function persistSuccess({
 }) {
   const now = new Date().toISOString();
   const analysisCoverage = analysis.analysis_coverage || "full";
-  const status = analysisCoverage === "partial" ? "failed" : "ready";
+  const status = "ready";
 
   await supabase
     .from("creative_asset_analysis")
@@ -545,6 +536,7 @@ async function persistSuccess({
       provider: ANALYSIS_PROVIDER,
       model: ANALYSIS_MODEL,
       prompt_version: PROMPT_VERSION,
+      prompt_hash: analysis.prompt_hash ?? null,
       error_message: analysis.errorMessage,
       analysis_error_message: analysis.errorMessage,
       processed_at: now,
@@ -582,7 +574,7 @@ async function persistFailure(job, payload, error) {
         ? "oversized_queued"
         : "failed";
   const analysisCoverage = analysis?.transcript ? "partial" : "failed";
-  const assetStatus = analysisCoverage === "partial" ? "failed" : payload.media_type === "unknown" ? "missing_media" : "failed";
+  const assetStatus = analysisCoverage === "partial" ? "ready" : payload.media_type === "unknown" ? "missing_media" : "failed";
 
   await supabase
     .from("creative_asset_analysis")
@@ -771,6 +763,10 @@ async function runCommand(command, args) {
 async function sha256File(filePath) {
   const buffer = await fs.readFile(filePath);
   return crypto.createHash("sha256").update(buffer).digest("hex");
+}
+
+function sha256Text(value) {
+  return crypto.createHash("sha256").update(String(value), "utf8").digest("hex");
 }
 
 async function fileSize(filePath) {

@@ -21,7 +21,6 @@ import {
   Settings2,
   Sparkles,
   Tag,
-  Target,
   TrendingUp,
   Trash2,
   Wand2,
@@ -69,7 +68,6 @@ import {
   FIXED_CREATIVE_GROUPS,
   applyCreativeFilters,
   buildCreativeAssetCards,
-  groupCreativeCards,
   labelForMediaType,
   parseCreativeGroupRules,
   resolveSortKey,
@@ -81,7 +79,6 @@ import {
   type CreativeAssetJobRow,
   type CreativeAssetMetricRow,
   type CreativeAssetRow,
-  type CreativeGroupBy,
   type CreativeGroupRow,
   type CreativeGroupRules,
   type CreativeMediaType,
@@ -95,19 +92,20 @@ import {
   type CreativeAssetSignedUrl,
 } from "@/lib/creativeAssetSignedUrls";
 import { AdsFunnelView } from "@/components/ads/AdsFunnelView";
-import { AdsPathsView } from "@/components/ads/AdsPathsView";
 import { useAuth } from "@/hooks/useAuth";
 import { type RawVturbPayload } from "@/lib/adFunnelCorrelation";
 
 interface AdsPanelProps {
   projectId: string | null;
+  allowedAdIds?: string[] | null;
+  canManage?: boolean;
   dateRange?: {
     from: string | null;
     to: string | null;
   };
 }
 
-type CardsViewMode = "cards" | "funnel" | "paths";
+type CardsViewMode = "cards" | "funnel";
 type CreativeActivityFilter = "active" | "all";
 
 type SyncRunRow = {
@@ -118,6 +116,9 @@ type SyncRunRow = {
 };
 
 type CreativeVturbMetrics = {
+  pageviews: number;
+  plays: number;
+  pitchReached: number;
   playRate: number | null;
   pitchRetention: number | null;
 };
@@ -125,7 +126,6 @@ type CreativeVturbMetrics = {
 type GroupFormState = {
   name: string;
   mediaType: CreativeMediaType | "all";
-  pipelineStatus: CreativePipelineStatus | "all";
   campaignQuery: string;
   adsetQuery: string;
   minHookRate: string;
@@ -139,7 +139,6 @@ type GroupFormState = {
 const EMPTY_GROUP_FORM: GroupFormState = {
   name: "",
   mediaType: "all",
-  pipelineStatus: "all",
   campaignQuery: "",
   adsetQuery: "",
   minHookRate: "",
@@ -182,7 +181,7 @@ async function loadSignedCreativeAssetUrls(projectId: string, assets: CreativeAs
   }
 }
 
-export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
+export function AdsPanel({ projectId, dateRange, allowedAdIds = null, canManage = true }: AdsPanelProps) {
   const { user } = useAuth();
   const [viewMode, setViewMode] = useState<CardsViewMode>("cards");
   const [loading, setLoading] = useState(false);
@@ -198,12 +197,11 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
   const [vturbEvents, setVturbEvents] = useState<Array<{ payload: RawVturbPayload | null }>>([]);
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<CreativeSortKey>("purchases");
-  const [groupBy, setGroupBy] = useState<CreativeGroupBy>("none");
   const [mediaFilter, setMediaFilter] = useState<CreativeMediaType | "all">("all");
-  const [pipelineFilter, setPipelineFilter] = useState<CreativePipelineStatus | "all">("all");
   const [activityFilter, setActivityFilter] = useState<CreativeActivityFilter>("active");
   const [activeFixedGroup, setActiveFixedGroup] = useState<FixedCreativeGroupKey>("all");
   const [activeCustomGroupId, setActiveCustomGroupId] = useState<string | null>(null);
+  const [viewPreferenceHydrated, setViewPreferenceHydrated] = useState(false);
   const [expandedCardId, setExpandedCardId] = useState<string | null>(null);
   const [analyzingAssetId, setAnalyzingAssetId] = useState<string | null>(null);
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
@@ -216,24 +214,23 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
     if (showPageLoader) setLoading(true);
     try {
       let metricsQuery = supabase
-        .from("creative_asset_daily_metrics" as never)
-        .select("asset_id, event_date, spend, impressions, clicks, outbound_clicks, ctr, link_ctr, cpm, purchases, revenue, refunds, refund_value, refund_rate, order_bump_purchases, order_bump_revenue, upsell_purchases, upsell_revenue, roas, cpa, hook_rate, has_meta_data, has_gateway_data")
+        .from("creative_asset_daily_metrics")
+        .select("asset_id, event_date, spend, impressions, clicks, outbound_clicks, ctr, link_ctr, cpm, purchases, revenue, net_revenue, profit, refunds, refund_value, refund_rate, order_bump_purchases, order_bump_revenue, upsell_purchases, upsell_revenue, order_bump_conversion, upsell_conversion, roas, cpa, hook_rate, has_meta_data, has_gateway_data")
         .eq("project_id", projectId);
 
       if (dateRange?.from) metricsQuery = metricsQuery.gte("event_date", dateRange.from);
       if (dateRange?.to) metricsQuery = metricsQuery.lte("event_date", dateRange.to);
 
-      let vturbEventQuery = supabase
-        .from("raw_events")
-        .select("payload")
+      let vturbMetricQuery = supabase
+        .from("daily_ad_dimension_metrics")
+        .select("ad_id, pageviews, plays_unicos, chegaram_pitch")
         .eq("project_id", projectId)
-        .eq("source", "vturb")
-        .eq("event_type", "traffic_by_source");
+        .order("event_date", { ascending: true });
       if (dateRange?.from) {
-        vturbEventQuery = vturbEventQuery.gte("event_date", dateRange.from);
+        vturbMetricQuery = vturbMetricQuery.gte("event_date", dateRange.from);
       }
       if (dateRange?.to) {
-        vturbEventQuery = vturbEventQuery.lte("event_date", dateRange.to);
+        vturbMetricQuery = vturbMetricQuery.lte("event_date", dateRange.to);
       }
 
       const [
@@ -245,7 +242,7 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
         { data: jobRows },
         { data: groupRows },
         { data: syncRows },
-        { data: vturbEventRows },
+        { data: vturbMetricRows },
       ] = await Promise.all([
         supabase
           .from("projects")
@@ -266,11 +263,10 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
           .from("creative_asset_analysis" as never)
           .select("asset_id, status, transcript_status, transcript, transcript_segments, transcript_language, transcript_provider, transcript_model, transcript_error_message, summary, hook, hook_timestamps, angle, copy, cta, visual, visual_evidence, tags, scores, analysis_coverage, analysis_error_message, error_message, processed_at")
           .eq("project_id", projectId),
-        supabase
-          .from("creative_asset_jobs" as never)
-          .select("asset_id, status")
-          .eq("project_id", projectId)
-          .in("status", ["queued", "running"]),
+        supabase.rpc(
+          "list_creative_processing_status_safe",
+          { _project_id: projectId },
+        ),
         supabase
           .from("creative_groups" as never)
           .select("id, name, rules, sort_key")
@@ -283,7 +279,7 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
           .eq("source", "creative")
           .order("created_at", { ascending: false })
           .limit(1),
-        vturbEventQuery.limit(5000),
+        vturbMetricQuery.limit(10_000),
       ]);
 
       const loadedAssets = (assetRows ?? []) as unknown as CreativeAssetRow[];
@@ -297,7 +293,21 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
       setJobs((jobRows ?? []) as unknown as CreativeAssetJobRow[]);
       setGroups((groupRows ?? []) as unknown as CreativeGroupRow[]);
       setLatestSyncRun(((syncRows ?? [])[0] as SyncRunRow | undefined) ?? null);
-      setVturbEvents((vturbEventRows ?? []) as Array<{ payload: RawVturbPayload | null }>);
+      setVturbEvents(
+        ((vturbMetricRows ?? []) as unknown as Array<{
+          ad_id: string;
+          pageviews: number | null;
+          plays_unicos: number | null;
+          chegaram_pitch: number | null;
+        }>).map((row) => ({
+          payload: {
+            utm_content: row.ad_id,
+            pageviews: row.pageviews ?? 0,
+            plays: row.plays_unicos ?? 0,
+            pitch_reached: row.chegaram_pitch ?? 0,
+          },
+        })),
+      );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Erro ao carregar criativos");
     } finally {
@@ -309,6 +319,70 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
     if (!projectId) return;
     void load();
   }, [load, projectId]);
+
+  useEffect(() => {
+    if (!projectId) return;
+    const channel = supabase
+      .channel(`creative-analysis:${projectId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "creative_asset_analysis",
+          filter: `project_id=eq.${projectId}`,
+        },
+        () => void load(false),
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [load, projectId]);
+
+  useEffect(() => {
+    if (!projectId) return;
+    const hasActiveProcessing = jobs.some(
+      (job) => job.status === "queued" || job.status === "running",
+    );
+    if (!hasActiveProcessing) return;
+    const interval = window.setInterval(() => void load(false), 4_000);
+    return () => window.clearInterval(interval);
+  }, [jobs, load, projectId]);
+
+  useEffect(() => {
+    if (!projectId || loading || viewPreferenceHydrated) return;
+    try {
+      const raw = window.localStorage.getItem(`infiniteprofit.creativeView.${projectId}`);
+      if (raw) {
+        const stored = JSON.parse(raw) as { fixed?: FixedCreativeGroupKey; customId?: string | null };
+        if (stored.customId && groups.some((group) => group.id === stored.customId)) {
+          setActiveCustomGroupId(stored.customId);
+          setActiveFixedGroup("all");
+        } else if (stored.fixed && FIXED_CREATIVE_GROUPS.some((group) => group.key === stored.fixed)) {
+          setActiveCustomGroupId(null);
+          setActiveFixedGroup(stored.fixed);
+        }
+      }
+    } catch {
+      // A preferência visual é opcional.
+    } finally {
+      setViewPreferenceHydrated(true);
+    }
+  }, [groups, loading, projectId, viewPreferenceHydrated]);
+
+  useEffect(() => {
+    if (!projectId || !viewPreferenceHydrated) return;
+    try {
+      window.localStorage.setItem(
+        `infiniteprofit.creativeView.${projectId}`,
+        JSON.stringify({ fixed: activeFixedGroup, customId: activeCustomGroupId }),
+      );
+    } catch {
+      // A preferência visual é opcional.
+    }
+  }, [activeCustomGroupId, activeFixedGroup, projectId, viewPreferenceHydrated]);
 
   async function syncCreatives() {
     if (!projectId) return;
@@ -382,12 +456,12 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
 
   async function saveGroup() {
     if (!projectId || (!editingGroupId && (!workspaceId || !user?.id))) {
-      toast.error("Contexto do projeto indisponível para salvar o grupo");
+      toast.error("Contexto do funil indisponível para salvar a visão");
       return;
     }
 
     if (!groupForm.name.trim()) {
-      toast.error("Dê um nome para o grupo");
+      toast.error("Dê um nome para a visão");
       return;
     }
 
@@ -409,7 +483,7 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
         const updated = data as unknown as CreativeGroupRow;
         setGroups((current) => current.map((group) => group.id === updated.id ? updated : group));
         closeGroupDialog();
-        toast.success("Grupo atualizado");
+        toast.success("Visão atualizada");
         return;
       }
 
@@ -432,9 +506,9 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
       setActiveCustomGroupId(nextRow.id);
       setActiveFixedGroup("all");
       closeGroupDialog();
-      toast.success("Grupo salvo");
+      toast.success("Visão salva");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Erro ao salvar grupo");
+      toast.error(error instanceof Error ? error.message : "Erro ao salvar visão");
     }
   }
 
@@ -472,9 +546,9 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
         setActiveFixedGroup("all");
       }
       setGroupToDelete(null);
-      toast.success("Grupo removido");
+      toast.success("Visão removida");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Erro ao remover grupo");
+      toast.error(error instanceof Error ? error.message : "Erro ao remover visão");
     }
   }
 
@@ -490,19 +564,26 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
 
   const composedRules = useMemo(() => {
     const customRules = activeCustomGroup ? parseCreativeGroupRules(activeCustomGroup.rules) : {};
+    delete customRules.pipelineStatus;
     const manualRules: CreativeGroupRules = {
       mediaType: mediaFilter,
-      pipelineStatus: pipelineFilter,
     };
     return {
       ...customRules,
       ...(manualRules.mediaType && manualRules.mediaType !== "all" ? { mediaType: manualRules.mediaType } : {}),
-      ...(manualRules.pipelineStatus && manualRules.pipelineStatus !== "all" ? { pipelineStatus: manualRules.pipelineStatus } : {}),
     };
-  }, [activeCustomGroup, mediaFilter, pipelineFilter]);
+  }, [activeCustomGroup, mediaFilter]);
 
   const filteredCards = useMemo(() => {
-    const base = applyCreativeFilters(cards, { search, rules: composedRules });
+    const allowed = allowedAdIds ? new Set(allowedAdIds) : null;
+    const scopedCards = allowed
+      ? cards.filter(
+        (card) =>
+          card.adIds.length > 0 &&
+          card.adIds.every((adId) => allowed.has(adId)),
+      )
+      : cards;
+    const base = applyCreativeFilters(scopedCards, { search, rules: composedRules });
     const activityScoped = activityFilter === "active"
       ? base.filter((card) =>
         // A creative is active when it had any source event in the selected
@@ -522,8 +603,14 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
     if (activeFixedGroup === "best-roas") {
       return activityScoped.filter((card) => (card.roas ?? 0) > 0);
     }
+    if (activeFixedGroup === "highest-refunds") {
+      return activityScoped.filter((card) => (card.refundRate ?? 0) > 0);
+    }
+    if (activeFixedGroup === "highest-aov") {
+      return activityScoped.filter((card) => (card.aov ?? 0) > 0);
+    }
     return activityScoped;
-  }, [activeFixedGroup, activityFilter, cards, composedRules, search]);
+  }, [activeFixedGroup, activityFilter, allowedAdIds, cards, composedRules, search]);
 
   const effectiveSortKey = useMemo(
     () => resolveSortKey(activeFixedGroup, sortKey, activeCustomGroup?.sort_key ?? null),
@@ -535,26 +622,40 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
     [effectiveSortKey, filteredCards],
   );
 
-  const groupedCards = useMemo(
-    () => groupCreativeCards(sortedCards, groupBy),
-    [groupBy, sortedCards],
-  );
-
   const vturbMetricsByAsset = useMemo(
     () => buildCreativeVturbMetrics(cards, vturbEvents),
     [cards, vturbEvents],
   );
 
-  const metricScale = useMemo(() => {
-    const values = {
-      ctr: Math.max(...sortedCards.map((card) => card.ctr ?? 0), 1),
-      cpm: Math.max(...sortedCards.map((card) => card.cpm ?? 0), 1),
-      playRate: Math.max(...sortedCards.map((card) => vturbMetricsByAsset.get(card.id)?.playRate ?? 0), 1),
-      pitchRetention: Math.max(...sortedCards.map((card) => vturbMetricsByAsset.get(card.id)?.pitchRetention ?? 0), 1),
-      hookRate: Math.max(...sortedCards.map((card) => card.hookRate ?? 0), 1),
-      aov: Math.max(...sortedCards.map((card) => card.aov ?? 0), 1),
+  const metricAverages = useMemo(() => {
+    const spend = sortedCards.reduce((sum, card) => sum + card.spend, 0);
+    const impressions = sortedCards.reduce((sum, card) => sum + card.impressions, 0);
+    const clicks = sortedCards.reduce((sum, card) => sum + card.clicks, 0);
+    const purchases = sortedCards.reduce((sum, card) => sum + card.purchases, 0);
+    const revenue = sortedCards.reduce((sum, card) => sum + card.revenue, 0);
+    const pageviews = sortedCards.reduce(
+      (sum, card) => sum + (vturbMetricsByAsset.get(card.id)?.pageviews ?? 0),
+      0,
+    );
+    const plays = sortedCards.reduce(
+      (sum, card) => sum + (vturbMetricsByAsset.get(card.id)?.plays ?? 0),
+      0,
+    );
+    const pitchReached = sortedCards.reduce(
+      (sum, card) => sum + (vturbMetricsByAsset.get(card.id)?.pitchReached ?? 0),
+      0,
+    );
+    return {
+      ctr: impressions > 0 ? (clicks / impressions) * 100 : null,
+      cpm: impressions > 0 ? (spend / impressions) * 1000 : null,
+      playRate: pageviews > 0 ? (plays / pageviews) * 100 : null,
+      pitchRetention: plays > 0 ? (pitchReached / plays) * 100 : null,
+      hookRate: weightedAverage(sortedCards.map((card) => ({
+        value: card.hookRate,
+        weight: Math.max(card.impressions, 1),
+      }))),
+      aov: purchases > 0 ? revenue / purchases : null,
     };
-    return values;
   }, [sortedCards, vturbMetricsByAsset]);
 
   if (!projectId) {
@@ -583,7 +684,7 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {/* Toggle Cards/Funil/Caminhos */}
+          {/* Toggle Cards/Funil */}
           <div className="flex rounded-xl border border-border/60 bg-muted/30 p-1">
             <button
               type="button"
@@ -611,35 +712,24 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
               <TrendingUp className="w-3.5 h-3.5" />
               Funil
             </button>
-            <button
-              type="button"
-              onClick={() => setViewMode("paths")}
-              className={cn(
-                "flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-medium transition-all",
-                viewMode === "paths"
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <Target className="w-3.5 h-3.5" />
-              Caminhos
-            </button>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={syncCreatives}
-            disabled={syncing}
-            className="gap-2 rounded-xl border-border/60 bg-muted/20 hover:bg-muted/40"
-          >
-            {syncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-            <span className="hidden sm:inline">Sincronizar</span>
-          </Button>
+          {canManage && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={syncCreatives}
+              disabled={syncing}
+              className="gap-2 rounded-xl border-border/60 bg-muted/20 hover:bg-muted/40"
+            >
+              {syncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+              <span className="hidden sm:inline">Sincronizar</span>
+            </Button>
+          )}
         </div>
       </header>
 
       {/* Sync Status Banner */}
-      {latestSyncRun && (
+      {latestSyncRun?.status === "running" && (
         <div
           className={cn(
             "flex items-center gap-3 rounded-xl border px-4 py-3 text-sm",
@@ -665,9 +755,11 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
       )}
 
       {viewMode === "funnel" ? (
-        <AdsFunnelView projectId={projectId} dateRange={dateRange} />
-      ) : viewMode === "paths" ? (
-        <AdsPathsView projectId={projectId} dateRange={dateRange} />
+        <AdsFunnelView
+          projectId={projectId}
+          dateRange={dateRange}
+          allowedAdIds={allowedAdIds}
+        />
       ) : loading ? (
         <div className="flex flex-col items-center justify-center py-24 gap-4">
           <div className="relative">
@@ -678,7 +770,7 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
         </div>
       ) : (
         <>
-          {/* Grupos de Criativos */}
+          {/* Visões rápidas e salvas */}
           <div className="flex flex-wrap items-center gap-2">
             {FIXED_CREATIVE_GROUPS.map((group) => {
               const isActive = activeFixedGroup === group.key && !activeCustomGroupId;
@@ -698,7 +790,8 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
                   )}
                 >
                   {group.key === "best-hooks" && <Zap className="w-3.5 h-3.5" />}
-                  {group.key === "best-roas" && <TrendingUp className="w-3.5 h-3.5" />}
+                  {(group.key === "best-roas" || group.key === "highest-aov") && <TrendingUp className="w-3.5 h-3.5" />}
+                  {group.key === "highest-refunds" && <AlertTriangle className="w-3.5 h-3.5" />}
                   {group.label}
                 </button>
               );
@@ -732,8 +825,8 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
                       type="button"
                       onClick={() => openEditGroupDialog(group)}
                       className="rounded-md p-1.5 opacity-65 transition hover:bg-background/30 hover:opacity-100 focus-visible:opacity-100"
-                      aria-label={`Editar grupo ${group.name}`}
-                      title="Editar grupo"
+                      aria-label={`Editar visão ${group.name}`}
+                      title="Editar visão"
                     >
                       <Pencil className="h-3 w-3" />
                     </button>
@@ -741,8 +834,8 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
                       type="button"
                       onClick={() => setGroupToDelete(group)}
                       className="rounded-md p-1.5 opacity-65 transition hover:bg-red-500/15 hover:text-red-300 hover:opacity-100 focus-visible:opacity-100"
-                      aria-label={`Remover grupo ${group.name}`}
-                      title="Remover grupo"
+                      aria-label={`Remover visão ${group.name}`}
+                      title="Remover visão"
                     >
                       <Trash2 className="h-3 w-3" />
                     </button>
@@ -756,13 +849,24 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
               className="inline-flex items-center gap-1.5 rounded-xl border border-dashed border-border/60 px-3 py-2 text-xs font-medium text-muted-foreground transition-all hover:border-border hover:bg-muted/30 hover:text-foreground"
             >
               <Plus className="w-3.5 h-3.5" />
-              Novo grupo
+              Nova visão
             </button>
           </div>
 
+          {activeCustomGroup && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-medium text-muted-foreground">Filtros ativos:</span>
+              {groupRuleChips(parseCreativeGroupRules(activeCustomGroup.rules)).map((chip) => (
+                <span key={chip} className="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-2.5 py-1 text-xs text-cyan-200">
+                  {chip}
+                </span>
+              ))}
+            </div>
+          )}
+
           {/* Toolbar de Filtros */}
           <div className="rounded-2xl border border-border/40 bg-gradient-to-br from-muted/30 to-muted/10 p-4">
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-6">
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
               {/* Search */}
               <div className="relative lg:col-span-1">
                 <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -782,6 +886,8 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
                 options={[
                   { value: "purchases", label: "Vendas front" },
                   { value: "roas", label: "ROAS" },
+                  { value: "refund_rate", label: "Taxa de reembolso" },
+                  { value: "aov", label: "AOV" },
                   { value: "hook_rate", label: "Hook Rate" },
                   { value: "ctr", label: "CTR" },
                   { value: "cpm", label: "CPM" },
@@ -799,18 +905,6 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
                 ]}
               />
               <ToolbarSelect
-                icon={<Layers className="w-3.5 h-3.5" />}
-                label="Agrupar"
-                value={groupBy}
-                onValueChange={(value) => setGroupBy(value as CreativeGroupBy)}
-                options={[
-                  { value: "none", label: "Sem agrupar" },
-                  { value: "campaign", label: "Campanha" },
-                  { value: "adset", label: "Adset" },
-                  { value: "media_type", label: "Tipo" },
-                ]}
-              />
-              <ToolbarSelect
                 icon={<Play className="w-3.5 h-3.5" />}
                 label="Mídia"
                 value={mediaFilter}
@@ -822,23 +916,6 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
                   { value: "unknown", label: "Sem mídia" },
                 ]}
               />
-              <ToolbarSelect
-                icon={<Sparkles className="w-3.5 h-3.5" />}
-                label="Pipeline"
-                value={pipelineFilter}
-                onValueChange={(value) => setPipelineFilter(value as CreativePipelineStatus | "all")}
-                options={[
-                  { value: "all", label: "Todos" },
-                  { value: "ready", label: "Pronto" },
-                  { value: "transcribing", label: "Transcrevendo" },
-                  { value: "analyzing", label: "Analisando" },
-                  { value: "pending", label: "Pendente" },
-                  { value: "missing_transcript", label: "Sem transcript" },
-                  { value: "oversized_queued", label: "Vídeo grande em fila" },
-                  { value: "failed", label: "Falhou" },
-                  { value: "missing_media", label: "Sem mídia" },
-                ]}
-              />
             </div>
           </div>
 
@@ -846,42 +923,24 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
           {sortedCards.length === 0 ? (
             <EmptyCardsState
               latestSyncRun={latestSyncRun}
-              onRetry={syncCreatives}
+              onRetry={canManage && allowedAdIds === null ? syncCreatives : undefined}
               syncing={syncing}
+              filteredByMedia={allowedAdIds !== null}
             />
           ) : (
-            <div className="space-y-8">
-              {groupedCards.map((group) => (
-                <section key={group.key} className="space-y-4">
-                  {groupBy !== "none" && (
-                    <div className="flex items-center gap-3">
-                      <div className="h-px flex-1 bg-gradient-to-r from-border/60 to-transparent" />
-                      <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-                        <Layers className="w-4 h-4 text-muted-foreground" />
-                        {group.label}
-                        <span className="rounded-full bg-muted/60 px-2 py-0.5 text-xs text-muted-foreground">
-                          {group.cards.length}
-                        </span>
-                      </div>
-                      <div className="h-px flex-1 bg-gradient-to-l from-border/60 to-transparent" />
-                    </div>
-                  )}
-                  <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-                    {group.cards.map((card) => (
+            <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+                    {sortedCards.map((card) => (
                       <CreativeCard
                         key={card.id}
                         card={card}
                         expanded={expandedCardId === card.id}
-                        metricScale={metricScale}
+                        metricAverages={metricAverages}
                         vturbMetrics={vturbMetricsByAsset.get(card.id) ?? null}
                         onToggle={() => setExpandedCardId((current) => current === card.id ? null : card.id)}
-                        onAnalyze={() => analyzeCreative(card)}
+                        onAnalyze={canManage ? () => analyzeCreative(card) : undefined}
                         analyzing={analyzingAssetId === card.id}
                       />
                     ))}
-                  </div>
-                </section>
-              ))}
             </div>
           )}
         </>
@@ -890,11 +949,11 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
       <Dialog open={groupDialogOpen} onOpenChange={(open) => open ? setGroupDialogOpen(true) : closeGroupDialog()}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{editingGroupId ? "Editar grupo de criativos" : "Novo grupo de criativos"}</DialogTitle>
+            <DialogTitle>{editingGroupId ? "Editar visão salva" : "Nova visão salva"}</DialogTitle>
             <DialogDescription>
               {editingGroupId
-                ? "Altere as regras e a ordenação aplicadas por este grupo."
-                : "Salve um conjunto de regras para reaplicar filtros e ordenação na grade de cards."}
+                ? "Altere as regras e a ordenação aplicadas por esta visão."
+                : "Salve os filtros numéricos atuais para reaplicá-los na grade de cards."}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 md:grid-cols-2">
@@ -907,6 +966,8 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
                 <SelectContent>
                   <SelectItem value="purchases">Vendas front</SelectItem>
                   <SelectItem value="roas">ROAS</SelectItem>
+                  <SelectItem value="refund_rate">Taxa de reembolso</SelectItem>
+                  <SelectItem value="aov">AOV</SelectItem>
                   <SelectItem value="hook_rate">Hook Rate</SelectItem>
                   <SelectItem value="ctr">CTR</SelectItem>
                   <SelectItem value="cpm">CPM</SelectItem>
@@ -922,22 +983,6 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
                   <SelectItem value="video">Vídeo</SelectItem>
                   <SelectItem value="image">Imagem</SelectItem>
                   <SelectItem value="unknown">Sem mídia</SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field label="Status do pipeline">
-              <Select value={groupForm.pipelineStatus} onValueChange={(value) => setGroupForm((current) => ({ ...current, pipelineStatus: value as CreativePipelineStatus | "all" }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todos</SelectItem>
-                  <SelectItem value="ready">Pronto</SelectItem>
-                  <SelectItem value="transcribing">Transcrevendo</SelectItem>
-                  <SelectItem value="analyzing">Analisando</SelectItem>
-                  <SelectItem value="pending">Pendente</SelectItem>
-                  <SelectItem value="missing_transcript">Sem transcript</SelectItem>
-                  <SelectItem value="oversized_queued">Vídeo grande em fila</SelectItem>
-                  <SelectItem value="failed">Falhou</SelectItem>
-                  <SelectItem value="missing_media">Sem mídia</SelectItem>
                 </SelectContent>
               </Select>
             </Field>
@@ -965,7 +1010,7 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={closeGroupDialog}>Cancelar</Button>
-            <Button onClick={saveGroup}>{editingGroupId ? "Salvar alterações" : "Salvar grupo"}</Button>
+            <Button onClick={saveGroup}>{editingGroupId ? "Salvar alterações" : "Salvar visão"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -973,15 +1018,15 @@ export function AdsPanel({ projectId, dateRange }: AdsPanelProps) {
       <AlertDialog open={Boolean(groupToDelete)} onOpenChange={(open) => !open && setGroupToDelete(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remover grupo?</AlertDialogTitle>
+            <AlertDialogTitle>Remover visão?</AlertDialogTitle>
             <AlertDialogDescription>
-              O grupo “{groupToDelete?.name}” será removido. Os criativos e seus dados não serão apagados.
+              A visão “{groupToDelete?.name}” será removida. Os criativos e seus dados não serão apagados.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction onClick={() => void deleteGroup()} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              Remover grupo
+              Remover visão
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -994,12 +1039,13 @@ function EmptyCardsState({
   latestSyncRun,
   onRetry,
   syncing,
+  filteredByMedia,
 }: {
   latestSyncRun: SyncRunRow | null;
-  onRetry: () => void;
+  onRetry?: () => void;
   syncing: boolean;
+  filteredByMedia: boolean;
 }) {
-  const isFailed = latestSyncRun?.status === "failed";
   const isRunning = latestSyncRun?.status === "running";
 
   return (
@@ -1013,11 +1059,7 @@ function EmptyCardsState({
       <div className="relative">
         {/* Icon */}
         <div className="mx-auto mb-6 relative">
-          {isFailed ? (
-            <div className="w-16 h-16 rounded-2xl bg-red-500/10 flex items-center justify-center mx-auto">
-              <AlertTriangle className="w-8 h-8 text-red-400" />
-            </div>
-          ) : isRunning ? (
+          {isRunning ? (
             <div className="w-16 h-16 rounded-2xl bg-amber-500/10 flex items-center justify-center mx-auto">
               <Loader2 className="w-8 h-8 text-amber-400 animate-spin" />
             </div>
@@ -1030,24 +1072,24 @@ function EmptyCardsState({
 
         {/* Title */}
         <h3 className="text-xl font-semibold tracking-tight mb-2">
-          {isFailed
-            ? "Sincronização falhou"
-            : isRunning
-              ? "Processando criativos"
+          {isRunning
+            ? "Processando criativos"
+            : filteredByMedia
+              ? "Nenhum criativo exclusivo desta seleção"
               : "Nenhum criativo encontrado"}
         </h3>
 
         {/* Description */}
         <p className="text-sm text-muted-foreground max-w-md mx-auto leading-relaxed">
-          {isFailed
-            ? latestSyncRun?.error_message ?? "Ocorreu um erro durante a sincronização. Tente novamente."
-            : isRunning
-              ? "A sincronização está em andamento. Os criativos aparecerão em breve."
-              : "Sincronize os criativos do Meta Ads para visualizar a galeria com mídia, análises e métricas."}
+          {isRunning
+            ? "A sincronização está em andamento. Os criativos aparecerão em breve."
+            : filteredByMedia
+              ? "Criativos reutilizados também fora da campanha ou do conjunto selecionado ficam fora dos Cards para não misturar métricas. Use a visão Funil para analisar cada anúncio."
+            : "Sincronize os criativos do Meta Ads para visualizar a galeria com mídia, análises e métricas. Falhas anteriores ficam em Diagnóstico."}
         </p>
 
         {/* Action */}
-        {!isRunning && (
+        {!isRunning && onRetry && (
           <Button
             variant="outline"
             onClick={onRetry}
@@ -1070,7 +1112,7 @@ function EmptyCardsState({
 function CreativeCard({
   card,
   expanded,
-  metricScale,
+  metricAverages,
   vturbMetrics,
   analyzing,
   onAnalyze,
@@ -1078,24 +1120,25 @@ function CreativeCard({
 }: {
   card: CreativeAssetCard;
   expanded: boolean;
-  metricScale: { ctr: number; cpm: number; playRate: number; pitchRetention: number; hookRate: number; aov: number };
+  metricAverages: {
+    ctr: number | null;
+    cpm: number | null;
+    playRate: number | null;
+    pitchRetention: number | null;
+    hookRate: number | null;
+    aov: number | null;
+  };
   vturbMetrics: CreativeVturbMetrics | null;
   analyzing: boolean;
   onToggle: () => void;
-  onAnalyze: () => void;
+  onAnalyze?: () => void;
 }) {
-  const [showAdditionalMetrics, setShowAdditionalMetrics] = useState(false);
   const title = card.headline || card.adNames[0] || card.assetKey;
   const previewText = card.primaryText || card.summary || "";
   const landingLabel = compactUrlLabel(card.landingUrl);
   const facebookLabel = compactUrlLabel(card.facebookPostUrl) || "Facebook";
   const instagramLabel = compactUrlLabel(card.instagramPostUrl) || "Instagram";
-  const analyzeLabel =
-    card.mediaType === "video" && card.transcriptStatus !== "ready"
-      ? "Transcrever"
-      : card.pipelineStatus === "ready"
-        ? "Reanalisar"
-        : "Analisar";
+  const analyzeLabel = card.mediaType === "video" ? "Transcrever" : "Analisar imagem";
   const actionDisabled =
     analyzing ||
     card.mediaType === "unknown" ||
@@ -1272,106 +1315,125 @@ function CreativeCard({
             highlight={card.purchases > 0}
           />
           <MetricTile
-            label="ROAS"
-            value={card.roas != null ? `${card.roas.toFixed(2)}x` : "—"}
+            label="Faturamento"
+            value={fBRL(card.revenue)}
             accent="emerald"
-            highlight={card.roas != null && card.roas >= 2}
+            highlight={card.revenue > 0}
           />
           <MetricTile
-            label="Reembolsos"
-            value={fNum(card.refunds)}
-            detail={card.refundRate != null ? `${fPct(card.refundRate, 1)} das vendas` : "Taxa indisponível"}
-            accent="amber"
-            highlight={card.refunds > 0}
+            label="Lucro"
+            value={fBRL(card.profit)}
+            accent={card.profit >= 0 ? "emerald" : "amber"}
+            highlight
           />
-          <MetricTile
-            label="Valor reembolsado"
-            value={fBRL(card.refundValue)}
-            accent="amber"
-            highlight={card.refundValue > 0}
-          />
-          {showAdditionalMetrics && (
-            <>
-              <MetricTile
-                label="Order bump"
-                value={fNum(card.orderBumpPurchases)}
-                detail={fBRL(card.orderBumpRevenue)}
-                accent="violet"
-                highlight={card.orderBumpPurchases > 0}
-              />
-              <MetricTile
-                label="Upsell"
-                value={fNum(card.upsellPurchases)}
-                detail={fBRL(card.upsellRevenue)}
-                accent="emerald"
-                highlight={card.upsellPurchases > 0}
-              />
-            </>
-          )}
         </div>
-        <button
-          type="button"
-          onClick={() => setShowAdditionalMetrics((current) => !current)}
-          aria-expanded={showAdditionalMetrics}
-          className="-mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
-        >
-          {showAdditionalMetrics ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-          {showAdditionalMetrics ? "Ver menos métricas" : "Ver order bump e upsell"}
-        </button>
+
+        <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2.5">
+          <div className="text-[10px] font-medium uppercase tracking-wide text-amber-300">Reembolsos</div>
+          <div className="mt-1 flex items-center justify-between gap-3 text-xs">
+            <span>{fNum(card.refunds)} pedido{card.refunds === 1 ? "" : "s"}</span>
+            <span>{card.refundRate != null ? fPct(card.refundRate, 1) : "—"}</span>
+            <span className="font-semibold">{fBRL(card.refundValue)}</span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 rounded-xl border border-violet-500/20 bg-violet-500/5 p-2">
+          <MetricTile
+            label="Order bump"
+            value={`${fNum(card.orderBumpPurchases)} pedidos`}
+            detail={`${fBRL(card.orderBumpRevenue)} · ${fPct(card.orderBumpConversion, 1)} do front`}
+            accent="violet"
+            highlight={card.orderBumpPurchases > 0}
+          />
+          <MetricTile
+            label="Upsell"
+            value={`${fNum(card.upsellPurchases)} pedidos`}
+            detail={`${fBRL(card.upsellRevenue)} · ${fPct(card.upsellConversion, 1)} do front`}
+            accent="emerald"
+            highlight={card.upsellPurchases > 0}
+          />
+        </div>
 
         {/* Secondary Metrics */}
         <div className="grid gap-x-4 gap-y-2 sm:grid-cols-2">
           <MetricBar
             label="CPM"
             value={card.cpm != null ? fBRL(card.cpm) : "—"}
-            width={card.cpm != null ? Math.min(100, (card.cpm / metricScale.cpm) * 100) : 0}
+            metric={card.cpm}
+            average={metricAverages.cpm}
             tone="amber"
           />
           <MetricBar
             label="CTR"
             value={card.ctr != null ? fPct(card.ctr, 2) : "—"}
-            width={card.ctr != null ? Math.min(100, (card.ctr / metricScale.ctr) * 100) : 0}
+            metric={card.ctr}
+            average={metricAverages.ctr}
             tone="cyan"
           />
           <MetricBar
             label="Play Rate"
             value={vturbMetrics?.playRate != null ? fPct(vturbMetrics.playRate, 1) : "—"}
-            width={vturbMetrics?.playRate != null ? Math.min(100, (vturbMetrics.playRate / metricScale.playRate) * 100) : 0}
+            metric={vturbMetrics?.playRate}
+            average={metricAverages.playRate}
             tone="emerald"
           />
           <MetricBar
             label="Ret. Pitch"
             value={vturbMetrics?.pitchRetention != null ? fPct(vturbMetrics.pitchRetention, 1) : "—"}
-            width={vturbMetrics?.pitchRetention != null ? Math.min(100, (vturbMetrics.pitchRetention / metricScale.pitchRetention) * 100) : 0}
+            metric={vturbMetrics?.pitchRetention}
+            average={metricAverages.pitchRetention}
             tone="violet"
           />
           <MetricBar
             label="Hook"
             value={card.hookRate != null ? fPct(card.hookRate, 1) : "—"}
-            width={card.hookRate != null ? Math.min(100, (card.hookRate / metricScale.hookRate) * 100) : 0}
+            metric={card.hookRate}
+            average={metricAverages.hookRate}
             tone="amber"
           />
           <MetricBar
             label="AOV"
             value={card.aov != null ? fBRL(card.aov) : "—"}
-            width={card.aov != null ? Math.min(100, (card.aov / metricScale.aov) * 100) : 0}
+            metric={card.aov}
+            average={metricAverages.aov}
             tone="cyan"
           />
         </div>
 
+        <div className="min-h-[52px] rounded-xl border border-border/30 bg-muted/20 px-3 py-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[11px] font-medium">{pipelineProgressLabel(card)}</span>
+            {(card.pipelineStatus === "transcribing" || card.pipelineStatus === "analyzing") && (
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+            )}
+          </div>
+          {card.transcript && (
+            <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-muted-foreground">
+              {card.transcript}
+            </p>
+          )}
+          {card.pipelineStatus === "failed" && (
+            <p className="mt-1 text-[11px] text-destructive">
+              {card.analysisErrorMessage || card.transcriptErrorMessage || "O processamento não foi concluído. Tente novamente."}
+            </p>
+          )}
+        </div>
+
         {/* Actions */}
-        <div className="grid grid-cols-2 gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={onAnalyze}
-            disabled={actionDisabled}
-            className="h-9 gap-2 rounded-xl border-border/60 bg-background/40 text-xs"
-          >
-            {analyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
-            {analyzeLabel}
-          </Button>
+        <div className={cn("grid gap-2", onAnalyze ? "grid-cols-2" : "grid-cols-1")}>
+          {onAnalyze && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onAnalyze}
+              disabled={actionDisabled}
+              className="h-9 gap-2 rounded-xl border-border/60 bg-background/40 text-xs"
+            >
+              {analyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
+              {analyzeLabel}
+            </Button>
+          )}
           <button
             type="button"
             onClick={onToggle}
@@ -1399,19 +1461,19 @@ function CreativeCard({
         {/* Expanded Content */}
         {expanded && (
           <div className="space-y-4 pt-2 animate-in slide-in-from-top-2 duration-300">
-            <Tabs defaultValue="summary" className="w-full">
+            <Tabs defaultValue={card.transcript ? "transcript" : "summary"} className="w-full">
               <TabsList className="w-full grid grid-cols-2 h-9 p-1 bg-muted/40 rounded-xl">
-                <TabsTrigger
-                  value="summary"
-                  className="rounded-lg text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm"
-                >
-                  Resumo
-                </TabsTrigger>
                 <TabsTrigger
                   value="transcript"
                   className="rounded-lg text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm"
                 >
                   Transcrição
+                </TabsTrigger>
+                <TabsTrigger
+                  value="summary"
+                  className="rounded-lg text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm"
+                >
+                  Insights
                 </TabsTrigger>
               </TabsList>
 
@@ -1657,24 +1719,79 @@ function InfoPill({ label, value }: { label: string; value: string }) {
   );
 }
 
+function weightedAverage(values: Array<{ value: number | null; weight: number }>) {
+  const valid = values.filter((entry): entry is { value: number; weight: number } => entry.value != null);
+  const weight = valid.reduce((sum, entry) => sum + entry.weight, 0);
+  return weight > 0
+    ? valid.reduce((sum, entry) => sum + entry.value * entry.weight, 0) / weight
+    : null;
+}
+
+function formatMetricAverage(label: string, value: number) {
+  return label === "CPM" || label === "AOV" ? fBRL(value) : fPct(value, 1);
+}
+
+function pipelineProgressLabel(card: CreativeAssetCard) {
+  switch (card.pipelineStatus) {
+    case "transcribing":
+    case "oversized_queued":
+      return "Transcrevendo";
+    case "analyzing":
+      return card.transcript ? "Transcrição pronta · analisando insights" : "Analisando";
+    case "ready":
+      return card.analysisCoverage === "partial" ? "Pronto com análise parcial" : "Pronto";
+    case "failed":
+      return "Falhou";
+    case "missing_media":
+      return "Mídia indisponível";
+    default:
+      return "Não processado";
+  }
+}
+
+function groupRuleChips(rules: CreativeGroupRules) {
+  const chips: string[] = [];
+  if (rules.minSpend != null) chips.push(`Gasto ≥ ${fBRL(rules.minSpend)}`);
+  if (rules.minHookRate != null) chips.push(`Hook ≥ ${fPct(rules.minHookRate, 1)}`);
+  if (rules.minRoas != null) chips.push(`ROAS ≥ ${rules.minRoas.toFixed(2)}x`);
+  if (rules.minCtr != null) chips.push(`CTR ≥ ${fPct(rules.minCtr, 1)}`);
+  if (rules.maxCpm != null) chips.push(`CPM ≤ ${fBRL(rules.maxCpm)}`);
+  if (rules.campaignQuery) chips.push(`Campanha: ${rules.campaignQuery}`);
+  if (rules.adsetQuery) chips.push(`Conjunto: ${rules.adsetQuery}`);
+  if (rules.mediaType && rules.mediaType !== "all") chips.push(`Mídia: ${labelForMediaType(rules.mediaType)}`);
+  return chips;
+}
+
 function MetricBar({
   label,
   value,
-  width,
+  metric,
+  average,
   tone,
 }: {
   label: string;
   value: string;
-  width: number;
+  metric: number | null | undefined;
+  average: number | null;
   tone: "amber" | "cyan" | "emerald" | "violet";
 }) {
+  const difference = metric != null && average != null && average !== 0
+    ? ((metric - average) / Math.abs(average)) * 100
+    : null;
+  const width = difference == null ? 0 : Math.min(50, Math.abs(difference) / 2);
+  const above = (difference ?? 0) >= 0;
   return (
-    <div className="flex min-w-0 items-center gap-2">
-      <span className="w-[68px] shrink-0 truncate text-[11px] font-medium text-muted-foreground" title={label}>{label}</span>
-      <div className="flex-1 h-1.5 rounded-full bg-muted/50 overflow-hidden">
+    <div className="min-w-0">
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate text-[11px] font-medium text-muted-foreground" title={label}>{label}</span>
+        <span className="shrink-0 tabular-nums text-xs font-medium text-foreground/80">{value}</span>
+      </div>
+      <div className="relative mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted/50">
+        <div className="absolute left-1/2 top-0 h-full w-px bg-foreground/30" />
         <div
           className={cn(
-            "h-full rounded-full transition-all duration-500 ease-out",
+            "absolute top-0 h-full rounded-full transition-all duration-500 ease-out",
+            above ? "left-1/2" : "right-1/2",
             tone === "amber" && "bg-gradient-to-r from-amber-500 to-amber-400",
             tone === "cyan" && "bg-gradient-to-r from-cyan-500 to-cyan-400",
             tone === "emerald" && "bg-gradient-to-r from-emerald-500 to-emerald-400",
@@ -1683,7 +1800,12 @@ function MetricBar({
           style={{ width: width > 0 ? `${Math.max(2, width)}%` : "0%" }}
         />
       </div>
-      <span className="w-14 shrink-0 text-right tabular-nums text-xs font-medium text-foreground/80">{value}</span>
+      <div className="mt-1 flex items-center justify-between text-[9px] text-muted-foreground/70">
+        <span>Média {average == null ? "—" : formatMetricAverage(label, average)}</span>
+        <span className={cn(difference != null && (above ? "text-emerald-400" : "text-amber-400"))}>
+          {difference == null ? "sem comparação" : `${above ? "+" : ""}${difference.toFixed(0)}%`}
+        </span>
+      </div>
     </div>
   );
 }
@@ -2020,6 +2142,9 @@ function buildCreativeVturbMetrics(
     }
 
     result.set(card.id, {
+      pageviews,
+      plays,
+      pitchReached,
       playRate: pageviews > 0
         ? (plays / pageviews) * 100
         : directPlayRateWeight > 0
@@ -2084,7 +2209,16 @@ function metricNumber(value: unknown) {
 
 function groupFormFromRow(group: CreativeGroupRow): GroupFormState {
   const rules = parseCreativeGroupRules(group.rules);
-  const sortKeys: CreativeSortKey[] = ["purchases", "roas", "hook_rate", "ctr", "cpm", "spend"];
+  const sortKeys: CreativeSortKey[] = [
+    "purchases",
+    "roas",
+    "refund_rate",
+    "aov",
+    "hook_rate",
+    "ctr",
+    "cpm",
+    "spend",
+  ];
   const sortKey = sortKeys.includes(group.sort_key as CreativeSortKey)
     ? (group.sort_key as CreativeSortKey)
     : "purchases";
@@ -2092,7 +2226,6 @@ function groupFormFromRow(group: CreativeGroupRow): GroupFormState {
   return {
     name: group.name,
     mediaType: rules.mediaType ?? "all",
-    pipelineStatus: rules.pipelineStatus ?? "all",
     campaignQuery: rules.campaignQuery ?? "",
     adsetQuery: rules.adsetQuery ?? "",
     minHookRate: numberInputValue(rules.minHookRate),
@@ -2111,7 +2244,6 @@ function numberInputValue(value: number | null | undefined) {
 function buildGroupRulesFromForm(form: GroupFormState): CreativeGroupRules {
   const rules: CreativeGroupRules = {};
   if (form.mediaType !== "all") rules.mediaType = form.mediaType;
-  if (form.pipelineStatus !== "all") rules.pipelineStatus = form.pipelineStatus;
   if (form.campaignQuery.trim()) rules.campaignQuery = form.campaignQuery.trim();
   if (form.adsetQuery.trim()) rules.adsetQuery = form.adsetQuery.trim();
   const numericRules: Array<[keyof CreativeGroupRules, string]> = [

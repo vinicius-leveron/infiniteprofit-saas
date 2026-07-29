@@ -259,6 +259,34 @@ describe("aggregate daily core", () => {
     ]);
   });
 
+  it("counts bump conversion by unique front order instead of product quantity", () => {
+    const metrics = aggregateOneDay(
+      Array.from({ length: 5 }, (_, index) => ({
+        source: "gateway",
+        event_type: "purchase.approved",
+        external_id: `front-${index + 1}`,
+        payload: {
+          transaction_id: `front-${index + 1}`,
+          total: index === 0 ? 250 : 100,
+          net: index === 0 ? 225 : 90,
+          is_front: true,
+          items: index === 0
+            ? [
+                { external_id: "front", name: "Front", price: 100, type: "main", is_bump: false },
+                { external_id: "bump-a", name: "Bump A", price: 50, type: "orderbump", is_bump: true },
+                { external_id: "bump-b", name: "Bump B", price: 100, type: "orderbump", is_bump: true },
+              ]
+            : [{ external_id: "front", name: "Front", price: 100, type: "main", is_bump: false }],
+        },
+      })),
+    );
+
+    expect(metrics.vendas_front).toBe(5);
+    expect(metrics.order_bump_orders).toBe(1);
+    expect(metrics.conv_geral_orderbump).toBe(20);
+    expect(metrics.aov).toBe(130);
+  });
+
   it("uses Hubla seller receiver total from raw payload as net revenue", () => {
     const metrics = aggregateOneDay([
       {

@@ -60,8 +60,6 @@ export default function OrganizationTeam() {
     currentOrganizationRole === "admin" ||
     organization?.role === "owner" ||
     organization?.role === "admin";
-  const canInviteOwner =
-    currentOrganizationRole === "owner" || organization?.role === "owner";
 
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [invites, setInvites] = useState<AdminInvite[]>([]);
@@ -73,10 +71,8 @@ export default function OrganizationTeam() {
   const [renewingId, setRenewingId] = useState<string | null>(null);
   const [revokingId, setRevokingId] = useState<string | null>(null);
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!canInviteOwner && role === "owner") setRole("admin");
-  }, [canInviteOwner, role]);
+  const [ownershipTargetId, setOwnershipTargetId] = useState("");
+  const [transferringOwnership, setTransferringOwnership] = useState(false);
 
   const loadTeam = useCallback(async () => {
     if (!organization?.id) return;
@@ -258,6 +254,32 @@ export default function OrganizationTeam() {
     }
   }
 
+  async function transferOwnership() {
+    if (!organization?.id || !ownershipTargetId) return;
+    const target = members.find((member) => member.userId === ownershipTargetId);
+    if (!target) return;
+    const confirmed = window.confirm(
+      `Transferir a função de Administrador principal para ${target.fullName || target.email || "este Admin"}? Você passará a ser Admin.`,
+    );
+    if (!confirmed) return;
+    setTransferringOwnership(true);
+    try {
+      await runTeamAccess({
+        scope_type: "organization",
+        scope_id: organization.id,
+        action: "transfer_ownership",
+        user_id: ownershipTargetId,
+      });
+      setOwnershipTargetId("");
+      await loadTeam();
+      toast.success("Propriedade transferida");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Falha ao transferir propriedade.");
+    } finally {
+      setTransferringOwnership(false);
+    }
+  }
+
   const status = useMemo(() => {
     if (loading) return "loading" as const;
     if (errorMessage || !organization) return "error" as const;
@@ -268,7 +290,7 @@ export default function OrganizationTeam() {
     <AdminPage
       context={organization?.name ?? "Organização"}
       title="Equipe da organização"
-      description="Owners e admins recebem acesso operacional aos clientes da organização. A origem desse acesso fica explícita nas equipes de cada cliente."
+      description="Admins operam todos os clientes. Membros visualizam dashboards e a saúde permitida, sem acesso a credenciais ou administração."
     >
       <AsyncState
         status={status}
@@ -283,10 +305,10 @@ export default function OrganizationTeam() {
                 id="organization-members-title"
                 className="text-lg font-semibold leading-7"
               >
-                Administradores
+                Pessoas da organização
               </h2>
               <p className="text-sm text-muted-foreground">
-                Estas pessoas herdam acesso administrativo aos clientes da organização.
+                O papel é herdado em todos os clientes da organização.
               </p>
             </div>
           </div>
@@ -295,24 +317,77 @@ export default function OrganizationTeam() {
             currentUser={user}
             emptyMessage="Nenhum administrador encontrado."
             canManage={canManage}
-            canGrantOwner={canInviteOwner}
-            availableRoles={["owner", "admin"]}
+            canGrantOwner={false}
+            availableRoles={["admin", "member"]}
             busyUserId={busyUserId}
             onUpdateRole={(member, nextRole) => void updateMemberRole(member, nextRole)}
             onRemove={(member) => void removeMember(member)}
           />
         </section>
 
+        {(currentOrganizationRole === "owner" || organization?.role === "owner") && (
+          <Card>
+            <CardHeader className="p-5 md:p-6">
+              <CardTitle className="text-lg leading-7">Administrador principal</CardTitle>
+              <CardDescription>
+                Transfira a propriedade somente para um Admin existente. A troca é transacional e fica registrada na auditoria.
+              </CardDescription>
+            </CardHeader>
+            <Separator />
+            <CardContent className="flex flex-col gap-3 p-5 sm:flex-row sm:items-end md:p-6">
+              <div className="min-w-0 flex-1 space-y-2">
+                <Label htmlFor="ownership-target">Novo Administrador principal</Label>
+                <Select value={ownershipTargetId} onValueChange={setOwnershipTargetId}>
+                  <SelectTrigger id="ownership-target" className="min-h-11">
+                    <SelectValue placeholder="Selecione um Admin" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {members.filter((member) => member.role === "admin").map((member) => (
+                      <SelectItem key={member.userId} value={member.userId}>
+                        {member.fullName || member.email || "Admin"}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11"
+                disabled={!ownershipTargetId || transferringOwnership}
+                onClick={() => void transferOwnership()}
+              >
+                {transferringOwnership && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Transferir propriedade
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
         {canManage && (
           <Card>
             <CardHeader className="p-5 md:p-6">
-              <CardTitle className="text-lg leading-7">Convidar administrador</CardTitle>
+              <CardTitle className="text-lg leading-7">Convidar pessoa</CardTitle>
               <CardDescription>
-                Owners podem conceder Owner; Admins administram apenas o papel Admin.
+                Admin gerencia clientes, funis, integrações e equipe. Membro visualiza dashboards e saúde em todos os clientes.
               </CardDescription>
             </CardHeader>
             <Separator />
             <CardContent className="p-5 md:p-6">
+              <div className="mb-5 grid gap-3 sm:grid-cols-2">
+                <div className="rounded-xl border border-border/50 bg-muted/20 p-3">
+                  <p className="text-sm font-semibold">Admin</p>
+                  <p className="mt-1 text-xs leading-4 text-muted-foreground">
+                    Administra clientes, funis, integrações, equipe e sincronizações.
+                  </p>
+                </div>
+                <div className="rounded-xl border border-border/50 bg-muted/20 p-3">
+                  <p className="text-sm font-semibold">Membro</p>
+                  <p className="mt-1 text-xs leading-4 text-muted-foreground">
+                    Visualiza dashboards e saúde permitida de todos os clientes, sem ações administrativas.
+                  </p>
+                </div>
+              </div>
               <form
                 className="grid items-end gap-4 md:grid-cols-[minmax(0,1fr),220px,auto]"
                 onSubmit={(event) => {
@@ -342,7 +417,7 @@ export default function OrganizationTeam() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="admin">Admin</SelectItem>
-                      {canInviteOwner && <SelectItem value="owner">Owner</SelectItem>}
+                      <SelectItem value="member">Membro</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -379,7 +454,7 @@ export default function OrganizationTeam() {
             invites={invites}
             kind="organization"
             canManage={canManage}
-            canManageOwner={canInviteOwner}
+            canManageOwner={false}
             onCopy={(url) => void copyInvite(url)}
             onRenew={(invite) => void renewInvite(invite)}
             onRevoke={(invite) => void revokeInvite(invite)}

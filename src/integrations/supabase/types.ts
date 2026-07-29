@@ -85,6 +85,107 @@ export type Database = {
           },
         ]
       }
+      daily_ad_dimension_metrics: {
+        Row: {
+          account_id: string
+          ad_id: string
+          ad_name: string | null
+          adset_id: string
+          adset_name: string | null
+          campaign_id: string
+          campaign_name: string | null
+          checkouts: number
+          cliques: number
+          event_date: string
+          fat_bruto: number
+          fat_liquido: number
+          chegaram_pitch: number
+          hook_count: number
+          impressoes: number
+          investimento: number
+          landing_pageviews: number
+          order_bump_orders: number
+          pageviews: number
+          plays_unicos: number
+          project_id: string
+          reembolsos: number
+          updated_at: string
+          upsell_orders: number
+          valor_reembolsado: number
+          vendas_front: number
+          vendas_totais: number
+          workspace_id: string
+        }
+        Insert: {
+          account_id?: string
+          ad_id: string
+          ad_name?: string | null
+          adset_id?: string
+          adset_name?: string | null
+          campaign_id?: string
+          campaign_name?: string | null
+          checkouts?: number
+          cliques?: number
+          event_date: string
+          fat_bruto?: number
+          fat_liquido?: number
+          chegaram_pitch?: number
+          hook_count?: number
+          impressoes?: number
+          investimento?: number
+          landing_pageviews?: number
+          order_bump_orders?: number
+          pageviews?: number
+          plays_unicos?: number
+          project_id: string
+          reembolsos?: number
+          updated_at?: string
+          upsell_orders?: number
+          valor_reembolsado?: number
+          vendas_front?: number
+          vendas_totais?: number
+          workspace_id: string
+        }
+        Update: {
+          account_id?: string
+          ad_id?: string
+          ad_name?: string | null
+          adset_id?: string
+          adset_name?: string | null
+          campaign_id?: string
+          campaign_name?: string | null
+          checkouts?: number
+          cliques?: number
+          event_date?: string
+          fat_bruto?: number
+          fat_liquido?: number
+          chegaram_pitch?: number
+          hook_count?: number
+          impressoes?: number
+          investimento?: number
+          landing_pageviews?: number
+          order_bump_orders?: number
+          pageviews?: number
+          plays_unicos?: number
+          project_id?: string
+          reembolsos?: number
+          updated_at?: string
+          upsell_orders?: number
+          valor_reembolsado?: number
+          vendas_front?: number
+          vendas_totais?: number
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "daily_ad_dimension_metrics_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       daily_metrics: {
         Row: {
           aov: number | null
@@ -97,6 +198,7 @@ export type Database = {
           chk_venda: number | null
           cliques: number | null
           conv_geral_orderbump: number | null
+          conv_geral_upsell: number | null
           cpa_front: number | null
           cpc: number | null
           cpm: number | null
@@ -115,6 +217,7 @@ export type Database = {
           landing_pageviews: number | null
           lucro: number | null
           obs: string | null
+          order_bump_orders: number | null
           pageviews: number | null
           pass_chk: number | null
           pitch_chk: number | null
@@ -129,6 +232,7 @@ export type Database = {
           taxa_carreg: number | null
           taxa_reembolso: number | null
           updated_at: string
+          upsell_orders: number | null
           user_id: string
           valor_reembolsado: number | null
           vendas_front: number | null
@@ -146,6 +250,7 @@ export type Database = {
           chk_venda?: number | null
           cliques?: number | null
           conv_geral_orderbump?: number | null
+          conv_geral_upsell?: number | null
           cpa_front?: number | null
           cpc?: number | null
           cpm?: number | null
@@ -164,6 +269,7 @@ export type Database = {
           landing_pageviews?: number | null
           lucro?: number | null
           obs?: string | null
+          order_bump_orders?: number | null
           pageviews?: number | null
           pass_chk?: number | null
           pitch_chk?: number | null
@@ -178,6 +284,7 @@ export type Database = {
           taxa_carreg?: number | null
           taxa_reembolso?: number | null
           updated_at?: string
+          upsell_orders?: number | null
           user_id: string
           valor_reembolsado?: number | null
           vendas_front?: number | null
@@ -195,6 +302,7 @@ export type Database = {
           chk_venda?: number | null
           cliques?: number | null
           conv_geral_orderbump?: number | null
+          conv_geral_upsell?: number | null
           cpa_front?: number | null
           cpc?: number | null
           cpm?: number | null
@@ -213,6 +321,7 @@ export type Database = {
           landing_pageviews?: number | null
           lucro?: number | null
           obs?: string | null
+          order_bump_orders?: number | null
           pageviews?: number | null
           pass_chk?: number | null
           pitch_chk?: number | null
@@ -227,6 +336,7 @@ export type Database = {
           taxa_carreg?: number | null
           taxa_reembolso?: number | null
           updated_at?: string
+          upsell_orders?: number | null
           user_id?: string
           valor_reembolsado?: number | null
           vendas_front?: number | null
@@ -629,6 +739,7 @@ export type Database = {
           model: string | null
           processed_at: string | null
           project_id: string
+          prompt_hash: string | null
           prompt_version: string | null
           provider: string | null
           scores: Json
@@ -662,6 +773,7 @@ export type Database = {
           model?: string | null
           processed_at?: string | null
           project_id: string
+          prompt_hash?: string | null
           prompt_version?: string | null
           provider?: string | null
           scores?: Json
@@ -695,6 +807,7 @@ export type Database = {
           model?: string | null
           processed_at?: string | null
           project_id?: string
+          prompt_hash?: string | null
           prompt_version?: string | null
           provider?: string | null
           scores?: Json
@@ -761,6 +874,10 @@ export type Database = {
           user_id: string
           workspace_id: string
           link_ctr: number | null
+          net_revenue: number
+          profit: number
+          order_bump_conversion: number | null
+          upsell_conversion: number | null
         }
         Insert: {
           asset_id: string
@@ -791,6 +908,10 @@ export type Database = {
           user_id: string
           workspace_id: string
           link_ctr?: number | null
+          net_revenue?: number
+          profit?: number
+          order_bump_conversion?: number | null
+          upsell_conversion?: number | null
         }
         Update: {
           asset_id?: string
@@ -821,6 +942,10 @@ export type Database = {
           user_id?: string
           workspace_id?: string
           link_ctr?: number | null
+          net_revenue?: number
+          profit?: number
+          order_bump_conversion?: number | null
+          upsell_conversion?: number | null
         }
         Relationships: [
           {
@@ -1011,6 +1136,47 @@ export type Database = {
           },
         ]
       }
+      transaction_ad_attribution: {
+        Row: {
+          ad_id: string
+          attributed_at: string
+          attribution_method: string
+          confidence: number
+          project_id: string
+          transaction_id: string
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          ad_id: string
+          attributed_at?: string
+          attribution_method: string
+          confidence?: number
+          project_id: string
+          transaction_id: string
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          ad_id?: string
+          attributed_at?: string
+          attribution_method?: string
+          confidence?: number
+          project_id?: string
+          transaction_id?: string
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "transaction_ad_attribution_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       simulations: {
         Row: {
           created_at: string
@@ -1092,6 +1258,51 @@ export type Database = {
         Returns: Database["public"]["Tables"]["creative_asset_jobs"]["Row"][]
       }
       delete_my_ai_settings: { Args: never; Returns: undefined }
+      get_dashboard_dimension_metrics: {
+        Args: {
+          _account_ids?: string[]
+          _adset_ids?: string[]
+          _campaign_ids?: string[]
+          _from?: string | null
+          _project_id: string
+          _to?: string | null
+        }
+        Returns: {
+          checkouts: number
+          cliques: number
+          event_date: string
+          fat_bruto: number
+          fat_liquido: number
+          chegaram_pitch: number
+          impressoes: number
+          investimento: number
+          landing_pageviews: number
+          order_bump_orders: number
+          pageviews: number
+          plays_unicos: number
+          reembolsos: number
+          upsell_orders: number
+          valor_reembolsado: number
+          vendas_front: number
+          vendas_totais: number
+        }[]
+      }
+      get_dashboard_sales_heatmap: {
+        Args: {
+          _account_ids?: string[]
+          _adset_ids?: string[]
+          _campaign_ids?: string[]
+          _from: string
+          _project_id: string
+          _to: string
+        }
+        Returns: {
+          hour: number
+          revenue: number
+          sales: number
+          weekday: number
+        }[]
+      }
       get_my_ai_settings_safe: {
         Args: never
         Returns: {
@@ -1103,6 +1314,33 @@ export type Database = {
           skill_text: string
           updated_at: string
         }[]
+      }
+      list_creative_processing_status_safe: {
+        Args: { _project_id: string }
+        Returns: {
+          asset_id: string
+          finished_at: string | null
+          job_trigger: string
+          manual_requested_at: string | null
+          status: string
+        }[]
+      }
+      list_dashboard_ad_dimensions: {
+        Args: { _project_id: string }
+        Returns: {
+          account_id: string | null
+          account_label: string | null
+          ad_id: string
+          ad_name: string | null
+          adset_id: string | null
+          adset_name: string | null
+          campaign_id: string | null
+          campaign_name: string | null
+        }[]
+      }
+      refresh_dashboard_ad_dimensions: {
+        Args: { _dates?: string[] | null; _project_id: string }
+        Returns: number
       }
       upsert_my_ai_settings: {
         Args: {

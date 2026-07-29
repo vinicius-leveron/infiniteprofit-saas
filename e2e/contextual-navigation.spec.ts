@@ -170,7 +170,7 @@ test.describe("contextual navigation shell", () => {
     await expect(page.getByText("Configurações gerais")).toBeVisible();
   });
 
-  test("renders only the nine Dashboard destinations", async ({ page }, testInfo) => {
+  test("renders only the seven supported Dashboard destinations", async ({ page }, testInfo) => {
     await page.goto(`/dashboard?project=${FUNNEL_ID}`);
 
     if (testInfo.project.name === "mobile-chrome") {
@@ -182,7 +182,7 @@ test.describe("contextual navigation shell", () => {
       name: "Navegação de Dashboard",
     });
     await expect(navigation).toBeVisible();
-    await expect(navigation.getByRole("button")).toHaveCount(9);
+    await expect(navigation.getByRole("button")).toHaveCount(7);
     await expect(navigation.getByText("Visão geral")).toBeVisible();
     await expect(navigation.getByText("Clientes")).toHaveCount(0);
     await expect(navigation.getByText("Fontes de dados")).toHaveCount(0);

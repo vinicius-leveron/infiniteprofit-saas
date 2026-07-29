@@ -68,6 +68,9 @@ export interface DailyRow {
   chkVenda: number | null;
   obs: string;
   convGeralOrderbump: number | null;
+  convGeralUpsell?: number | null;
+  orderBumpOrders?: number | null;
+  upsellOrders?: number | null;
   proporcaoFunilFront: number | null;
   bumps: BumpDaily[];
 }

@@ -8,7 +8,7 @@ import {
   Loader2,
   Plus,
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { AdminPage } from "@/components/admin/AdminPage";
 import { AsyncState } from "@/components/admin/AsyncState";
 import { StatusPill, type StatusTone } from "@/components/admin/StatusPill";
@@ -70,6 +70,7 @@ function summarizeClient(row: ClientOperationalSummaryRow): ClientSummary {
 
 export default function Clients() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
   const {
     currentOrganization,
@@ -94,6 +95,11 @@ export default function Clients() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [clientName, setClientName] = useState("");
   const [creating, setCreating] = useState(false);
+
+  useEffect(() => {
+    if (!canCreate || searchParams.get("new") !== "1") return;
+    setDialogOpen(true);
+  }, [canCreate, searchParams]);
 
   const loadClients = useCallback(async () => {
     if (!organization?.id) return;
@@ -157,7 +163,17 @@ export default function Clients() {
   }, [clients.length, errorMessage, loading]);
 
   const createAction = canCreate ? (
-    <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+    <Dialog
+      open={dialogOpen}
+      onOpenChange={(open) => {
+        setDialogOpen(open);
+        if (!open && searchParams.has("new")) {
+          const next = new URLSearchParams(searchParams);
+          next.delete("new");
+          setSearchParams(next, { replace: true });
+        }
+      }}
+    >
       <DialogTrigger asChild>
         <Button className="min-h-11 gap-2">
           <Plus className="h-4 w-4" aria-hidden="true" />
@@ -217,7 +233,7 @@ export default function Clients() {
       context={organization?.name ?? "Organização"}
       title="Clientes"
       description="Acompanhe a operação de cada cliente e entre no contexto certo antes de gerenciar funis ou integrações."
-      action={status === "ready" ? createAction : null}
+      action={createAction}
     >
       <AsyncState
         status={status}

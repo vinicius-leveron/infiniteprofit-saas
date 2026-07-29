@@ -30,21 +30,43 @@ import {
 
 interface AdsPanelProps {
   projectId: string | null;
+  allowedAdIds?: string[] | null;
   dateRange?: {
     from: string | null;
     to: string | null;
   };
 }
 
+type DashboardAdMetricRow = {
+  account_id: string;
+  campaign_id: string;
+  campaign_name: string | null;
+  adset_id: string;
+  adset_name: string | null;
+  ad_id: string;
+  ad_name: string | null;
+  investimento: number | null;
+  impressoes: number | null;
+  cliques: number | null;
+  hook_count: number | null;
+  pageviews: number | null;
+  plays_unicos: number | null;
+  chegaram_pitch: number | null;
+  checkouts: number | null;
+  vendas_front: number | null;
+  fat_bruto: number | null;
+  fat_liquido: number | null;
+  order_bump_orders: number | null;
+  upsell_orders: number | null;
+};
+
 type SortKey = FunnelSortKey;
 type ViewMode = "hierarchy" | "flat";
 
-export function AdsFunnelView({ projectId, dateRange }: AdsPanelProps) {
+export function AdsFunnelView({ projectId, dateRange, allowedAdIds = null }: AdsPanelProps) {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
-  const [metaEvents, setMetaEvents] = useState<Array<{ payload: RawMetaPayload | null }>>([]);
-  const [vturbEvents, setVturbEvents] = useState<Array<{ payload: RawVturbPayload | null }>>([]);
-  const [gatewayEvents, setGatewayEvents] = useState<Array<{ event_type: string; payload: RawGatewayPayload | null }>>([]);
+  const [metricRows, setMetricRows] = useState<DashboardAdMetricRow[]>([]);
   const [sortKey, setSortKey] = useState<SortKey>("spend");
   const [viewMode, setViewMode] = useState<ViewMode>("hierarchy");
   const [expandedCampaigns, setExpandedCampaigns] = useState<Set<string>>(new Set());
@@ -52,57 +74,79 @@ export function AdsFunnelView({ projectId, dateRange }: AdsPanelProps) {
 
   useEffect(() => {
     if (!projectId) return;
+    if (allowedAdIds && allowedAdIds.length === 0) {
+      setMetricRows([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
 
-    let metaQuery = supabase
-      .from("raw_events")
-      .select("payload")
-      .eq("project_id", projectId)
-      .eq("source", "meta")
-      .eq("event_type", "insight_ad");
-
-    let vturbQuery = supabase
-      .from("raw_events")
-      .select("payload")
-      .eq("project_id", projectId)
-      .eq("source", "vturb")
-      .eq("event_type", "traffic_by_source");
-
-    let gatewayQuery = supabase
-      .from("raw_events")
-      .select("event_type, payload")
-      .eq("project_id", projectId)
-      .eq("source", "gateway")
-      .in("event_type", ["purchase.approved", "checkout_created"]);
+    let query = supabase
+      .from("daily_ad_dimension_metrics")
+      .select("account_id, campaign_id, campaign_name, adset_id, adset_name, ad_id, ad_name, investimento, impressoes, cliques, hook_count, pageviews, plays_unicos, chegaram_pitch, checkouts, vendas_front, fat_bruto, fat_liquido, order_bump_orders, upsell_orders")
+      .eq("project_id", projectId);
 
     if (dateRange?.from) {
-      metaQuery = metaQuery.gte("event_date", dateRange.from);
-      vturbQuery = vturbQuery.gte("event_date", dateRange.from);
-      gatewayQuery = gatewayQuery.gte("event_date", dateRange.from);
+      query = query.gte("event_date", dateRange.from);
     }
     if (dateRange?.to) {
-      metaQuery = metaQuery.lte("event_date", dateRange.to);
-      vturbQuery = vturbQuery.lte("event_date", dateRange.to);
-      gatewayQuery = gatewayQuery.lte("event_date", dateRange.to);
+      query = query.lte("event_date", dateRange.to);
+    }
+    if (allowedAdIds) {
+      query = query.in("ad_id", allowedAdIds);
     }
 
-    Promise.all([
-      // Meta ad insights
-      metaQuery.limit(5000),
-      // VTurb traffic by source (para correlacao)
-      vturbQuery.limit(5000),
-      // Gateway events (para correlacao)
-      gatewayQuery.limit(5000),
-    ]).then(([meta, vturb, gateway]) => {
-      setMetaEvents((meta.data ?? []) as Array<{ payload: RawMetaPayload | null }>);
-      setVturbEvents((vturb.data ?? []) as Array<{ payload: RawVturbPayload | null }>);
-      setGatewayEvents((gateway.data ?? []) as Array<{ event_type: string; payload: RawGatewayPayload | null }>);
+    query.limit(10_000).then(({ data }) => {
+      setMetricRows((data ?? []) as unknown as DashboardAdMetricRow[]);
       setLoading(false);
     });
-  }, [dateRange?.from, dateRange?.to, projectId]);
+  }, [allowedAdIds, dateRange?.from, dateRange?.to, projectId]);
 
-  // Correlacionar dados de todas as fontes
+  // The safe daily dimension read model keeps Members away from raw provider
+  // payloads while preserving the same funnel correlation UI.
   const { ads, campaigns: hierarchy } = useMemo(() => {
+    const metaEvents: Array<{ payload: RawMetaPayload }> = metricRows.map((row) => ({
+      payload: {
+        ad_id: row.ad_id,
+        ad_name: row.ad_name ?? row.ad_id,
+        campaign_id: row.campaign_id,
+        campaign_name: row.campaign_name ?? row.campaign_id,
+        adset_id: row.adset_id,
+        adset_name: row.adset_name ?? row.adset_id,
+        spend: row.investimento ?? 0,
+        impressions: row.impressoes ?? 0,
+        clicks: row.cliques ?? 0,
+        hook_count: row.hook_count ?? 0,
+      },
+    }));
+    const vturbEvents: Array<{ payload: RawVturbPayload }> = metricRows.map((row) => ({
+      payload: {
+        utm_content: row.ad_id,
+        pageviews: row.pageviews ?? 0,
+        plays: row.plays_unicos ?? 0,
+        pitch_reached: row.chegaram_pitch ?? 0,
+      },
+    }));
+    const gatewayEvents: Array<{ event_type: string; payload: RawGatewayPayload }> = metricRows.flatMap((row) => [
+      {
+        event_type: "checkout_created",
+        payload: {
+          utm_content: row.ad_id,
+          count: row.checkouts ?? 0,
+        },
+      },
+      {
+        event_type: "purchase.approved",
+        payload: {
+          utm_content: row.ad_id,
+          count: row.vendas_front ?? 0,
+          total: row.fat_bruto ?? 0,
+          net: row.fat_liquido ?? 0,
+          order_bump_orders: row.order_bump_orders ?? 0,
+          upsell_orders: row.upsell_orders ?? 0,
+        },
+      },
+    ]);
     const result = correlateAdFunnel({
       metaEvents,
       vturbEvents,
@@ -122,7 +166,7 @@ export function AdsFunnelView({ projectId, dateRange }: AdsPanelProps) {
     }));
 
     return { ads: sortedAds, campaigns: sortedCampaigns };
-  }, [metaEvents, vturbEvents, gatewayEvents, sortKey]);
+  }, [metricRows, sortKey]);
 
   const toggleCampaign = (id: string) => {
     setExpandedCampaigns((prev) => {
@@ -259,7 +303,7 @@ export function AdsFunnelView({ projectId, dateRange }: AdsPanelProps) {
 
       {/* Summary Stats */}
       {ads.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3 mt-4 pt-4 border-t border-border/50">
+        <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-10 gap-3 mt-4 pt-4 border-t border-border/50">
           <SummaryStat
             label="Gasto Total"
             value={fBRL(ads.reduce((sum, a) => sum + a.spend, 0))}
@@ -271,6 +315,10 @@ export function AdsFunnelView({ projectId, dateRange }: AdsPanelProps) {
           <SummaryStat
             label="Receita (Gateway)"
             value={fBRL(ads.reduce((sum, a) => sum + a.gateway_revenue, 0))}
+          />
+          <SummaryStat
+            label="Lucro"
+            value={fBRL(ads.reduce((sum, ad) => sum + ad.profit, 0))}
           />
           <SummaryStat
             label="ROAS Real"
@@ -295,6 +343,14 @@ export function AdsFunnelView({ projectId, dateRange }: AdsPanelProps) {
           <SummaryStat
             label="Retenção Pitch"
             value={fPct(weightedRate(ads, "vturb_pitch_reached", "vturb_plays", "pitch_retention"))}
+          />
+          <SummaryStat
+            label="Conv. Order bump"
+            value={fPct(weightedRate(ads, "order_bump_orders", "gateway_purchases", "order_bump_conversion"))}
+          />
+          <SummaryStat
+            label="Conv. Upsell"
+            value={fPct(weightedRate(ads, "upsell_orders", "gateway_purchases", "upsell_conversion"))}
           />
           <SummaryStat
             label="Ads Correlacionados"
@@ -361,9 +417,15 @@ function HierarchyView({
                 <span className="text-muted-foreground">{fBRL(campaign.spend)}</span>
                 <span className="mx-1">→</span>
                 <span className="font-medium text-emerald-600">{fBRL(campaign.gateway_revenue)}</span>
+                <span className="ml-2 text-muted-foreground">Lucro {fBRL(campaign.profit)}</span>
+                <span className="ml-2 text-muted-foreground">CPA {fBRL(campaign.real_cpa)}</span>
               </div>
+              <RatePill label="CTR" value={campaign.ctr} />
+              <RatePill label="Hook" value={campaign.hook_rate} />
               <RatePill label="Play" value={campaign.play_rate} />
               <RatePill label="Ret" value={campaign.pitch_retention} />
+              <RatePill label="OB" value={campaign.order_bump_conversion} />
+              <RatePill label="Upsell" value={campaign.upsell_conversion} />
             </div>
           </button>
 
@@ -408,9 +470,15 @@ function HierarchyView({
                         <span className="text-muted-foreground">{fBRL(adset.spend)}</span>
                         <span className="mx-1">→</span>
                         <span className="font-medium text-emerald-600">{fBRL(adset.gateway_revenue)}</span>
+                        <span className="ml-2 text-muted-foreground">Lucro {fBRL(adset.profit)}</span>
+                        <span className="ml-2 text-muted-foreground">CPA {fBRL(adset.real_cpa)}</span>
                       </div>
+                      <RatePill label="CTR" value={adset.ctr} />
+                      <RatePill label="Hook" value={adset.hook_rate} />
                       <RatePill label="Play" value={adset.play_rate} />
                       <RatePill label="Ret" value={adset.pitch_retention} />
+                      <RatePill label="OB" value={adset.order_bump_conversion} />
+                      <RatePill label="Upsell" value={adset.upsell_conversion} />
                     </div>
                   </button>
 
@@ -449,9 +517,14 @@ function HierarchyView({
                               {ad.real_cpa && (
                                 <span className="ml-2 text-muted-foreground">CPA {fBRL(ad.real_cpa)}</span>
                               )}
+                              <span className="ml-2 text-muted-foreground">Lucro {fBRL(ad.profit)}</span>
                             </div>
+                            <RatePill label="CTR" value={ad.ctr} />
+                            <RatePill label="Hook" value={ad.hook_rate} />
                             <RatePill label="Play" value={ad.play_rate} />
                             <RatePill label="Ret" value={ad.pitch_retention} />
+                            <RatePill label="OB" value={ad.order_bump_conversion} />
+                            <RatePill label="Upsell" value={ad.upsell_conversion} />
                           </div>
                         </div>
                       ))}
@@ -476,6 +549,8 @@ function FlatTable({ ads }: { ads: AdFunnelMetric[] }) {
             <th className="text-left py-2 pr-3">Anúncio</th>
             <th className="text-left py-2 pr-3">Campanha</th>
             <th className="text-right py-2 pr-3">Gasto</th>
+            <th className="text-right py-2 pr-3">CTR</th>
+            <th className="text-right py-2 pr-3">Hook</th>
             <th className="text-right py-2 pr-3">Cliques link</th>
             <th className="text-right py-2 pr-3">Views</th>
             <th className="text-right py-2 pr-3">Pitch</th>
@@ -484,6 +559,9 @@ function FlatTable({ ads }: { ads: AdFunnelMetric[] }) {
             <th className="text-right py-2 pr-3">Chk</th>
             <th className="text-right py-2 pr-3">Vendas</th>
             <th className="text-right py-2 pr-3">Receita</th>
+            <th className="text-right py-2 pr-3">Lucro</th>
+            <th className="text-right py-2 pr-3">Conv. OB</th>
+            <th className="text-right py-2 pr-3">Conv. Upsell</th>
             <th className="text-right py-2 pr-3">CPA</th>
             <th className="text-right py-2 pr-3">ROAS</th>
             <th className="text-center py-2">Corr.</th>
@@ -501,6 +579,8 @@ function FlatTable({ ads }: { ads: AdFunnelMetric[] }) {
                 <div className="text-[10px] text-muted-foreground truncate">{row.adset_name}</div>
               </td>
               <td className="py-2 pr-3 text-right tabular-nums">{fBRL(row.spend)}</td>
+              <td className="py-2 pr-3 text-right tabular-nums">{fPct(row.ctr)}</td>
+              <td className="py-2 pr-3 text-right tabular-nums">{fPct(row.hook_rate)}</td>
               <td className="py-2 pr-3 text-right tabular-nums">{fNum(row.clicks)}</td>
               <td className="py-2 pr-3 text-right tabular-nums">{fNum(row.vturb_views)}</td>
               <td className="py-2 pr-3 text-right tabular-nums">{fNum(row.vturb_pitch_reached)}</td>
@@ -509,6 +589,9 @@ function FlatTable({ ads }: { ads: AdFunnelMetric[] }) {
               <td className="py-2 pr-3 text-right tabular-nums">{fNum(row.gateway_checkouts)}</td>
               <td className="py-2 pr-3 text-right tabular-nums">{fNum(row.gateway_purchases)}</td>
               <td className="py-2 pr-3 text-right tabular-nums">{fBRL(row.gateway_revenue)}</td>
+              <td className="py-2 pr-3 text-right tabular-nums">{fBRL(row.profit)}</td>
+              <td className="py-2 pr-3 text-right tabular-nums">{fPct(row.order_bump_conversion)}</td>
+              <td className="py-2 pr-3 text-right tabular-nums">{fPct(row.upsell_conversion)}</td>
               <td className="py-2 pr-3 text-right tabular-nums">{fBRL(row.real_cpa)}</td>
               <td className="py-2 pr-3 text-right">
                 <RoasBadge roas={row.real_roas} size="sm" />

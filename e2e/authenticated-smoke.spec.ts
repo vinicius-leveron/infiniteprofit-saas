@@ -36,7 +36,7 @@ test.describe("authenticated launch smoke", () => {
       page
         .getByRole("navigation", { name: "Navegação de Dashboard" })
         .getByRole("button"),
-    ).toHaveCount(9);
+    ).toHaveCount(7);
     await expect(page.getByText(/Visão Geral|Visao Geral/)).toBeVisible();
     await expect(page.getByText(/Anúncios|Anuncios/)).toBeVisible();
     await expect(page.getByText("Funil VSL")).toBeVisible();

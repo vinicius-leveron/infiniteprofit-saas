@@ -32,7 +32,7 @@ const ANALYSIS_PROVIDER = Deno.env.get("CREATIVE_ANALYSIS_PROVIDER")?.trim() || 
 const ANALYSIS_MODEL = Deno.env.get("CREATIVE_ANALYSIS_MODEL")?.trim() || "google/gemini-3-flash-preview";
 const TRANSCRIPTION_PROVIDER = Deno.env.get("CREATIVE_TRANSCRIPTION_PROVIDER")?.trim() || "openai";
 const TRANSCRIPTION_MODEL = Deno.env.get("CREATIVE_TRANSCRIPTION_MODEL")?.trim() || "gpt-4o-mini-transcribe";
-const PROMPT_VERSION = Deno.env.get("CREATIVE_ANALYSIS_PROMPT_VERSION")?.trim() || "creative-sync-v2";
+const PROMPT_VERSION = Deno.env.get("CREATIVE_ANALYSIS_PROMPT_VERSION")?.trim() || "creative-analysis-v5";
 const PROCESSING_VERSION =
   `${TRANSCRIPTION_PROVIDER}:${TRANSCRIPTION_MODEL}|${ANALYSIS_PROVIDER}:${ANALYSIS_MODEL}|${PROMPT_VERSION}`;
 
@@ -395,6 +395,20 @@ async function syncProjectAssets(
     mediaTypeByAssetId,
   });
   await upsertCreativeMetrics(sb, args.project, metrics);
+  const affectedDates = [...new Set([
+    ...metaRows.map((row) => row.event_date),
+    ...gatewayRows.map((row) => row.event_date),
+  ])];
+  const { error: dimensionError } = await sb.rpc("refresh_dashboard_ad_dimensions", {
+    _project_id: args.project.id,
+    _dates: affectedDates,
+  });
+  if (dimensionError) {
+    console.warn("dashboard dimension refresh failed", {
+      project_id: args.project.id,
+      message: dimensionError.message,
+    });
+  }
 
   const targetAssetRowIds = args.targetAssetId
     ? new Set([args.targetAssetId])
@@ -1204,6 +1218,7 @@ function buildAnalysisUpsert(args: {
     provider: ANALYSIS_PROVIDER,
     model: ANALYSIS_MODEL,
     prompt_version: PROMPT_VERSION,
+    prompt_hash: null,
     error_message: null,
     analysis_error_message: null,
     processed_at: keepTranscript ? args.existingAnalysis?.processed_at ?? null : null,

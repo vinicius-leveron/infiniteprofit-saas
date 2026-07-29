@@ -45,9 +45,9 @@ interface TeamMemberListProps {
 }
 
 const roleLabels: Record<string, string> = {
-  owner: "Owner",
+  owner: "Administrador principal",
   admin: "Admin",
-  moderator: "Moderador",
+  moderator: "Membro",
   member: "Membro",
 };
 
@@ -57,7 +57,7 @@ export function TeamMemberList({
   emptyMessage,
   canManage = false,
   canGrantOwner = false,
-  availableRoles = ["owner", "admin", "moderator", "member"],
+  availableRoles = ["admin", "member"],
   busyUserId,
   onUpdateRole,
   onRemove,
@@ -77,7 +77,7 @@ export function TeamMemberList({
         const canEdit =
           canManage &&
           !member.inherited &&
-          (member.role !== "owner" || canGrantOwner);
+          member.role !== "owner";
         const selectableRoles = availableRoles.filter(
           (role) => role !== "owner" || canGrantOwner,
         );

@@ -15,6 +15,7 @@ import { format } from "date-fns";
 import { Eye, MousePointerClick, FileText, ShoppingBag, Percent, Gauge, Target, Download } from "lucide-react";
 import type { DailyRow } from "@/lib/csv";
 import type { DashboardDateRange } from "@/lib/dashboardRows";
+import type { DashboardFilterState } from "@/lib/dashboardFilters";
 import { computeTotals, weekdayAggregates, fBRL, fNum, fPct } from "@/lib/metrics";
 import { KpiCard } from "./KpiCard";
 import { ChartSection } from "./ChartSection";
@@ -26,6 +27,7 @@ interface Props {
   previous?: DailyRow[];
   projectId?: string | null;
   dateRange?: DashboardDateRange;
+  mediaFilters?: DashboardFilterState;
 }
 
 const fmtDay = (d: Date | null) => (d ? format(d, "dd/MM") : "");
@@ -35,7 +37,7 @@ const delta = (current: number | null | undefined, previous: number | null | und
   return ((current - previous) / Math.abs(previous)) * 100;
 };
 
-export const TrafficPanel = ({ rows, previous, projectId, dateRange }: Props) => {
+export const TrafficPanel = ({ rows, previous, projectId, dateRange, mediaFilters }: Props) => {
   const t = useMemo(() => computeTotals(rows), [rows]);
   const tPrev = useMemo(
     () => (previous && previous.length > 0 ? computeTotals(previous) : null),
@@ -118,7 +120,11 @@ export const TrafficPanel = ({ rows, previous, projectId, dateRange }: Props) =>
         title="Mapa de Calor de Vendas"
         description="Vendas aprovadas por dia da semana e horário de Brasília — passe o mouse para ver quantidade e faturamento"
       >
-        <SalesHeatmap projectId={projectId} dateRange={dateRange} />
+        <SalesHeatmap
+          projectId={projectId}
+          dateRange={dateRange}
+          mediaFilters={mediaFilters}
+        />
       </ChartSection>
 
       <ChartSection

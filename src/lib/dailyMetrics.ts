@@ -18,7 +18,11 @@ export interface DailyMetricsRow {
   fat_front: number | null; fat_orderbump: number | null; fat_funil: number | null;
   reembolsos: number | null; taxa_reembolso: number | null; valor_reembolsado: number | null;
   aprov_cartao: number | null; aprov_pix: number | null;
-  conv_geral_orderbump: number | null; proporcao_funil_front: number | null;
+  conv_geral_orderbump: number | null;
+  conv_geral_upsell?: number | null;
+  order_bump_orders?: number | null;
+  upsell_orders?: number | null;
+  proporcao_funil_front: number | null;
   obs: string | null;
   bumps: Array<{
     name: string;
@@ -107,6 +111,9 @@ export function dailyMetricsToDailyRows(rows: DailyMetricsRow[]): DailyRow[] {
         chkVenda: r.chk_venda,
         obs: r.obs ?? "",
         convGeralOrderbump: r.conv_geral_orderbump,
+        convGeralUpsell: r.conv_geral_upsell ?? null,
+        orderBumpOrders: r.order_bump_orders ?? null,
+        upsellOrders: r.upsell_orders ?? null,
         proporcaoFunilFront: r.proporcao_funil_front,
         bumps,
       };

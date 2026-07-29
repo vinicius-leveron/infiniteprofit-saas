@@ -104,12 +104,16 @@ export interface CreativeMetricUpsertRow {
   cpm: number | null;
   purchases: number;
   revenue: number;
+  net_revenue: number;
+  profit: number;
   refunds: number;
   refund_value: number;
   order_bump_purchases: number;
   order_bump_revenue: number;
   upsell_purchases: number;
   upsell_revenue: number;
+  order_bump_conversion: number | null;
+  upsell_conversion: number | null;
   refund_rate: number | null;
   roas: number | null;
   cpa: number | null;
@@ -294,6 +298,14 @@ export function buildCreativeDailyMetrics(args: {
     if (transactionId && adId) adIdByTransactionId.set(normalizeLookup(transactionId), adId);
   }
 
+  const countedFrontOrders = new Set<string>();
+  const countedOrderBumpOrders = new Set<string>();
+  const countedUpsellOrders = new Set<string>();
+  const grossByOrder = new Map<string, number>();
+  const netByOrder = new Map<string, number>();
+  const orderBumpRevenueByOrder = new Map<string, number>();
+  const upsellRevenueByOrder = new Map<string, number>();
+
   for (const row of args.gatewayRows) {
     if (row.event_type !== "purchase.approved") continue;
     const payload = row.payload ?? {};
@@ -307,13 +319,39 @@ export function buildCreativeDailyMetrics(args: {
     const key = `${assetId}:${row.event_date}`;
     const target = aggregate.get(key) ?? createAccumulator(assetId, row.event_date);
     const saleValue = numberOrZero(payload.total) || numberOrZero(payload.net);
+    const netValue = numberOrZero(payload.net) || saleValue;
     const funnelBreakdown = classifyGatewayPurchase(payload, saleValue);
-    target.purchases += funnelBreakdown.frontPurchases;
-    target.revenue += saleValue;
-    target.order_bump_purchases += funnelBreakdown.orderBumpPurchases;
-    target.order_bump_revenue += funnelBreakdown.orderBumpRevenue;
-    target.upsell_purchases += funnelBreakdown.upsellPurchases;
-    target.upsell_revenue += funnelBreakdown.upsellRevenue;
+    const orderIdentity = `${key}:${normalizeTransactionId(transactionId ?? `${adId}:${row.event_date}:${grossByOrder.size}`)}`;
+
+    if (funnelBreakdown.frontPurchases > 0 && !countedFrontOrders.has(orderIdentity)) {
+      countedFrontOrders.add(orderIdentity);
+      target.purchases += 1;
+    }
+    if (funnelBreakdown.orderBumpPurchases > 0 && !countedOrderBumpOrders.has(orderIdentity)) {
+      countedOrderBumpOrders.add(orderIdentity);
+      target.order_bump_purchases += 1;
+    }
+    if (funnelBreakdown.upsellPurchases > 0 && !countedUpsellOrders.has(orderIdentity)) {
+      countedUpsellOrders.add(orderIdentity);
+      target.upsell_purchases += 1;
+    }
+
+    addMaximumAmount(target, grossByOrder, orderIdentity, saleValue, "revenue");
+    addMaximumAmount(target, netByOrder, orderIdentity, netValue, "net_revenue");
+    addMaximumAmount(
+      target,
+      orderBumpRevenueByOrder,
+      orderIdentity,
+      funnelBreakdown.orderBumpRevenue,
+      "order_bump_revenue",
+    );
+    addMaximumAmount(
+      target,
+      upsellRevenueByOrder,
+      orderIdentity,
+      funnelBreakdown.upsellRevenue,
+      "upsell_revenue",
+    );
     target.has_gateway_data = true;
     aggregate.set(key, target);
   }
@@ -373,11 +411,28 @@ function classifyGatewayPurchase(payload: RawGatewayPayload, saleValue: number) 
   const upsellRevenue = upsellItems.reduce((sum, item) => sum + numberOrZero(item?.price), 0);
   return {
     frontPurchases: isFront ? 1 : 0,
-    orderBumpPurchases: isOfferEvent && orderBumpItems.length === 0 ? 1 : orderBumpItems.length,
+    orderBumpPurchases: isOfferEvent && orderBumpItems.length === 0 ? 1 : orderBumpItems.length > 0 ? 1 : 0,
     orderBumpRevenue: isOfferEvent && orderBumpRevenue === 0 ? saleValue : orderBumpRevenue,
-    upsellPurchases: upsellItems.length,
+    upsellPurchases: upsellItems.length > 0 ? 1 : 0,
     upsellRevenue,
   };
+}
+
+function normalizeTransactionId(value: string) {
+  return normalizeLookup(value).replace(/-offer-\d+$/i, "");
+}
+
+function addMaximumAmount(
+  target: CreativeMetricAccumulator,
+  amounts: Map<string, number>,
+  key: string,
+  value: number,
+  field: "revenue" | "net_revenue" | "order_bump_revenue" | "upsell_revenue",
+) {
+  const previous = amounts.get(key) ?? 0;
+  if (value <= previous) return;
+  target[field] += value - previous;
+  amounts.set(key, value);
 }
 
 function booleanValue(value: unknown, fallback: boolean) {
@@ -579,6 +634,10 @@ function finalizeAccumulator(row: CreativeMetricAccumulator): CreativeMetricUpse
   const roas = row.spend > 0 && row.revenue > 0 ? row.revenue / row.spend : null;
   const cpa = row.spend > 0 && row.purchases > 0 ? row.spend / row.purchases : null;
   const refundRate = row.purchases > 0 ? (row.refunds / row.purchases) * 100 : null;
+  const adjustedNetRevenue = Math.max(0, row.net_revenue - row.refund_value);
+  const profit = adjustedNetRevenue - row.spend - row.spend * 0.1215;
+  const orderBumpConversion = row.purchases > 0 ? (row.order_bump_purchases / row.purchases) * 100 : null;
+  const upsellConversion = row.purchases > 0 ? (row.upsell_purchases / row.purchases) * 100 : null;
   const hookRate =
     row.hook_denominator > 0
       ? (row.hook_numerator / row.hook_denominator) * 100
@@ -596,12 +655,16 @@ function finalizeAccumulator(row: CreativeMetricAccumulator): CreativeMetricUpse
     cpm,
     purchases: row.purchases,
     revenue: row.revenue,
+    net_revenue: adjustedNetRevenue,
+    profit,
     refunds: row.refunds,
     refund_value: row.refund_value,
     order_bump_purchases: row.order_bump_purchases,
     order_bump_revenue: row.order_bump_revenue,
     upsell_purchases: row.upsell_purchases,
     upsell_revenue: row.upsell_revenue,
+    order_bump_conversion: orderBumpConversion,
+    upsell_conversion: upsellConversion,
     refund_rate: refundRate,
     roas,
     cpa,
@@ -621,12 +684,16 @@ function createAccumulator(assetId: string, eventDate: string): CreativeMetricAc
     outbound_clicks: 0,
     purchases: 0,
     revenue: 0,
+    net_revenue: 0,
+    profit: 0,
     refunds: 0,
     refund_value: 0,
     order_bump_purchases: 0,
     order_bump_revenue: 0,
     upsell_purchases: 0,
     upsell_revenue: 0,
+    order_bump_conversion: null,
+    upsell_conversion: null,
     hook_numerator: 0,
     hook_denominator: 0,
     has_meta_data: false,
@@ -836,12 +903,16 @@ type CreativeMetricAccumulator = {
   outbound_clicks: number;
   purchases: number;
   revenue: number;
+  net_revenue: number;
+  profit: number;
   refunds: number;
   refund_value: number;
   order_bump_purchases: number;
   order_bump_revenue: number;
   upsell_purchases: number;
   upsell_revenue: number;
+  order_bump_conversion: number | null;
+  upsell_conversion: number | null;
   hook_numerator: number;
   hook_denominator: number;
   has_meta_data: boolean;

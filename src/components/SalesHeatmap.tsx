@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import type { DashboardDateRange } from "@/lib/dashboardRows";
+import type { DashboardFilterState } from "@/lib/dashboardFilters";
 import { fBRL, fNum } from "@/lib/metrics";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -9,13 +10,14 @@ import { cn } from "@/lib/utils";
 interface Props {
   projectId?: string | null;
   dateRange?: DashboardDateRange;
+  mediaFilters?: DashboardFilterState;
 }
 
-type HeatmapEvent = {
-  event_date: string;
-  event_occurred_at: string | null;
-  received_at: string;
-  payload: unknown;
+type HeatmapRow = {
+  weekday: number;
+  hour: number;
+  sales: number;
+  revenue: number;
 };
 
 type Cell = {
@@ -28,17 +30,17 @@ type Cell = {
 const DAYS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 
-export function SalesHeatmap({ projectId, dateRange }: Props) {
-  const [events, setEvents] = useState<HeatmapEvent[]>([]);
+export function SalesHeatmap({ projectId, dateRange, mediaFilters }: Props) {
+  const [rows, setRows] = useState<HeatmapRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
 
-    async function loadEvents() {
+    async function loadHeatmap() {
       if (!projectId || !dateRange?.from || !dateRange.to) {
-        setEvents([]);
+        setRows([]);
         setError(null);
         setLoading(false);
         return;
@@ -47,63 +49,54 @@ export function SalesHeatmap({ projectId, dateRange }: Props) {
       setLoading(true);
       setError(null);
 
-      let result = await supabase
-        .from("raw_events")
-        .select("event_date, event_occurred_at, received_at, payload")
-        .eq("project_id", projectId)
-        .eq("event_type", "purchase.approved")
-        .gte("event_date", dateRange.from)
-        .lte("event_date", dateRange.to)
-        .order("event_occurred_at", { ascending: true });
-
-      // Compatibilidade temporária enquanto a migration nova ainda não chegou ao ambiente.
-      if (result.error?.message.includes("event_occurred_at")) {
-        const legacy = await supabase
-          .from("raw_events")
-          .select("event_date, received_at, payload")
-          .eq("project_id", projectId)
-          .eq("event_type", "purchase.approved")
-          .gte("event_date", dateRange.from)
-          .lte("event_date", dateRange.to)
-          .order("received_at", { ascending: true });
-        result = {
-          ...legacy,
-          data: legacy.data?.map((event) => ({ ...event, event_occurred_at: null })) ?? null,
-        } as typeof result;
-      }
+      const result = await supabase.rpc(
+        "get_dashboard_sales_heatmap",
+        {
+          _project_id: projectId,
+          _from: dateRange.from,
+          _to: dateRange.to,
+          _account_ids: mediaFilters?.accountIds ?? [],
+          _campaign_ids: mediaFilters?.campaignIds ?? [],
+          _adset_ids: mediaFilters?.adsetIds ?? [],
+        },
+      );
 
       if (cancelled) return;
       if (result.error) {
-        setEvents([]);
+        setRows([]);
         setError("Não foi possível carregar os horários das vendas.");
       } else {
-        setEvents((result.data ?? []) as HeatmapEvent[]);
+        setRows((result.data ?? []) satisfies HeatmapRow[]);
       }
       setLoading(false);
     }
 
-    void loadEvents();
+    void loadHeatmap();
     return () => {
       cancelled = true;
     };
-  }, [dateRange?.from, dateRange?.to, projectId]);
+  }, [
+    dateRange?.from,
+    dateRange?.to,
+    mediaFilters?.accountIds,
+    mediaFilters?.adsetIds,
+    mediaFilters?.campaignIds,
+    projectId,
+  ]);
 
   const { cells, maxSales } = useMemo(() => {
     const aggregate = new Map<string, Cell>();
 
-    for (const event of events) {
-      const timestamp = event.event_occurred_at ?? event.received_at;
-      const hour = hourInSaoPaulo(timestamp);
-      // The raw event date is the aggregation day and may have been written
-      // in UTC.  Use the same timestamp/timezone as the hour so purchases
-      // close to midnight are shown on the correct local weekday.
-      const day = weekdayIndexInSaoPaulo(timestamp) ?? weekdayIndex(event.event_date);
-      if (hour == null || day == null) continue;
+    for (const row of rows) {
+      const day = Number(row.weekday);
+      const hour = Number(row.hour);
+      if (!Number.isInteger(day) || day < 0 || day > 6) continue;
+      if (!Number.isInteger(hour) || hour < 0 || hour > 23) continue;
 
       const key = `${day}:${hour}`;
       const current = aggregate.get(key) ?? { day, hour, sales: 0, revenue: 0 };
-      current.sales += 1;
-      current.revenue += eventRevenue(event.payload);
+      current.sales += Number(row.sales ?? 0);
+      current.revenue += Number(row.revenue ?? 0);
       aggregate.set(key, current);
     }
 
@@ -115,7 +108,7 @@ export function SalesHeatmap({ projectId, dateRange }: Props) {
       cells: grid,
       maxSales: Math.max(0, ...grid.map((cell) => cell.sales)),
     };
-  }, [events]);
+  }, [rows]);
 
   if (loading) {
     return (
@@ -131,7 +124,7 @@ export function SalesHeatmap({ projectId, dateRange }: Props) {
   }
 
   if (error) return <EmptyState message={error} />;
-  if (events.length === 0) {
+  if (rows.length === 0) {
     return <EmptyState message="Ainda não há vendas com horário identificado neste período." />;
   }
 
@@ -214,48 +207,4 @@ function heatColor(intensity: number) {
   const clamped = Math.max(0, Math.min(1, intensity));
   const alpha = 0.16 + clamped * 0.78;
   return `hsl(var(--kpi-orange) / ${alpha.toFixed(2)})`;
-}
-
-function hourInSaoPaulo(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  const hour = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Sao_Paulo",
-    hour: "2-digit",
-    hourCycle: "h23",
-  }).format(date);
-  const parsed = Number(hour);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function weekdayIndex(dateKey: string) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return null;
-  const utcDay = new Date(`${dateKey}T12:00:00Z`).getUTCDay();
-  return (utcDay + 6) % 7;
-}
-
-function weekdayIndexInSaoPaulo(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  const day = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Sao_Paulo",
-    weekday: "short",
-  }).format(date).toLowerCase();
-  const index: Record<string, number> = {
-    mon: 0,
-    tue: 1,
-    wed: 2,
-    thu: 3,
-    fri: 4,
-    sat: 5,
-    sun: 6,
-  };
-  return index[day] ?? null;
-}
-
-function eventRevenue(payload: unknown) {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return 0;
-  const value = (payload as Record<string, unknown>).net ?? (payload as Record<string, unknown>).total;
-  const parsed = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
 }

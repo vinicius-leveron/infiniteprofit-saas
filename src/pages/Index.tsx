@@ -9,11 +9,10 @@ import { FunnelPanel } from "@/components/FunnelPanel";
 import { BumpsPanel } from "@/components/BumpsPanel";
 import { DiagnosticsPanel } from "@/components/DiagnosticsPanel";
 import { AdsPanel } from "@/components/AdsPanel";
-import { AttributionPanel } from "@/components/AttributionPanel";
-import { ExecutiveReportPanel } from "@/components/ExecutiveReportPanel";
 import { SimulatorPanel } from "@/components/SimulatorPanel";
 import { SaveProjectDialog } from "@/components/SaveProjectDialog";
 import { PeriodFilter, type Period } from "@/components/PeriodFilter";
+import { DashboardMediaFilterBar } from "@/components/DashboardMediaFilterBar";
 import { DashboardSkeleton } from "@/components/DashboardSkeleton";
 
 import { DayDrilldownDialog } from "@/components/DayDrilldownDialog";
@@ -22,23 +21,28 @@ import type { AppShellOutletContext } from "@/components/AppShell";
 import { SheetSyncDialog } from "@/components/SheetSyncDialog";
 import { parseCsv, type DailyRow } from "@/lib/csv";
 import { dailyMetricsToDailyRows, type DailyMetricsRow } from "@/lib/dailyMetrics";
-import { readStoredDashboardFilters, writeStoredDashboardFilters } from "@/lib/dashboardFilters";
+import {
+  readStoredDashboardFilters,
+  writeStoredDashboardFilters,
+  type DashboardFilterState,
+} from "@/lib/dashboardFilters";
 import { getDashboardPeriodRows, getDashboardSelectedDateRange } from "@/lib/dashboardRows";
 import { writeLastDashboardPreference } from "@/lib/lastDashboard";
-import { applyMetaAccountFilter } from "@/lib/metaAccountFilter";
+import {
+  applyDashboardDimensionMetrics,
+  calculateAttributionCoverage,
+  filterDashboardAdDimensions,
+  getDashboardDimensionMetrics,
+  hasDashboardMediaFilters,
+  listDashboardAdDimensions,
+  type DashboardAdDimension,
+  type DashboardAttributionCoverage,
+} from "@/lib/dashboardDimensions";
 import {
   getProjectSyncSettingsSafe,
   listSourceHealthSignals,
-  listWorkspaceMetaAccountsSafe,
   type SourceHealthSignalRow,
 } from "@/lib/operationalReadApi";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 
 import { exportElementToPdf } from "@/lib/exportPdf";
 import { supabase } from "@/integrations/supabase/client";
@@ -58,14 +62,12 @@ import {
   Sliders,
   RefreshCw,
   Megaphone,
-  Map,
-  FileText,
   AlertTriangle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { trackProductEvent } from "@/lib/productEvents";
 
-type Tab = "geral" | "trafego" | "funil" | "bumps" | "anuncios" | "atribuicao" | "relatorio" | "diagnostico" | "simulador";
+type Tab = "geral" | "trafego" | "funil" | "bumps" | "anuncios" | "diagnostico" | "simulador";
 
 const TAB_INFO: Record<Tab, { label: string; description: string; icon: React.ElementType }> = {
   geral: { label: "Visao Geral", description: "KPIs principais e performance consolidada", icon: BarChart3 },
@@ -73,9 +75,7 @@ const TAB_INFO: Record<Tab, { label: string; description: string; icon: React.El
   funil: { label: "Funil VSL", description: "Taxas de conversao em cada etapa do video", icon: Target },
   bumps: { label: "Bumps & Upsell", description: "Receita incremental e take-rate de ofertas", icon: Gift },
   anuncios: { label: "Anuncios", description: "Performance por campanha, adset e criativo", icon: Megaphone },
-  atribuicao: { label: "Atribuicao", description: "Cruzamento diario entre fontes de dados", icon: Map },
-  relatorio: { label: "Relatorio Executivo", description: "Resumo para tomada de decisao", icon: FileText },
-  diagnostico: { label: "Alertas", description: "Comparativo do periodo e variacoes relevantes do dashboard", icon: Stethoscope },
+  diagnostico: { label: "Diagnóstico", description: "Comparativo do período e variações relevantes do dashboard", icon: Stethoscope },
   simulador: { label: "Simulador", description: "Projecoes e analise de sensibilidade", icon: Sliders },
 };
 
@@ -111,17 +111,36 @@ const Index = () => {
   const [syncingNow, setSyncingNow] = useState(false);
   const [projectSource, setProjectSource] = useState<"csv" | "sheet" | "api">("csv");
   const [rawApiRows, setRawApiRows] = useState<DailyRow[]>([]);
-  const [metaAccounts, setMetaAccounts] = useState<Array<{ account_id: string; label: string | null }>>([]);
-  const [accountFilter, setAccountFilter] = useState<string>("all");
+  const [mediaFilters, setMediaFilters] = useState<DashboardFilterState>({
+    accountIds: [],
+    campaignIds: [],
+    adsetIds: [],
+  });
+  const [adDimensions, setAdDimensions] = useState<DashboardAdDimension[]>([]);
+  const [dimensionsLoading, setDimensionsLoading] = useState(false);
+  const [attributionCoverage, setAttributionCoverage] = useState<DashboardAttributionCoverage | null>(null);
+  const [dimensionFilterError, setDimensionFilterError] = useState<string | null>(null);
+  const [dimensionRetryKey, setDimensionRetryKey] = useState(0);
 
   // Tab vem do query param (sincronizado com sidebar)
-  const tab = (searchParams.get("tab") as Tab) || "geral";
+  const requestedTab = searchParams.get("tab");
+  const tab: Tab =
+    requestedTab === "atribuicao" || requestedTab === "relatorio"
+      ? "geral"
+      : (requestedTab as Tab) || "geral";
   const setTab = useCallback((t: Tab) => {
     const params = new URLSearchParams(searchParams);
     params.set("tab", t);
     navigate(`/dashboard?${params.toString()}`, { replace: true });
   }, [navigate, searchParams]);
-  const [period, setPeriod] = useState<Period>("all");
+
+  useEffect(() => {
+    if (requestedTab !== "atribuicao" && requestedTab !== "relatorio") return;
+    const params = new URLSearchParams(searchParams);
+    params.set("tab", "geral");
+    navigate(`/dashboard?${params.toString()}`, { replace: true });
+  }, [navigate, requestedTab, searchParams]);
+  const [period, setPeriod] = useState<Period>("this_month");
   const [customFrom, setCustomFrom] = useState<string>("");
   const [customTo, setCustomTo] = useState<string>("");
   const [filtersHydratedFor, setFiltersHydratedFor] = useState<string | null>(null);
@@ -132,10 +151,6 @@ const Index = () => {
   // Ref para captura PDF
   const dashboardRef = useRef<HTMLDivElement>(null);
   const dashboardOpenTracked = useRef(new Set<string>());
-
-  interface ProjectMetaBindingRow {
-    meta_account_id: string;
-  }
 
   // Redireciona se não autenticado
   useEffect(() => {
@@ -179,10 +194,14 @@ const Index = () => {
       return;
     }
     const stored = readStoredDashboardFilters(currentProjectId);
-    setPeriod(stored.period ?? "all");
+    setPeriod(stored.period ?? "this_month");
     setCustomFrom(stored.customFrom ?? "");
     setCustomTo(stored.customTo ?? "");
-    setAccountFilter(stored.accountFilter ?? "all");
+    setMediaFilters({
+      accountIds: stored.accountIds ?? [],
+      campaignIds: stored.campaignIds ?? [],
+      adsetIds: stored.adsetIds ?? [],
+    });
     setFiltersHydratedFor(currentProjectId);
   }, [currentProjectId]);
 
@@ -192,16 +211,11 @@ const Index = () => {
       period,
       customFrom,
       customTo,
-      accountFilter,
+      accountIds: mediaFilters.accountIds,
+      campaignIds: mediaFilters.campaignIds,
+      adsetIds: mediaFilters.adsetIds,
     });
-  }, [accountFilter, currentProjectId, customFrom, customTo, filtersHydratedFor, period]);
-
-  useEffect(() => {
-    if (projectSource !== "api" || accountFilter === "all" || metaAccounts.length === 0) return;
-    if (!metaAccounts.some((account) => account.account_id === accountFilter)) {
-      setAccountFilter("all");
-    }
-  }, [accountFilter, metaAccounts, projectSource]);
+  }, [currentProjectId, customFrom, customTo, filtersHydratedFor, mediaFilters, period]);
 
   // Carrega projeto se vier ?project=ID
   useEffect(() => {
@@ -275,19 +289,9 @@ const Index = () => {
                 ? null
                 : data.last_synced_at ?? null,
           );
-          let accs: Array<{ account_id: string; label: string | null }> = [];
-          const accountIds = ((bindings ?? []) as ProjectMetaBindingRow[]).map((binding) => binding.meta_account_id);
-          if (accountIds.length > 0 && data.workspace_id) {
-            const accountRows = await listWorkspaceMetaAccountsSafe(data.workspace_id);
-            const selectedAccountIds = new Set(accountIds);
-            accs = accountRows
-              .filter((account) => selectedAccountIds.has(account.id))
-              .map(({ account_id, label }) => ({ account_id, label }));
-          }
           const apiRows = dailyMetricsToDailyRows((metrics ?? []) as unknown as DailyMetricsRow[]);
           setRawApiRows(apiRows);
           setRows(apiRows);
-          setMetaAccounts(accs);
           setCsvText("");
         } else if (data.csv_content) {
           setMetaSourceSignal(null);
@@ -325,19 +329,9 @@ const Index = () => {
       if (bindingsResult.error) throw bindingsResult.error;
       const metrics = metricsResult.data;
       const bindings = bindingsResult.data;
-      let accs: Array<{ account_id: string; label: string | null }> = [];
-      const accountIds = ((bindings ?? []) as ProjectMetaBindingRow[]).map((binding) => binding.meta_account_id);
-      if (accountIds.length > 0 && workspaceId) {
-        const accountRows = await listWorkspaceMetaAccountsSafe(workspaceId);
-        const selectedAccountIds = new Set(accountIds);
-        accs = accountRows
-          .filter((account) => selectedAccountIds.has(account.id))
-          .map(({ account_id, label }) => ({ account_id, label }));
-      }
       const apiRows = dailyMetricsToDailyRows((metrics ?? []) as unknown as DailyMetricsRow[]);
       setRawApiRows(apiRows);
       setRows(apiRows);
-      setMetaAccounts(accs);
       const metaSignal =
         sourceSignals.find(
           (signal) =>
@@ -364,21 +358,85 @@ const Index = () => {
     setLastSyncedAt(data.last_synced_at ?? null);
   };
 
-  // Aplica filtro de conta Meta (somente projetos API)
+  useEffect(() => {
+    if (projectSource !== "api" || !currentProjectId) {
+      setAdDimensions([]);
+      return;
+    }
+    let cancelled = false;
+    setDimensionsLoading(true);
+    setDimensionFilterError(null);
+    void listDashboardAdDimensions(currentProjectId)
+      .then((dimensions) => {
+        if (!cancelled) setAdDimensions(dimensions);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setAdDimensions([]);
+          setDimensionFilterError(error instanceof Error ? error.message : "Não foi possível carregar os filtros de mídia.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setDimensionsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [currentProjectId, dimensionRetryKey, projectSource]);
+
+  // A mesma agregação dimensional alimenta todas as abas do Dashboard.
   useEffect(() => {
     if (projectSource !== "api") return;
-    if (rawApiRows.length === 0) return;
-    if (accountFilter === "all") {
+    if (!hasDashboardMediaFilters(mediaFilters)) {
       setRows(rawApiRows);
+      setAttributionCoverage(null);
+      setDimensionFilterError(null);
       return;
     }
     if (!currentProjectId) return;
     let cancelled = false;
-    void applyMetaAccountFilter(rawApiRows, currentProjectId, accountFilter).then((r) => {
-      if (!cancelled) setRows(r);
-    });
+    setDimensionsLoading(true);
+    void getDashboardDimensionMetrics(currentProjectId, mediaFilters)
+      .then((dimensionRows) => {
+        if (cancelled) return;
+        const selectedBaseRows = getDashboardPeriodRows(
+          rawApiRows,
+          period,
+          customFrom,
+          customTo,
+        ).current;
+        const selectedRange = getDashboardSelectedDateRange(
+          rawApiRows,
+          period,
+          customFrom,
+          customTo,
+        );
+        const selectedDimensionRows = dimensionRows.filter((row) =>
+          (!selectedRange.from || row.event_date >= selectedRange.from) &&
+          (!selectedRange.to || row.event_date <= selectedRange.to)
+        );
+        setRows(applyDashboardDimensionMetrics(rawApiRows, dimensionRows));
+        setAttributionCoverage(calculateAttributionCoverage(selectedBaseRows, selectedDimensionRows));
+        setDimensionFilterError(null);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setRows([]);
+        setAttributionCoverage(null);
+        setDimensionFilterError(error instanceof Error ? error.message : "Falha ao aplicar os filtros.");
+      })
+      .finally(() => {
+        if (!cancelled) setDimensionsLoading(false);
+      });
     return () => { cancelled = true; };
-  }, [accountFilter, rawApiRows, projectSource, currentProjectId]);
+  }, [
+    currentProjectId,
+    customFrom,
+    customTo,
+    dimensionRetryKey,
+    mediaFilters,
+    period,
+    projectSource,
+    rawApiRows,
+  ]);
 
   const handleQuickSync = async () => {
     if (!currentProjectId) return;
@@ -468,8 +526,8 @@ const Index = () => {
 
       if (isTyping) return;
 
-      if (e.key >= "1" && e.key <= "9") {
-        const map: Tab[] = ["geral", "trafego", "funil", "bumps", "anuncios", "atribuicao", "relatorio", "diagnostico", "simulador"];
+      if (e.key >= "1" && e.key <= "7") {
+        const map: Tab[] = ["geral", "trafego", "funil", "bumps", "anuncios", "diagnostico", "simulador"];
         const idx = parseInt(e.key, 10) - 1;
         if (map[idx]) setTab(map[idx]);
       }
@@ -530,16 +588,19 @@ const Index = () => {
   };
 
 
-  // Refetch key para insights — muda sempre que projeto/período muda
-  const insightsKey = `${currentProjectId ?? "local"}|${period}|${customFrom}|${customTo}|${filtered.length}`;
   const showOperationalActions = tab === "diagnostico" && projectSource === "api" && !!currentProjectId;
+  const hasMediaFilters = hasDashboardMediaFilters(mediaFilters);
+  const allowedAdIds = hasMediaFilters
+    ? filterDashboardAdDimensions(adDimensions, mediaFilters)
+      .map((dimension) => dimension.ad_id)
+    : null;
 
   return (
     <main className="min-h-screen">
       {/* Sticky header */}
       {/* Sticky header - Estilo SaaS */}
       <div className="sticky top-14 z-30 bg-background/95 backdrop-blur-sm border-b border-border/60">
-        <div className="max-w-[1400px] mx-auto px-4 md:px-6 h-14 flex items-center justify-between">
+        <div className="mx-auto flex h-14 max-w-[1200px] items-center justify-between px-4 md:px-6">
           {/* Contexto do projeto */}
           <div className="min-w-0">
             <h1 className="text-base font-semibold text-foreground truncate">
@@ -575,7 +636,7 @@ const Index = () => {
           <div className="flex items-center gap-2 shrink-0">
             {/* Acoes secundarias */}
             <div className="flex items-center gap-1">
-              {currentProjectId && (
+              {currentProjectId && isWorkspaceAdmin && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -610,7 +671,7 @@ const Index = () => {
         </div>
       </div>
 
-      <div className="max-w-[1400px] mx-auto px-4 md:px-6 py-6 md:py-8">
+      <div className="mx-auto max-w-[1200px] px-4 py-6 md:px-6 md:py-8">
         {/* Tab Header + Period filter */}
         <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
           {/* Tab title */}
@@ -625,38 +686,59 @@ const Index = () => {
           })()}
 
           {/* Filters */}
-          <div className="flex flex-wrap items-end gap-3">
-            <PeriodFilter
-              period={period}
-              customFrom={customFrom}
-              customTo={customTo}
-              onPeriodChange={handlePeriodChange}
-              onCustomChange={handleCustomChange}
+          {projectSource !== "api" && (
+            <div className="flex flex-wrap items-end gap-3">
+              <PeriodFilter
+                period={period}
+                customFrom={customFrom}
+                customTo={customTo}
+                onPeriodChange={handlePeriodChange}
+                onCustomChange={handleCustomChange}
+              />
+            </div>
+          )}
+        </div>
+
+        {projectSource === "api" && (
+          <div className="mb-6 space-y-3">
+            <DashboardMediaFilterBar
+              dimensions={adDimensions}
+              value={mediaFilters}
+              onChange={setMediaFilters}
+              loading={dimensionsLoading}
+              periodControl={(
+                <PeriodFilter
+                  period={period}
+                  customFrom={customFrom}
+                  customTo={customTo}
+                  onPeriodChange={handlePeriodChange}
+                  onCustomChange={handleCustomChange}
+                  showLabel={false}
+                />
+              )}
             />
-            {projectSource === "api" && metaAccounts.length > 0 && (
-              <div className="flex flex-col gap-1">
-                <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-medium">
-                  Conta Meta
+            {hasMediaFilters && attributionCoverage && (
+              <div className="flex flex-col gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100 sm:flex-row sm:items-center sm:justify-between">
+                <span>
+                  Resultado atribuído aos anúncios selecionados. Eventos sem identificação confiável ficam fora.
                 </span>
-                <Select value={accountFilter} onValueChange={setAccountFilter}>
-                  <SelectTrigger className="h-9 min-w-[180px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Todas as contas</SelectItem>
-                    {metaAccounts.map((a) => (
-                      <SelectItem key={a.account_id} value={a.account_id}>
-                        {a.label || a.account_id}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <span className="shrink-0 text-xs font-medium tabular-nums">
+                  Cobertura: vendas {attributionCoverage.frontSalesPercent.toFixed(0)}% · faturamento {attributionCoverage.revenuePercent.toFixed(0)}% · VSL {attributionCoverage.vslPercent.toFixed(0)}%
+                </span>
+              </div>
+            )}
+            {dimensionFilterError && (
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                <span>{dimensionFilterError}</span>
+                <Button variant="outline" size="sm" onClick={() => setDimensionRetryKey((value) => value + 1)}>
+                  Tentar novamente
+                </Button>
               </div>
             )}
           </div>
-        </div>
+        )}
 
-        {rows.length === 0 && projectSource === "api" && currentProjectId ? (
+        {rows.length === 0 && projectSource === "api" && currentProjectId && !hasMediaFilters ? (
           <div className="section-card py-14 text-center">
             <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
               <Radio className="h-6 w-6" />
@@ -702,12 +784,22 @@ const Index = () => {
             <div className="w-14 h-14 rounded-full bg-secondary/60 flex items-center justify-center mx-auto mb-4">
               <BarChart3 className="w-6 h-6 text-muted-foreground" />
             </div>
-            <h3 className="font-semibold text-foreground mb-1">Nenhum dia no período</h3>
+            <h3 className="font-semibold text-foreground mb-1">
+              {hasMediaFilters ? "Nenhum sinal atribuído a esta seleção" : "Nenhum dia no período"}
+            </h3>
             <p className="text-sm text-muted-foreground mb-4">
-              Tente ajustar o período para visualizar os dados disponíveis.
+              {hasMediaFilters
+                ? "As vendas e sessões sem ad_id ou UTM confiável não são exibidas como zero. Ajuste os filtros ou revise a cobertura de atribuição."
+                : "Tente ajustar o período para visualizar os dados disponíveis."}
             </p>
-            <Button variant="outline" size="sm" onClick={() => handlePeriodChange("all")}>
-              Mostrar tudo
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => hasMediaFilters
+                ? setMediaFilters({ accountIds: [], campaignIds: [], adsetIds: [] })
+                : handlePeriodChange("all")}
+            >
+              {hasMediaFilters ? "Limpar filtros de mídia" : "Mostrar tudo"}
             </Button>
           </div>
         ) : (
@@ -754,20 +846,19 @@ const Index = () => {
                 previous={previous}
                 projectId={currentProjectId}
                 dateRange={selectedDateRange}
+                mediaFilters={mediaFilters}
               />
             ) : tab === "funil" ? (
-              <FunnelPanel rows={filtered} projectId={currentProjectId} dateRange={selectedDateRange} />
+              <FunnelPanel rows={filtered} />
             ) : tab === "bumps" ? (
               <BumpsPanel rows={filtered} />
             ) : tab === "anuncios" ? (
               <AdsPanel
                 projectId={currentProjectId}
                 dateRange={selectedDateRange}
+                allowedAdIds={allowedAdIds}
+                canManage={isWorkspaceAdmin}
               />
-            ) : tab === "atribuicao" ? (
-              <AttributionPanel rows={filtered} projectId={currentProjectId} />
-            ) : tab === "relatorio" ? (
-              <ExecutiveReportPanel current={filtered} previous={previous} />
             ) : tab === "diagnostico" ? (
               <DiagnosticsPanel current={filtered} previous={previous} />
             ) : (
@@ -794,7 +885,7 @@ const Index = () => {
         row={drilldownRow}
         onOpenChange={(o) => !o && setDrilldownRow(null)}
         projectId={currentProjectId}
-        editable={projectSource === "api"}
+        editable={projectSource === "api" && isWorkspaceAdmin}
         onObsSaved={(date, obs) => {
           // Atualiza in-memory pra UX instantânea
           const ts = date.getTime();

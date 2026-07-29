@@ -47,6 +47,8 @@ export function aggregateOneDay(events: RawEvent[]) {
   let fatFront = 0;
   let fatOrderbump = 0;
   let fatFunil = 0;
+  let orderBumpOrders = 0;
+  let upsellOrders = 0;
   let reembolsos = 0;
   let valorReembolsado = 0;
   let valorReembolsadoLiquido = 0;
@@ -60,7 +62,12 @@ export function aggregateOneDay(events: RawEvent[]) {
   const checkoutKeys = new Set<string>();
   let checkoutFallbackIndex = 0;
   let refusedFallbackIndex = 0;
-  const bumpAgg = new Map<string, { name: string; type: string; count: number; revenue: number }>();
+  const bumpAgg = new Map<string, {
+    name: string;
+    type: "orderbump" | "upsell";
+    orderKeys: Set<string>;
+    revenue: number;
+  }>();
   const approvedGatewayEvents: RawEvent[] = [];
   const refusedGatewayEvents: RawEvent[] = [];
 
@@ -160,6 +167,8 @@ export function aggregateOneDay(events: RawEvent[]) {
 
   const purchaseGroups = groupApprovedPurchases(approvedGatewayEvents);
   for (const [groupIndex, group] of purchaseGroups.entries()) {
+    const mainPaymentEvent = group.find((event) => !isOfferEvent(event)) ?? group[0];
+    const orderKey = transactionKey(mainPaymentEvent) || `approved-${groupIndex}`;
     const revenue = purchaseGroupRevenue(group);
     const isFront = purchaseGroupIsFront(group, frontIdentity);
     const countStandaloneFunnelMain = !isFront && shouldCountStandaloneFunnelMain(group);
@@ -168,6 +177,8 @@ export function aggregateOneDay(events: RawEvent[]) {
     const realBumpRevenue = Array.from(realBumpItems).reduce((sum, item) => sum + num(item?.price), 0)
       + realOfferFallbacks.reduce((sum, item) => sum + item.price, 0);
     let groupFunnelSales = 0;
+    let groupHasOrderBump = false;
+    let groupHasUpsell = false;
 
     fatBruto += revenue.total;
     fatLiquido += revenue.net;
@@ -196,15 +207,20 @@ export function aggregateOneDay(events: RawEvent[]) {
         if (itemSeen.has(itemDedupKey)) continue;
         itemSeen.add(itemDedupKey);
 
+        const itemType = normalizeIdentity(item?.type) === "upsell" ? "upsell" : "orderbump";
         const current = bumpAgg.get(key) ?? {
           name: String(item.name ?? key),
-          type: String(item.type ?? "orderbump"),
-          count: 0,
+          type: itemType,
+          orderKeys: new Set<string>(),
           revenue: 0,
         };
-        current.count += 1;
+        current.type = itemType;
+        current.orderKeys.add(orderKey);
         current.revenue += price;
-        if (normalizeIdentity(item?.type) !== "upsell") {
+        if (itemType === "upsell") {
+          groupHasUpsell = true;
+        } else {
+          groupHasOrderBump = true;
           fatOrderbump += price;
         }
         groupFunnelSales++;
@@ -216,13 +232,17 @@ export function aggregateOneDay(events: RawEvent[]) {
       const current = bumpAgg.get(item.key) ?? {
         name: item.name,
         type: item.type,
-        count: 0,
+        orderKeys: new Set<string>(),
         revenue: 0,
       };
-      current.count += 1;
+      current.type = item.type;
+      current.orderKeys.add(orderKey);
       current.revenue += item.price;
       if (item.type === "orderbump") {
+        groupHasOrderBump = true;
         fatOrderbump += item.price;
+      } else {
+        groupHasUpsell = true;
       }
       groupFunnelSales++;
       bumpAgg.set(item.key, current);
@@ -239,12 +259,16 @@ export function aggregateOneDay(events: RawEvent[]) {
           const current = bumpAgg.get(key) ?? {
             name: String(mainItem?.name ?? main.payload?.product_id ?? key),
             type: upsell ? "upsell" : "orderbump",
-            count: 0,
+            orderKeys: new Set<string>(),
             revenue: 0,
           };
-          current.count += 1;
+          current.type = upsell ? "upsell" : "orderbump";
+          current.orderKeys.add(orderKey);
           current.revenue += price;
-          if (!upsell) {
+          if (upsell) {
+            groupHasUpsell = true;
+          } else {
+            groupHasOrderBump = true;
             fatOrderbump += price;
           }
           bumpAgg.set(key, current);
@@ -252,10 +276,11 @@ export function aggregateOneDay(events: RawEvent[]) {
       }
     }
 
+    if (groupHasOrderBump) orderBumpOrders++;
+    if (groupHasUpsell) upsellOrders++;
     vendasTotais += (isFront ? 1 : 0) + groupFunnelSales;
 
-    const mainPaymentEvent = group.find((event) => !isOfferEvent(event)) ?? group[0];
-    const paymentKey = transactionKey(mainPaymentEvent) || `approved-${groupIndex}`;
+    const paymentKey = orderKey;
     const method = paymentMethodKind(mainPaymentEvent?.payload?.payment_method);
     if (method === "card") {
       cardApprovedKeys.add(paymentKey);
@@ -282,7 +307,7 @@ export function aggregateOneDay(events: RawEvent[]) {
   const custoIC = checkouts > 0 ? investimento / checkouts : null;
   const cpaFront = vendasFront > 0 ? investimento / vendasFront : null;
   const cac = vendasTotais > 0 ? investimento / vendasTotais : null;
-  const aov = vendasTotais > 0 ? fatBruto / vendasTotais : null;
+  const aov = vendasFront > 0 ? fatBruto / vendasFront : null;
   const impostoMeta = investimento * META_TAX_RATE;
   const lucro = adjustedFatLiquido - investimento - impostoMeta;
   const roi = investimento > 0 ? (adjustedFatLiquido - impostoMeta) / investimento : null;
@@ -296,18 +321,16 @@ export function aggregateOneDay(events: RawEvent[]) {
   // "Conversão geral de order bump" is specifically the share of front
   // buyers who accepted an order bump. Upsell purchases are tracked in the
   // same `bumps` array but must not inflate this KPI.
-  const bumpCount = Array.from(bumpAgg.values())
-    .filter((bump) => bump.type === "orderbump")
-    .reduce((sum, bump) => sum + bump.count, 0);
-  const convGeralOrderbump = vendasFront > 0 ? (bumpCount / vendasFront) * 100 : null;
+  const convGeralOrderbump = vendasFront > 0 ? (orderBumpOrders / vendasFront) * 100 : null;
+  const convGeralUpsell = vendasFront > 0 ? (upsellOrders / vendasFront) * 100 : null;
   const proporcaoFunilFront = fatFront > 0 ? fatFunil / fatFront : null;
 
   const bumps = Array.from(bumpAgg.values()).map((bump) => ({
     name: bump.name,
     type: bump.type,
-    count: bump.count,
+    count: bump.orderKeys.size,
     revenue: bump.revenue,
-    rate: vendasFront > 0 ? (bump.count / vendasFront) * 100 : null,
+    rate: vendasFront > 0 ? (bump.orderKeys.size / vendasFront) * 100 : null,
   }));
 
   const metrics = {
@@ -350,7 +373,10 @@ export function aggregateOneDay(events: RawEvent[]) {
     valor_reembolsado: orNull(valorReembolsado),
     aprov_cartao: aprovCartao,
     aprov_pix: aprovPix,
+    order_bump_orders: orNull(orderBumpOrders),
+    upsell_orders: orNull(upsellOrders),
     conv_geral_orderbump: convGeralOrderbump,
+    conv_geral_upsell: convGeralUpsell,
     proporcao_funil_front: proporcaoFunilFront,
     bumps,
   };
@@ -402,7 +428,10 @@ const DAILY_METRIC_OVERRIDE_KEYS = [
   "valor_reembolsado",
   "aprov_cartao",
   "aprov_pix",
+  "order_bump_orders",
+  "upsell_orders",
   "conv_geral_orderbump",
+  "conv_geral_upsell",
   "proporcao_funil_front",
 ] as const;
 
@@ -449,6 +478,8 @@ const GATEWAY_OWNED_KEYS = new Set<string>([
   "valor_reembolsado",
   "aprov_cartao",
   "aprov_pix",
+  "order_bump_orders",
+  "upsell_orders",
 ]);
 
 function applyDailyMetricsOverride<T extends Record<string, unknown>>(
@@ -533,7 +564,7 @@ function recomputeDerivedMetrics<T extends Record<string, unknown>>(metrics: T) 
   out.custo_ic = investimento != null && checkouts && checkouts > 0 ? investimento / checkouts : null;
   out.cpa_front = investimento != null && vendasFront && vendasFront > 0 ? investimento / vendasFront : null;
   out.cac = investimento != null && vendasTotais && vendasTotais > 0 ? investimento / vendasTotais : null;
-  out.aov = fatBruto != null && vendasTotais && vendasTotais > 0 ? fatBruto / vendasTotais : null;
+  out.aov = fatBruto != null && vendasFront && vendasFront > 0 ? fatBruto / vendasFront : null;
   out.pass_chk = pageviews && pageviews > 0 && checkouts != null ? (checkouts / pageviews) * 100 : null;
   out.pitch_chk = chegaramPitch && chegaramPitch > 0 && checkouts != null ? (checkouts / chegaramPitch) * 100 : null;
   out.pitch_venda = chegaramPitch && chegaramPitch > 0 && vendasFront != null ? (vendasFront / chegaramPitch) * 100 : null;
@@ -551,12 +582,22 @@ function recomputeDerivedMetrics<T extends Record<string, unknown>>(metrics: T) 
     ? (fatLiquido - (impostoMeta ?? 0)) / investimento
     : null;
 
-  const bumpCount = Array.isArray(out.bumps)
+  const legacyOrderBumpCount = Array.isArray(out.bumps)
     ? out.bumps
       .filter((bump: any) => String(bump?.type ?? "orderbump") === "orderbump")
       .reduce((sum, bump: any) => sum + num(bump?.count), 0)
     : 0;
-  out.conv_geral_orderbump = vendasFront && vendasFront > 0 ? (bumpCount / vendasFront) * 100 : null;
+  const legacyUpsellCount = Array.isArray(out.bumps)
+    ? out.bumps
+      .filter((bump: any) => String(bump?.type ?? "") === "upsell")
+      .reduce((sum, bump: any) => sum + num(bump?.count), 0)
+    : 0;
+  const orderBumpOrders = metricNumber(out.order_bump_orders) ?? legacyOrderBumpCount;
+  const upsellOrders = metricNumber(out.upsell_orders) ?? legacyUpsellCount;
+  out.order_bump_orders = orderBumpOrders || null;
+  out.upsell_orders = upsellOrders || null;
+  out.conv_geral_orderbump = vendasFront && vendasFront > 0 ? (orderBumpOrders / vendasFront) * 100 : null;
+  out.conv_geral_upsell = vendasFront && vendasFront > 0 ? (upsellOrders / vendasFront) * 100 : null;
   out.proporcao_funil_front = fatFront && fatFront > 0 && fatFunil != null ? fatFunil / fatFront : null;
 
   return out;

@@ -35,7 +35,7 @@ export const DiagnosticsPanel = ({ current, previous }: Props) => {
     return (
       <div className="space-y-6 animate-fade-in">
         <div className="section-card text-center py-16 text-muted-foreground">
-          Selecione um período (7d, 15d ou 30d) para gerar o diagnóstico comparativo.
+          Selecione um período com dados anteriores para gerar o diagnóstico comparativo.
         </div>
       </div>
     );
