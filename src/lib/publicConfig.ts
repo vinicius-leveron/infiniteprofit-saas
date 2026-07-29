@@ -19,8 +19,8 @@ function commaSeparatedValues(value: string | undefined) {
 export const publicConfig = {
   appUrl: cleanValue(import.meta.env.VITE_APP_PUBLIC_URL) ?? DEFAULT_APP_URL,
   hotmartCheckoutEnabled:
-    cleanValue(import.meta.env.VITE_ENABLE_HOTMART_CHECKOUT)?.toLowerCase()
-      === "true",
+    cleanValue(import.meta.env.VITE_DISABLE_HOTMART_CHECKOUT)?.toLowerCase()
+      !== "true",
   hotmartCanaryWorkspaceIds: commaSeparatedValues(
     import.meta.env.VITE_HOTMART_CANARY_WORKSPACE_IDS
       ?? DEFAULT_HOTMART_CANARY_WORKSPACE_IDS,
