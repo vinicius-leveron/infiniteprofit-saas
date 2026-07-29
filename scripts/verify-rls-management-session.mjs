@@ -54,13 +54,23 @@ const candidates = await runQuery(
           select 1
           from public.workspace_meta_accounts account
           where account.workspace_id = member.workspace_id
-        ) as has_meta
+        ) as has_meta,
+        exists (
+          select 1
+          from public.raw_events event
+          where event.project_id = project.id
+        ) as has_raw_events
       from public.workspace_members member
       join public.workspaces workspace
         on workspace.id = member.workspace_id
       join public.projects project
         on project.workspace_id = member.workspace_id
       where member.role = 'member'
+        and exists (
+          select 1
+          from public.raw_events event
+          where event.project_id = project.id
+        )
         and not exists (
           select 1
           from public.organization_members existing_org_member
@@ -256,16 +266,17 @@ await assertPermissionDenied(
   "Member administrative team directory",
 );
 
-await assertPermissionDenied(
+const memberRawEventRows = await runAsAuthenticated(
   candidate.member_user_id,
   `
-    select id
-    from public.raw_events
-    where project_id = ${uuidLiteral(candidate.project_id)}
-    limit 1
+    select not exists (
+      select 1
+      from public.raw_events
+      where project_id = ${uuidLiteral(candidate.project_id)}
+    ) as raw_events_hidden
   `,
-  "Member raw events",
 );
+assertAllTrue(memberRawEventRows[0], "Member raw events");
 
 const organizationMemberRows = await runAsOrganizationMember(
   candidate.member_user_id,
@@ -318,16 +329,19 @@ await assertPermissionDenied(
   "Organization Member administrative team directory",
   runAsTemporaryOrganizationMember,
 );
-await assertPermissionDenied(
+const organizationMemberRawEventRows = await runAsTemporaryOrganizationMember(
   candidate.member_user_id,
   `
-    select id
-    from public.raw_events
-    where project_id = ${uuidLiteral(candidate.project_id)}
-    limit 1
+    select not exists (
+      select 1
+      from public.raw_events
+      where project_id = ${uuidLiteral(candidate.project_id)}
+    ) as raw_events_hidden
   `,
+);
+assertAllTrue(
+  organizationMemberRawEventRows[0],
   "Organization Member raw events",
-  runAsTemporaryOrganizationMember,
 );
 
 const directSecretQueries = [
@@ -433,6 +447,7 @@ console.log(
         has_integration: candidate.has_integration === true,
         has_checkout: candidate.has_checkout === true,
         has_meta: candidate.has_meta === true,
+        has_raw_events: candidate.has_raw_events === true,
       },
       checks: [
         "member effective role",
