@@ -28,10 +28,11 @@ describe("Hotmart checkout rollout", () => {
     expect(isHotmartCheckoutEnabled(null)).toBe(false);
   });
 
-  it("enables every workspace only when the global flag is explicit", async () => {
+  it("enables every workspace when the production rollout flag is active", async () => {
     const { isHotmartCheckoutEnabled } = await loadHotmartFlag("true", "");
 
     expect(isHotmartCheckoutEnabled("workspace-customer")).toBe(true);
+    expect(isHotmartCheckoutEnabled(null)).toBe(true);
   });
 
   it("keeps the internal canary available when the host has no new env var", async () => {
