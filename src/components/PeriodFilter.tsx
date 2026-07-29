@@ -8,7 +8,15 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { cn } from "@/lib/utils";
 import type { DateRange } from "react-day-picker";
 
-export type Period = "today" | "yesterday" | "7d" | "15d" | "30d" | "all" | "custom";
+export type Period =
+  | "today"
+  | "yesterday"
+  | "7d"
+  | "15d"
+  | "this_month"
+  | "last_month"
+  | "all"
+  | "custom";
 
 interface Props {
   period: Period;
@@ -16,6 +24,7 @@ interface Props {
   customTo: string;
   onPeriodChange: (p: Period) => void;
   onCustomChange: (from: string, to: string) => void;
+  showLabel?: boolean;
 }
 
 const PRESETS: { id: Period; label: string }[] = [
@@ -23,7 +32,8 @@ const PRESETS: { id: Period; label: string }[] = [
   { id: "yesterday", label: "Ontem" },
   { id: "7d", label: "7 dias" },
   { id: "15d", label: "15 dias" },
-  { id: "30d", label: "30 dias" },
+  { id: "this_month", label: "Este mês" },
+  { id: "last_month", label: "Mês passado" },
   { id: "all", label: "Tudo" },
 ];
 
@@ -35,6 +45,7 @@ export const PeriodFilter = ({
   customTo,
   onPeriodChange,
   onCustomChange,
+  showLabel = true,
 }: Props) => {
   const [open, setOpen] = useState(false);
 
@@ -63,32 +74,38 @@ export const PeriodFilter = ({
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <div className="flex items-center gap-1.5 text-xs text-muted-foreground mr-1">
-        <CalendarIcon className="w-3.5 h-3.5" />
-        <span>Período:</span>
-      </div>
-      <div className="inline-flex bg-secondary/60 rounded-lg p-1 gap-1">
-        {PRESETS.map((p) => (
-          <button
-            key={p.id}
-            onClick={() => onPeriodChange(p.id)}
-            className={cn(
-              "px-3 py-1.5 rounded-md text-xs font-medium transition-all",
-              period === p.id
-                ? "bg-primary text-primary-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            {p.label}
-          </button>
-        ))}
+      {showLabel && (
+        <div className="mr-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+          <CalendarIcon className="h-3.5 w-3.5" />
+          <span>Período:</span>
+        </div>
+      )}
+      <div className="max-w-full overflow-x-auto">
+        <div className="inline-flex min-w-max bg-secondary/60 rounded-lg p-1 gap-1">
+          {PRESETS.map((p) => (
+            <button
+              type="button"
+              key={p.id}
+              onClick={() => onPeriodChange(p.id)}
+              className={cn(
+                "min-h-11 rounded-md px-3 py-1.5 text-xs font-medium transition-all",
+                period === p.id
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
       </div>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <Button
             variant={period === "custom" ? "default" : "outline"}
             size="sm"
-            className="h-9 gap-2 text-xs font-medium"
+            className="min-h-11 gap-2 text-xs font-medium"
+            aria-label={`Período personalizado: ${customLabel}`}
           >
             <CalendarIcon className="w-3.5 h-3.5" />
             {period === "custom" ? customLabel : "Personalizado"}
@@ -100,7 +117,7 @@ export const PeriodFilter = ({
             mode="range"
             selected={range}
             onSelect={handleRangeSelect}
-            numberOfMonths={2}
+            numberOfMonths={1}
             locale={ptBR}
             className={cn("p-3 pointer-events-auto")}
           />

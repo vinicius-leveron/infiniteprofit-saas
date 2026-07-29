@@ -3,8 +3,6 @@ import { useParams } from "react-router-dom";
 import { format } from "date-fns";
 import { AlertTriangle, BarChart3, Clock, Download, LinkIcon, Loader2 } from "lucide-react";
 import { OverviewPanel } from "@/components/OverviewPanel";
-import { AttributionPanel } from "@/components/AttributionPanel";
-import { ExecutiveReportPanel } from "@/components/ExecutiveReportPanel";
 import { PeriodFilter, type Period } from "@/components/PeriodFilter";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
@@ -58,7 +56,7 @@ export default function PublicShare() {
   const [error, setError] = useState<string | null>(null);
   const [project, setProject] = useState<PublicProject | null>(null);
   const [rows, setRows] = useState<DailyRow[]>([]);
-  const [period, setPeriod] = useState<Period>("30d");
+  const [period, setPeriod] = useState<Period>("this_month");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
 
@@ -114,7 +112,7 @@ export default function PublicShare() {
   return (
     <main className="min-h-screen bg-background">
       <div className="sticky top-0 z-30 bg-background/90 backdrop-blur-md border-b border-border/60">
-        <div className="max-w-[1400px] mx-auto px-4 md:px-6 py-3 flex items-center justify-between gap-4">
+        <div className="max-w-[1200px] mx-auto px-4 md:px-6 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 min-w-0">
             <div className="w-10 h-10 rounded-xl bg-gradient-brand flex items-center justify-center shadow-glow shrink-0">
               <BarChart3 className="w-5 h-5 text-primary-foreground" />
@@ -133,7 +131,7 @@ export default function PublicShare() {
         </div>
       </div>
 
-      <div className="max-w-[1400px] mx-auto px-4 md:px-6 py-6 md:py-8">
+      <div className="max-w-[1200px] mx-auto px-4 md:px-6 py-6 md:py-8">
         <div className="mb-6">
           <PeriodFilter
             period={period}
@@ -162,8 +160,6 @@ export default function PublicShare() {
         ) : (
           <div ref={reportRef} className="space-y-6">
             <OverviewPanel rows={current} previous={previous} />
-            <AttributionPanel rows={current} projectId={project?.id} />
-            <ExecutiveReportPanel current={current} previous={previous} />
           </div>
         )}
       </div>

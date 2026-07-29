@@ -6,7 +6,7 @@ export function bearerToken(authHeader: string | null | undefined) {
 }
 
 export function roleWeight(role: EffectiveRole) {
-  return { owner: 4, admin: 3, moderator: 2, member: 1 }[role];
+  return { owner: 4, admin: 3, moderator: 1, member: 1 }[role];
 }
 
 export function canGrantRole(

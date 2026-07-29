@@ -25,6 +25,7 @@ export interface RawMetaPayload {
   video_play_actions?: Array<{ action_type: string; value: string | number }>;
   video_p25_watched_actions?: Array<{ action_type: string; value: string | number }>;
   video_thruplay_watched_actions?: Array<{ action_type: string; value: string | number }>;
+  hook_count?: string | number;
 }
 
 export interface RawVturbPayload {
@@ -57,6 +58,9 @@ export interface RawGatewayPayload {
   utm_content?: string;
   total?: number;
   net?: number;
+  count?: number;
+  order_bump_orders?: number;
+  upsell_orders?: number;
 }
 
 export interface FunnelMetrics {
@@ -66,6 +70,8 @@ export interface FunnelMetrics {
   clicks: number;
   cpc: number | null;
   ctr: number | null;
+  hook_count: number;
+  hook_rate: number | null;
 
   // Pixel Meta
   pixel_checkouts: number;
@@ -84,6 +90,12 @@ export interface FunnelMetrics {
   gateway_checkouts: number;
   gateway_purchases: number;
   gateway_revenue: number;
+  gateway_net_revenue: number;
+  profit: number;
+  order_bump_orders: number;
+  upsell_orders: number;
+  order_bump_conversion: number | null;
+  upsell_conversion: number | null;
   has_gateway_data: boolean;
 
   // Metricas Derivadas
@@ -173,6 +185,8 @@ function createEmptyFunnelMetrics(): FunnelMetrics {
     clicks: 0,
     cpc: null,
     ctr: null,
+    hook_count: 0,
+    hook_rate: null,
     pixel_checkouts: 0,
     pixel_purchases: 0,
     pixel_purchase_value: 0,
@@ -185,6 +199,12 @@ function createEmptyFunnelMetrics(): FunnelMetrics {
     gateway_checkouts: 0,
     gateway_purchases: 0,
     gateway_revenue: 0,
+    gateway_net_revenue: 0,
+    profit: 0,
+    order_bump_orders: 0,
+    upsell_orders: 0,
+    order_bump_conversion: null,
+    upsell_conversion: null,
     has_gateway_data: false,
     real_roas: null,
     real_cpa: null,
@@ -202,6 +222,9 @@ function calculateDerivedMetrics(metrics: FunnelMetrics): void {
   // CPC e CTR
   metrics.cpc = metrics.clicks > 0 ? metrics.spend / metrics.clicks : null;
   metrics.ctr = metrics.impressions > 0 ? (metrics.clicks / metrics.impressions) * 100 : null;
+  metrics.hook_rate = metrics.impressions > 0
+    ? (metrics.hook_count / metrics.impressions) * 100
+    : null;
 
   // Pixel ROAS
   if (metrics.spend > 0 && metrics.pixel_purchase_value > 0) {
@@ -241,6 +264,14 @@ function calculateDerivedMetrics(metrics: FunnelMetrics): void {
   if (metrics.gateway_checkouts > 0 && metrics.gateway_purchases > 0) {
     metrics.checkout_to_purchase = (metrics.gateway_purchases / metrics.gateway_checkouts) * 100;
   }
+  if (metrics.gateway_purchases > 0) {
+    metrics.order_bump_conversion =
+      (metrics.order_bump_orders / metrics.gateway_purchases) * 100;
+    metrics.upsell_conversion =
+      (metrics.upsell_orders / metrics.gateway_purchases) * 100;
+  }
+  metrics.profit =
+    metrics.gateway_net_revenue - metrics.spend - metrics.spend * 0.1215;
 
   // Status de correlacao
   if (metrics.has_vturb_data && metrics.has_gateway_data) {
@@ -256,6 +287,7 @@ function aggregateMetrics(target: FunnelMetrics, source: FunnelMetrics): void {
   target.spend += source.spend;
   target.impressions += source.impressions;
   target.clicks += source.clicks;
+  target.hook_count += source.hook_count;
   target.pixel_checkouts += source.pixel_checkouts;
   target.pixel_purchases += source.pixel_purchases;
   target.pixel_purchase_value += source.pixel_purchase_value;
@@ -266,6 +298,9 @@ function aggregateMetrics(target: FunnelMetrics, source: FunnelMetrics): void {
   target.gateway_checkouts += source.gateway_checkouts;
   target.gateway_purchases += source.gateway_purchases;
   target.gateway_revenue += source.gateway_revenue;
+  target.gateway_net_revenue += source.gateway_net_revenue;
+  target.order_bump_orders += source.order_bump_orders;
+  target.upsell_orders += source.upsell_orders;
 
   if (source.has_vturb_data) target.has_vturb_data = true;
   if (source.has_gateway_data) target.has_gateway_data = true;
@@ -311,6 +346,7 @@ export function correlateAdFunnel(input: CorrelationInput): CorrelationResult {
     ad.spend += toNumber(payload.spend);
     ad.impressions += toNumber(payload.impressions);
     ad.clicks += extractLinkClicks(payload);
+    ad.hook_count += toNumber(payload.hook_count);
 
     // Extrair conversoes do pixel
     const actions = payload.actions ?? [];
@@ -383,20 +419,38 @@ export function correlateAdFunnel(input: CorrelationInput): CorrelationResult {
   }
 
   // 3. Criar mapa Gateway por utm_content
-  const gatewayByContent = new Map<string, { checkouts: number; purchases: number; revenue: number }>();
+  const gatewayByContent = new Map<string, {
+    checkouts: number;
+    purchases: number;
+    revenue: number;
+    netRevenue: number;
+    orderBumpOrders: number;
+    upsellOrders: number;
+  }>();
 
   for (const event of gatewayEvents) {
     const payload = event.payload ?? {};
     const utmContent = payload.utm_content ? String(payload.utm_content) : null;
     if (!utmContent) continue;
 
-    const existing = gatewayByContent.get(utmContent) ?? { checkouts: 0, purchases: 0, revenue: 0 };
+    const existing = gatewayByContent.get(utmContent) ?? {
+      checkouts: 0,
+      purchases: 0,
+      revenue: 0,
+      netRevenue: 0,
+      orderBumpOrders: 0,
+      upsellOrders: 0,
+    };
+    const count = payload.count == null ? 1 : Math.max(0, toNumber(payload.count));
 
     if (event.event_type === "checkout_created") {
-      existing.checkouts += 1;
+      existing.checkouts += count;
     } else if (event.event_type === "purchase.approved") {
-      existing.purchases += 1;
+      existing.purchases += count;
       existing.revenue += toNumber(payload.total ?? payload.net ?? 0);
+      existing.netRevenue += toNumber(payload.net ?? payload.total ?? 0);
+      existing.orderBumpOrders += toNumber(payload.order_bump_orders);
+      existing.upsellOrders += toNumber(payload.upsell_orders);
     }
 
     gatewayByContent.set(utmContent, existing);
@@ -418,6 +472,9 @@ export function correlateAdFunnel(input: CorrelationInput): CorrelationResult {
       ad.gateway_checkouts = gateway.checkouts;
       ad.gateway_purchases = gateway.purchases;
       ad.gateway_revenue = gateway.revenue;
+      ad.gateway_net_revenue = gateway.netRevenue;
+      ad.order_bump_orders = gateway.orderBumpOrders;
+      ad.upsell_orders = gateway.upsellOrders;
       ad.has_gateway_data = true;
     }
 

@@ -44,15 +44,15 @@ interface DirectoryEntry {
 }
 
 const roleDescriptions: Record<WorkspaceRole, string> = {
-  owner: "Controle completo do cliente e de seus acessos.",
+  owner: "Administrador principal legado.",
   admin: "Gerencia integrações, equipe, funis e sincronizações.",
-  moderator: "Consulta dashboards e saúde detalhada em modo de leitura.",
+  moderator: "Consulta dashboards e o resumo de saúde.",
   member: "Consulta dashboards e o resumo de saúde.",
 };
 
 export default function ClientTeam() {
   const { user } = useAuth();
-  const { client, clientId, canManage, canInviteOwner } = useAdminClient();
+  const { client, clientId, canManage } = useAdminClient();
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [invites, setInvites] = useState<AdminInvite[]>([]);
   const [loading, setLoading] = useState(Boolean(clientId));
@@ -63,10 +63,6 @@ export default function ClientTeam() {
   const [renewingId, setRenewingId] = useState<string | null>(null);
   const [revokingId, setRevokingId] = useState<string | null>(null);
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!canInviteOwner && role === "owner") setRole("admin");
-  }, [canInviteOwner, role]);
 
   const loadTeam = useCallback(async () => {
     if (!clientId) return;
@@ -279,7 +275,8 @@ export default function ClientTeam() {
             currentUser={user}
             emptyMessage="Nenhum membro encontrado para este cliente."
             canManage={canManage}
-            canGrantOwner={canInviteOwner}
+            canGrantOwner={false}
+            availableRoles={["admin", "member"]}
             busyUserId={busyUserId}
             onUpdateRole={(member, nextRole) => void updateMemberRole(member, nextRole)}
             onRemove={(member) => void removeMember(member)}
@@ -296,6 +293,20 @@ export default function ClientTeam() {
             </CardHeader>
             <Separator />
             <CardContent className="p-5 md:p-6">
+              <div className="mb-5 grid gap-3 sm:grid-cols-2">
+                <div className="rounded-xl border border-border/50 bg-muted/20 p-3">
+                  <p className="text-sm font-semibold">Admin</p>
+                  <p className="mt-1 text-xs leading-4 text-muted-foreground">
+                    Gerencia integrações, equipe, funis e sincronizações deste cliente.
+                  </p>
+                </div>
+                <div className="rounded-xl border border-border/50 bg-muted/20 p-3">
+                  <p className="text-sm font-semibold">Membro</p>
+                  <p className="mt-1 text-xs leading-4 text-muted-foreground">
+                    Visualiza dashboards e o resumo de saúde, sem credenciais ou ações operacionais.
+                  </p>
+                </div>
+              </div>
               <form
                 className="grid items-end gap-4 md:grid-cols-[minmax(0,1fr),240px,auto]"
                 onSubmit={(event) => {
@@ -325,9 +336,7 @@ export default function ClientTeam() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="member">Membro</SelectItem>
-                      <SelectItem value="moderator">Moderador</SelectItem>
                       <SelectItem value="admin">Admin</SelectItem>
-                      {canInviteOwner && <SelectItem value="owner">Owner</SelectItem>}
                     </SelectContent>
                   </Select>
                 </div>
@@ -364,7 +373,7 @@ export default function ClientTeam() {
             invites={invites}
             kind="workspace"
             canManage={canManage}
-            canManageOwner={canInviteOwner}
+            canManageOwner={false}
             onCopy={(url) => void copyInvite(url)}
             onRenew={(invite) => void renewInvite(invite)}
             onRevoke={(invite) => void revokeInvite(invite)}

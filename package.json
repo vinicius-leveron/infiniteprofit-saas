@@ -17,6 +17,7 @@
     "check:function-drift": "node scripts/check-supabase-function-drift.mjs",
     "ops:load": "node scripts/load-test-backend.mjs",
     "ops:cron": "node scripts/manage-background-cron.mjs",
+    "ops:backfill-feedback-metrics": "node scripts/backfill-feedback-metrics.mjs",
     "ops:function-logs": "node scripts/inspect-supabase-function-logs.mjs",
     "ops:probe": "node scripts/probe-production.mjs",
     "ops:product-funnel": "node scripts/report-product-funnel.mjs",
@@ -126,5 +127,8 @@
     "typescript-eslint": "^8.38.0",
     "vite": "^5.4.19",
     "vitest": "^3.2.4"
+  },
+  "overrides": {
+    "sucrase": "^3.35.1"
   }
 }

@@ -7,7 +7,8 @@ export type TeamAccessAction =
   | "resend_invite"
   | "revoke_invite"
   | "update_member_role"
-  | "remove_member";
+  | "remove_member"
+  | "transfer_ownership";
 
 interface TeamAccessRequest {
   scope_type: TeamAccessScope;

@@ -18,9 +18,9 @@ export type CreativePipelineStatus =
   | "missing_media"
   | "missing_transcript"
   | "oversized_queued";
-export type CreativeSortKey = "purchases" | "roas" | "hook_rate" | "ctr" | "cpm" | "spend";
+export type CreativeSortKey = "purchases" | "roas" | "refund_rate" | "aov" | "hook_rate" | "ctr" | "cpm" | "spend";
 export type CreativeGroupBy = "none" | "campaign" | "adset" | "media_type";
-export type FixedCreativeGroupKey = "all" | "best-hooks" | "best-roas";
+export type FixedCreativeGroupKey = "all" | "best-hooks" | "best-roas" | "highest-refunds" | "highest-aov";
 
 export interface CreativeGroupRules {
   mediaType?: CreativeMediaType | "all";
@@ -86,12 +86,16 @@ export interface CreativeAssetMetricRow {
   cpm: number | null;
   purchases: number | null;
   revenue: number | null;
+  net_revenue?: number | null;
+  profit?: number | null;
   refunds: number | null;
   refund_value?: number | null;
   order_bump_purchases?: number | null;
   order_bump_revenue?: number | null;
   upsell_purchases?: number | null;
   upsell_revenue?: number | null;
+  order_bump_conversion?: number | null;
+  upsell_conversion?: number | null;
   refund_rate: number | null;
   roas: number | null;
   cpa: number | null;
@@ -147,6 +151,9 @@ export interface CreativeAssetAnalysisRow {
 export interface CreativeAssetJobRow {
   asset_id: string;
   status: "queued" | "running" | "succeeded" | "failed";
+  job_trigger?: "manual" | "auto" | null;
+  manual_requested_at?: string | null;
+  finished_at?: string | null;
 }
 
 export interface CreativeGroupRow {
@@ -204,6 +211,8 @@ export interface CreativeAssetCard {
   outboundClicks: number;
   purchases: number;
   revenue: number;
+  netRevenue: number;
+  profit: number;
   refunds: number;
   refundValue: number;
   refundRate: number | null;
@@ -211,6 +220,8 @@ export interface CreativeAssetCard {
   orderBumpRevenue: number;
   upsellPurchases: number;
   upsellRevenue: number;
+  orderBumpConversion: number | null;
+  upsellConversion: number | null;
   aov: number | null;
   ctr: number | null;
   linkCtr: number | null;
@@ -229,6 +240,8 @@ export const FIXED_CREATIVE_GROUPS: Array<{ key: FixedCreativeGroupKey; label: s
   { key: "all", label: "Todos" },
   { key: "best-hooks", label: "Melhores ganchos" },
   { key: "best-roas", label: "Maiores ROAS" },
+  { key: "highest-refunds", label: "Maiores reembolsos" },
+  { key: "highest-aov", label: "Maiores AOV" },
 ];
 
 export function buildCreativeAssetCards(input: {
@@ -239,10 +252,14 @@ export function buildCreativeAssetCards(input: {
   jobs?: CreativeAssetJobRow[];
 }): CreativeAssetCard[] {
   const analysisByAsset = new Map(input.analyses.map((analysis) => [analysis.asset_id, analysis]));
-  const activeJobByAsset = new Map(
-    (input.jobs ?? [])
-      .filter((job) => job.status === "queued" || job.status === "running")
-      .map((job) => [job.asset_id, job.status]),
+  const latestJobByAsset = new Map(
+    (input.jobs ?? []).map((job) => [
+      job.asset_id,
+      job.status === "failed" &&
+      (job.job_trigger !== "manual" || !job.manual_requested_at)
+        ? null
+        : job.status,
+    ]),
   );
   const adsByAsset = groupBy(input.ads, (row) => row.asset_id);
   const metricsByAsset = groupBy(input.metrics, (row) => row.asset_id);
@@ -264,7 +281,7 @@ export function buildCreativeAssetCards(input: {
     const transcriptStatus = normalizeTranscriptStatus(analysis?.transcript_status, asset.media_type);
     const analysisCoverage = normalizeAnalysisCoverage(analysis?.analysis_coverage, asset.media_type);
     const analysisStatus = normalizeAnalysisStatus(analysis?.status ?? asset.analysis_status);
-    const activeJobStatus = activeJobByAsset.get(asset.id) ?? null;
+    const activeJobStatus = latestJobByAsset.get(asset.id) ?? null;
 
     const searchParts = [
       asset.headline,
@@ -416,6 +433,8 @@ export function resolveSortKey(
 ): CreativeSortKey {
   if (activeFixedGroup === "best-hooks") return "hook_rate";
   if (activeFixedGroup === "best-roas") return "roas";
+  if (activeFixedGroup === "highest-refunds") return "refund_rate";
+  if (activeFixedGroup === "highest-aov") return "aov";
   if (customGroupSortKey && isCreativeSortKey(customGroupSortKey)) return customGroupSortKey;
   return selectedSortKey;
 }
@@ -451,7 +470,12 @@ export function parseCreativeGroupRules(value: unknown): CreativeGroupRules {
   };
 }
 
-export function derivePipelineStatus(card: Pick<CreativeAssetCard, "mediaType" | "analysisStatus" | "transcriptStatus" | "analysisCoverage" | "activeJobStatus" | "transcript" | "analysisErrorMessage" | "transcriptErrorMessage">): CreativePipelineStatus {
+export function derivePipelineStatus(
+  card: Pick<
+    CreativeAssetCard,
+    "mediaType" | "analysisStatus" | "transcriptStatus" | "analysisCoverage" | "activeJobStatus" | "transcript" | "analysisErrorMessage" | "transcriptErrorMessage"
+  > & { processedAt?: string | null },
+): CreativePipelineStatus {
   if (card.analysisStatus === "missing_media" || card.transcriptStatus === "missing_media" || card.mediaType === "unknown") {
     return "missing_media";
   }
@@ -459,7 +483,14 @@ export function derivePipelineStatus(card: Pick<CreativeAssetCard, "mediaType" |
   if ((card.activeJobStatus === "queued" || card.activeJobStatus === "running") && card.mediaType === "video" && card.transcriptStatus !== "ready") return "transcribing";
   if ((card.activeJobStatus === "queued" || card.activeJobStatus === "running") && (card.transcriptStatus === "ready" || card.transcriptStatus === "not_applicable" || card.mediaType === "image")) return "analyzing";
   if (card.mediaType === "video" && card.transcriptStatus === "failed" && !card.transcript) return "missing_transcript";
-  if (card.analysisStatus === "failed" || card.analysisCoverage === "failed") return "failed";
+  if (card.transcript && card.transcriptStatus === "ready" && (card.analysisStatus === "failed" || card.analysisCoverage === "failed")) {
+    return "ready";
+  }
+  if (
+    (card.analysisStatus === "failed" || card.analysisCoverage === "failed") &&
+    card.processedAt &&
+    card.activeJobStatus === "failed"
+  ) return "failed";
   if (card.analysisStatus === "ready" && (card.analysisCoverage === "full" || card.analysisCoverage === "not_applicable")) return "ready";
   if (card.analysisStatus === "ready") return "ready";
   return "pending";
@@ -514,6 +545,8 @@ function aggregateMetrics(metrics: CreativeAssetMetricRow[]) {
   let outboundClicks = 0;
   let purchases = 0;
   let revenue = 0;
+  let netRevenue = 0;
+  let profit = 0;
   let refunds = 0;
   let refundValue = 0;
   let orderBumpPurchases = 0;
@@ -545,6 +578,11 @@ function aggregateMetrics(metrics: CreativeAssetMetricRow[]) {
     outboundClicks += rowOutboundClicks;
     purchases += rowPurchases;
     revenue += rowRevenue;
+    netRevenue += numberOrZero(row.net_revenue ?? row.revenue) - rowRefundValue;
+    profit += numberOrZero(
+      row.profit
+        ?? (numberOrZero(row.net_revenue ?? row.revenue) - rowRefundValue - rowSpend - rowSpend * 0.1215),
+    );
     refunds += rowRefunds;
     refundValue += rowRefundValue;
     orderBumpPurchases += numberOrZero(row.order_bump_purchases);
@@ -568,6 +606,8 @@ function aggregateMetrics(metrics: CreativeAssetMetricRow[]) {
   const cpa = spend > 0 && purchases > 0 ? spend / purchases : null;
   const refundRate = purchases > 0 ? (refunds / purchases) * 100 : null;
   const aov = purchases > 0 ? revenue / purchases : null;
+  const orderBumpConversion = purchases > 0 ? (orderBumpPurchases / purchases) * 100 : null;
+  const upsellConversion = purchases > 0 ? (upsellPurchases / purchases) * 100 : null;
   const hookRate = hookWeight > 0 ? hookWeightedSum / hookWeight : null;
 
   return {
@@ -577,6 +617,8 @@ function aggregateMetrics(metrics: CreativeAssetMetricRow[]) {
     outboundClicks,
     purchases,
     revenue,
+    netRevenue,
+    profit,
     refunds,
     refundValue,
     refundRate,
@@ -584,6 +626,8 @@ function aggregateMetrics(metrics: CreativeAssetMetricRow[]) {
     orderBumpRevenue,
     upsellPurchases,
     upsellRevenue,
+    orderBumpConversion,
+    upsellConversion,
     aov,
     ctr,
     linkCtr,
@@ -610,6 +654,10 @@ function valueForCreativeSort(card: CreativeAssetCard, sortKey: CreativeSortKey)
       return card.spend;
     case "roas":
       return card.roas ?? -1;
+    case "refund_rate":
+      return card.refundRate ?? -1;
+    case "aov":
+      return card.aov ?? -1;
     case "hook_rate":
       return card.hookRate ?? -1;
     case "ctr":
@@ -832,5 +880,12 @@ function isPipelineStatus(value: unknown): value is CreativePipelineStatus {
 }
 
 function isCreativeSortKey(value: unknown): value is CreativeSortKey {
-  return value === "purchases" || value === "roas" || value === "hook_rate" || value === "ctr" || value === "cpm" || value === "spend";
+  return value === "purchases" ||
+    value === "roas" ||
+    value === "refund_rate" ||
+    value === "aov" ||
+    value === "hook_rate" ||
+    value === "ctr" ||
+    value === "cpm" ||
+    value === "spend";
 }

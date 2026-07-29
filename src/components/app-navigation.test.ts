@@ -12,7 +12,7 @@ const baseContext = {
 };
 
 describe("contextual app navigation", () => {
-  it("shows only the nine Dashboard destinations in the Dashboard surface", () => {
+  it("shows only the seven supported Dashboard destinations in the Dashboard surface", () => {
     const groups = createAppNavigation({
       ...baseContext,
       surface: "dashboard",
@@ -20,7 +20,7 @@ describe("contextual app navigation", () => {
 
     expect(groups).toHaveLength(1);
     expect(groups[0].id).toBe("dashboard");
-    expect(groups[0].items).toHaveLength(9);
+    expect(groups[0].items).toHaveLength(7);
     expect(groups[0].items.every((item) => item.dashboardTab)).toBe(true);
   });
 

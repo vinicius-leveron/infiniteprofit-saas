@@ -1,6 +1,14 @@
 import type { DailyRow } from "./csv";
 
-export type DashboardPeriod = "today" | "yesterday" | "7d" | "15d" | "30d" | "all" | "custom";
+export type DashboardPeriod =
+  | "today"
+  | "yesterday"
+  | "7d"
+  | "15d"
+  | "this_month"
+  | "last_month"
+  | "all"
+  | "custom";
 
 export interface DashboardDateRange {
   from: string | null;
@@ -73,7 +81,7 @@ export function getDashboardPeriodRows(
   }
 
   if (period === "today" || period === "yesterday") {
-    const today = localDateKey(new Date());
+    const today = saoPauloDateKey(new Date());
     const target = period === "today" ? today : addDays(today, -1);
     const previousTarget = addDays(target, -1);
     return {
@@ -82,7 +90,33 @@ export function getDashboardPeriodRows(
     };
   }
 
-  const days = period === "7d" ? 7 : period === "15d" ? 15 : 30;
+  if (period === "this_month" || period === "last_month") {
+    const today = saoPauloDateKey(new Date());
+    const targetMonth = period === "this_month"
+      ? monthRange(today)
+      : monthRange(addMonths(today, -1));
+    const currentTo =
+      period === "this_month"
+        ? minDateKey(today, targetMonth.to)
+        : targetMonth.to;
+    const current = active.filter((row) => {
+      const key = row.date ? localDateKey(row.date) : "";
+      return key >= targetMonth.from && key <= currentTo;
+    });
+
+    const previousMonth = monthRange(addMonths(targetMonth.from, -1));
+    const previousTo =
+      period === "this_month"
+        ? addDays(previousMonth.from, Math.max(0, daysBetween(targetMonth.from, currentTo)))
+        : previousMonth.to;
+    const previous = active.filter((row) => {
+      const key = row.date ? localDateKey(row.date) : "";
+      return key >= previousMonth.from && key <= minDateKey(previousTo, previousMonth.to);
+    });
+    return { current, previous };
+  }
+
+  const days = period === "7d" ? 7 : 15;
   return {
     current: active.slice(-days),
     previous: active.slice(Math.max(0, active.length - days * 2), active.length - days),
@@ -106,13 +140,24 @@ export function getDashboardSelectedDateRange(
   }
 
   if (period === "today" || period === "yesterday") {
-    const today = localDateKey(new Date());
+    const today = saoPauloDateKey(new Date());
     const target = period === "today" ? today : addDays(today, -1);
     return { from: target, to: target };
   }
 
   if (period === "all") {
     return dateRangeForRows(active);
+  }
+
+  if (period === "this_month" || period === "last_month") {
+    const today = saoPauloDateKey(new Date());
+    const range = period === "this_month"
+      ? monthRange(today)
+      : monthRange(addMonths(today, -1));
+    return {
+      from: range.from,
+      to: period === "this_month" ? minDateKey(today, range.to) : range.to,
+    };
   }
 
   const { current } = getDashboardPeriodRows(rows, period, customFrom, customTo);
@@ -122,6 +167,17 @@ export function getDashboardSelectedDateRange(
 export function localDateKey(date: Date) {
   const pad = (value: number) => String(value).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+export function saoPauloDateKey(date: Date) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const value = new Map(parts.map((part) => [part.type, part.value]));
+  return `${value.get("year")}-${value.get("month")}-${value.get("day")}`;
 }
 
 function numericSignal(value: unknown) {
@@ -144,6 +200,26 @@ function addDays(ymd: string, delta: number) {
   const date = toUtcNoon(ymd);
   date.setUTCDate(date.getUTCDate() + delta);
   return date.toISOString().slice(0, 10);
+}
+
+function addMonths(ymd: string, delta: number) {
+  const date = toUtcNoon(ymd);
+  date.setUTCDate(1);
+  date.setUTCMonth(date.getUTCMonth() + delta);
+  return date.toISOString().slice(0, 10);
+}
+
+function monthRange(ymd: string) {
+  const date = toUtcNoon(ymd);
+  const from = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-01`;
+  const nextMonth = toUtcNoon(from);
+  nextMonth.setUTCMonth(nextMonth.getUTCMonth() + 1);
+  nextMonth.setUTCDate(0);
+  return { from, to: nextMonth.toISOString().slice(0, 10) };
+}
+
+function minDateKey(left: string, right: string) {
+  return left < right ? left : right;
 }
 
 function toUtcNoon(ymd: string) {

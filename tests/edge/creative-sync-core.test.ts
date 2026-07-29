@@ -168,6 +168,38 @@ describe("creative sync core", () => {
     });
   });
 
+  it("deduplicates repeated events and counts bump acceptance once per order", () => {
+    const duplicatePayload = {
+      transaction_id: "tx-unique",
+      utm_content: "ad-1",
+      total: 300,
+      net: 270,
+      is_front: true,
+      items: [
+        { type: "main", is_bump: false, price: 200 },
+        { type: "orderbump", is_bump: true, price: 50 },
+        { type: "orderbump", is_bump: true, price: 50 },
+      ],
+    };
+    const rows = buildCreativeDailyMetrics({
+      metaRows: [],
+      gatewayRows: [
+        { event_date: "2026-07-29", event_type: "purchase.approved", payload: duplicatePayload },
+        { event_date: "2026-07-29", event_type: "purchase.approved", payload: duplicatePayload },
+      ],
+      assetIdByAdId: new Map([["ad-1", "asset-1"]]),
+      mediaTypeByAssetId: new Map([["asset-1", "video"]]),
+    });
+
+    expect(rows[0]).toMatchObject({
+      purchases: 1,
+      revenue: 300,
+      net_revenue: 270,
+      order_bump_purchases: 1,
+      order_bump_conversion: 100,
+    });
+  });
+
   it("keeps a late refund linked when only the approved event has UTM", () => {
     const rows = buildCreativeDailyMetrics({
       metaRows: [],

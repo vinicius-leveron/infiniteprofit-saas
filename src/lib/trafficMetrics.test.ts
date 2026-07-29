@@ -108,6 +108,19 @@ describe("traffic metric mapping", () => {
     expect(totals.taxaReembolso).toBeCloseTo(20);
   });
 
+  it("computes AOV from total approved revenue over front sales", () => {
+    const totals = computeTotals([
+      {
+        vendasFront: 10,
+        vendasTotais: 18,
+        fatBruto: 10_000,
+        fatLiquido: 8_000,
+      } as DailyRow,
+    ]);
+
+    expect(totals.aov).toBe(1_000);
+  });
+
   it("computes funnel period rates from summed denominators instead of averaging daily percentages", () => {
     const totals = computeTotals([
       {

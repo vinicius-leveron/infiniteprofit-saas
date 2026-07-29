@@ -111,7 +111,7 @@ describe("WorkspaceProvider", () => {
     ]);
   });
 
-  it("keeps an explicit owner role when it is stronger than inherited admin access", async () => {
+  it("normalizes a legacy workspace owner to operational Admin", async () => {
     mocks.organizationMemberships = [
       {
         role: "admin",
@@ -141,9 +141,34 @@ describe("WorkspaceProvider", () => {
     await waitFor(() => expect(screen.getByTestId("admin")).toHaveTextContent("true"));
     expect(JSON.parse(screen.getByTestId("workspaces").textContent ?? "[]")).toEqual([
       expect.objectContaining({
-        role: "owner",
+        role: "admin",
         accessOrigin: "workspace",
       }),
+    ]);
+  });
+
+  it("inherits read-only access to every client for an organization Member", async () => {
+    mocks.organizationMemberships = [
+      {
+        role: "member",
+        organizations: { id: "org-1", name: "Agência Atlas" },
+      },
+    ];
+    mocks.inheritedWorkspaces = [
+      { id: "client-1", name: "Cliente Um", organization_id: "org-1" },
+      { id: "client-2", name: "Cliente Dois", organization_id: "org-1" },
+    ];
+
+    render(
+      <WorkspaceProvider>
+        <Probe />
+      </WorkspaceProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("admin")).toHaveTextContent("false"));
+    expect(JSON.parse(screen.getByTestId("workspaces").textContent ?? "[]")).toEqual([
+      expect.objectContaining({ id: "client-2", role: "member", accessOrigin: "organization" }),
+      expect.objectContaining({ id: "client-1", role: "member", accessOrigin: "organization" }),
     ]);
   });
 

@@ -12,9 +12,9 @@ import { useAuth } from "./useAuth";
 
 const STORAGE_KEY = "infiniteprofit.currentWorkspaceId";
 
-export type OrganizationRole = "owner" | "admin";
+export type OrganizationRole = "owner" | "admin" | "member";
 export type WorkspaceRole = "owner" | "admin" | "moderator" | "member";
-export type EffectiveWorkspaceRole = WorkspaceRole;
+export type EffectiveWorkspaceRole = "owner" | "admin" | "member";
 export type WorkspaceAccessOrigin = "workspace" | "organization";
 
 export interface OrganizationAccess {
@@ -68,7 +68,7 @@ interface WorkspaceContextValue {
   currentWorkspace: WorkspaceAccess | null;
   currentWorkspaceId: string | null;
   currentOrganization: OrganizationAccess | null;
-  currentWorkspaceRole: WorkspaceRole | null;
+  currentWorkspaceRole: EffectiveWorkspaceRole | null;
   currentOrganizationRole: OrganizationRole | null;
   hasWorkspaces: boolean;
   needsOnboarding: boolean;
@@ -83,7 +83,6 @@ const WorkspaceContext = createContext<WorkspaceContextValue | undefined>(undefi
 const ROLE_WEIGHT: Record<EffectiveWorkspaceRole, number> = {
   owner: 4,
   admin: 3,
-  moderator: 2,
   member: 1,
 };
 
@@ -92,11 +91,18 @@ function resolveWorkspaceAccess(
   organizationRole: OrganizationRole | null,
 ): Pick<WorkspaceAccess, "role" | "accessOrigin"> | null {
   const inheritedRole: EffectiveWorkspaceRole | null = organizationRole;
+  const effectiveDirectRole = normalizeDirectWorkspaceRole(directRole);
 
-  if (!directRole && !inheritedRole) return null;
-  if (!inheritedRole || (directRole && ROLE_WEIGHT[directRole] >= ROLE_WEIGHT[inheritedRole])) {
+  if (!effectiveDirectRole && !inheritedRole) return null;
+  if (
+    !inheritedRole ||
+    (
+      effectiveDirectRole &&
+      ROLE_WEIGHT[effectiveDirectRole] >= ROLE_WEIGHT[inheritedRole]
+    )
+  ) {
     return {
-      role: directRole as EffectiveWorkspaceRole,
+      role: effectiveDirectRole as EffectiveWorkspaceRole,
       accessOrigin: "workspace",
     };
   }
@@ -105,6 +111,14 @@ function resolveWorkspaceAccess(
     role: inheritedRole,
     accessOrigin: "organization",
   };
+}
+
+function normalizeDirectWorkspaceRole(
+  role: WorkspaceRole | null,
+): EffectiveWorkspaceRole | null {
+  if (role === "owner") return "admin";
+  if (role === "moderator") return "member";
+  return role;
 }
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {

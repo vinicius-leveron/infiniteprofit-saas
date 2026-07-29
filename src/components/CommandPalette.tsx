@@ -136,7 +136,8 @@ export function CommandPalette({
                 ["yesterday", "Ontem"],
                 ["7d", "Últimos 7 dias"],
                 ["15d", "Últimos 15 dias"],
-                ["30d", "Últimos 30 dias"],
+                ["this_month", "Este mês"],
+                ["last_month", "Mês passado"],
                 ["all", "Tudo"],
               ].map(([period, label]) => (
                 <CommandItem
@@ -149,6 +150,16 @@ export function CommandPalette({
               ))}
             </CommandGroup>
           </>
+        )}
+
+        <CommandSeparator />
+        {isOrganizationAdmin && (
+          <CommandGroup heading="Organização">
+            <CommandItem onSelect={run(() => navigate("/clients?new=1"))}>
+              <Plus className="mr-2 h-4 w-4" />
+              Novo cliente
+            </CommandItem>
+          </CommandGroup>
         )}
 
         <CommandSeparator />

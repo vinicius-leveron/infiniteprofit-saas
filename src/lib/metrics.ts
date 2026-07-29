@@ -135,7 +135,7 @@ export function computeTotals(rows: DailyRow[]): KpiTotals {
     roas: safeDiv(fatBruto, investimento),
     roi: safeDiv(fatLiquido - impostoMeta, investimento),
     cac: safeDiv(investimento, vendasTotais),
-    aov: safeDiv(fatLiquido, vendasTotais),
+    aov: safeDiv(fatBruto, vendasFront),
     cpm: impressoes ? (investimento / impressoes) * 1000 : null,
     ctr: impressoes ? (cliques / impressoes) * 100 : null,
     cpc: safeDiv(investimento, cliques),

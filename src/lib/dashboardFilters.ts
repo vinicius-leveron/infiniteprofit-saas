@@ -1,13 +1,32 @@
 import type { Period } from "@/components/PeriodFilter";
 
 const DASHBOARD_FILTER_STORAGE_PREFIX = "infiniteprofit.dashboardFilters";
-const PERIODS = new Set<Period>(["today", "yesterday", "7d", "15d", "30d", "all", "custom"]);
+const PERIODS = new Set<Period>([
+  "today",
+  "yesterday",
+  "7d",
+  "15d",
+  "this_month",
+  "last_month",
+  "all",
+  "custom",
+]);
 
 export type StoredDashboardFilters = {
   period?: Period;
   customFrom?: string;
   customTo?: string;
+  accountIds?: string[];
+  campaignIds?: string[];
+  adsetIds?: string[];
+  /** Legacy single-account preference, migrated on read. */
   accountFilter?: string;
+};
+
+export type DashboardFilterState = {
+  accountIds: string[];
+  campaignIds: string[];
+  adsetIds: string[];
 };
 
 export function dashboardFilterStorageKey(projectId: string) {
@@ -22,15 +41,32 @@ export function readStoredDashboardFilters(
     const raw = storage.getItem(dashboardFilterStorageKey(projectId));
     if (!raw) return {};
     const parsed = JSON.parse(raw) as StoredDashboardFilters;
+    const storedPeriod = (parsed as { period?: string }).period;
     return {
-      period: parsed.period && PERIODS.has(parsed.period) ? parsed.period : undefined,
+      period:
+        storedPeriod === "30d"
+          ? "this_month"
+          : storedPeriod && PERIODS.has(storedPeriod as Period)
+            ? storedPeriod as Period
+            : undefined,
       customFrom: typeof parsed.customFrom === "string" ? parsed.customFrom : undefined,
       customTo: typeof parsed.customTo === "string" ? parsed.customTo : undefined,
+      accountIds: stringArray(parsed.accountIds)
+        ?? (typeof parsed.accountFilter === "string" && parsed.accountFilter !== "all"
+          ? [parsed.accountFilter]
+          : undefined),
+      campaignIds: stringArray(parsed.campaignIds),
+      adsetIds: stringArray(parsed.adsetIds),
       accountFilter: typeof parsed.accountFilter === "string" ? parsed.accountFilter : undefined,
     };
   } catch {
     return {};
   }
+}
+
+function stringArray(value: unknown) {
+  if (!Array.isArray(value)) return undefined;
+  return [...new Set(value.filter((item): item is string => typeof item === "string" && item.length > 0))];
 }
 
 export function writeStoredDashboardFilters(

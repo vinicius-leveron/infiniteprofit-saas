@@ -21,9 +21,9 @@ interface InvitePreview {
 }
 
 const ROLE_LABEL: Record<WorkspaceRole, string> = {
-  owner: "Proprietário",
+  owner: "Administrador principal",
   admin: "Administrador",
-  moderator: "Moderador",
+  moderator: "Membro",
   member: "Membro",
 };
 

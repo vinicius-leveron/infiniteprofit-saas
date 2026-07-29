@@ -102,4 +102,58 @@ describe("correlateAdFunnel", () => {
     expect(result.ads[0].pitch_retention).toBe(50);
     expect(result.ads[0].has_vturb_data).toBe(true);
   });
+
+  it("preserves aggregated counts, offer conversion, hook rate and profit", () => {
+    const result = correlateAdFunnel({
+      metaEvents: [{
+        payload: {
+          ad_id: "ad-3",
+          campaign_id: "campaign-3",
+          adset_id: "adset-3",
+          spend: 100,
+          impressions: 1_000,
+          clicks: 50,
+          hook_count: 300,
+        },
+      }],
+      vturbEvents: [{
+        payload: {
+          utm_content: "ad-3",
+          pageviews: 40,
+          plays: 20,
+          pitch_reached: 10,
+        },
+      }],
+      gatewayEvents: [
+        {
+          event_type: "checkout_created",
+          payload: { utm_content: "ad-3", count: 5 },
+        },
+        {
+          event_type: "purchase.approved",
+          payload: {
+            utm_content: "ad-3",
+            count: 4,
+            total: 1_000,
+            net: 900,
+            order_bump_orders: 2,
+            upsell_orders: 1,
+          },
+        },
+      ],
+    });
+
+    expect(result.ads[0]).toMatchObject({
+      hook_rate: 30,
+      gateway_checkouts: 5,
+      gateway_purchases: 4,
+      gateway_revenue: 1_000,
+      gateway_net_revenue: 900,
+      order_bump_conversion: 50,
+      upsell_conversion: 25,
+    });
+    expect(result.ads[0].profit).toBeCloseTo(787.85);
+    expect(result.campaigns[0].order_bump_conversion).toBe(50);
+    expect(result.campaigns[0].upsell_conversion).toBe(25);
+  });
 });

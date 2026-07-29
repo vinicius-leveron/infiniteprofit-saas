@@ -87,6 +87,26 @@ Deno.serve(async (req) => {
       .upsert(rows, { onConflict: "project_id,event_date" });
     if (upsertError) throw new Error(upsertError.message);
 
+    await updateConversionIntegrityAlerts(sb, {
+      projectId: project_id,
+      workspaceId: project.workspace_id,
+      rows,
+    });
+
+    const { error: dimensionError } = await sb.rpc(
+      "refresh_dashboard_ad_dimensions",
+      {
+        _project_id: project_id,
+        _dates: normalizedDates,
+      },
+    );
+    if (dimensionError) {
+      console.warn("dashboard dimension refresh failed", {
+        project_id,
+        message: dimensionError.message,
+      });
+    }
+
     return json({
       ok: true,
       processed: rows.length,
@@ -124,6 +144,67 @@ async function loadRawEvents(
   throw new Error(
     `Aggregation exceeds ${MAX_EVENTS_PER_REQUEST} raw events; split the date range`,
   );
+}
+
+async function updateConversionIntegrityAlerts(
+  sb: ReturnType<typeof createClient>,
+  args: {
+    projectId: string;
+    workspaceId: string;
+    rows: Array<Record<string, unknown>>;
+  },
+) {
+  const now = new Date().toISOString();
+  const anomalies = args.rows.filter((row) =>
+    Number(row.conv_geral_orderbump ?? 0) > 100 ||
+    Number(row.conv_geral_upsell ?? 0) > 100
+  );
+  const anomalyKeys = new Set(
+    anomalies.map((row) => `conversion-integrity:${row.event_date}`),
+  );
+
+  if (anomalies.length > 0) {
+    const { error } = await sb.from("operational_alerts").upsert(
+      anomalies.map((row) => ({
+        workspace_id: args.workspaceId,
+        project_id: args.projectId,
+        source: "funnel",
+        type: "conversion_integrity",
+        severity: "critical",
+        status: "active",
+        title: "Conversão de oferta acima de 100%",
+        message: "Há pedidos de bump ou upsell sem vínculo confiável com uma venda front.",
+        dedupe_key: `conversion-integrity:${row.event_date}`,
+        details: {
+          event_date: row.event_date,
+          order_bump_percent: row.conv_geral_orderbump ?? null,
+          upsell_percent: row.conv_geral_upsell ?? null,
+          action: "review_checkout_transaction_linkage",
+        },
+        last_seen_at: now,
+        resolved_at: null,
+      })),
+      { onConflict: "project_id,type,dedupe_key" },
+    );
+    if (error) throw new Error(error.message);
+  }
+
+  const resolvedKeys = args.rows
+    .map((row) => `conversion-integrity:${row.event_date}`)
+    .filter((key) => !anomalyKeys.has(key));
+  if (resolvedKeys.length === 0) return;
+
+  const { error } = await sb
+    .from("operational_alerts")
+    .update({
+      status: "resolved",
+      resolved_at: now,
+      last_seen_at: now,
+    })
+    .eq("project_id", args.projectId)
+    .eq("type", "conversion_integrity")
+    .in("dedupe_key", resolvedKeys);
+  if (error) throw new Error(error.message);
 }
 
 function json(body: unknown, status = 200) {

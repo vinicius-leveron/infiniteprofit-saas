@@ -5,11 +5,17 @@ export function isAutomationRequest(req: Request) {
   const apiKey = req.headers.get("apikey")?.trim() || null;
   const authHeader = req.headers.get("Authorization")?.trim() || null;
 
+  // The service-role credential is the root backend identity and is used by
+  // release/recovery jobs running in an ephemeral, masked CI environment.
+  if (authHeader === `Bearer ${SERVICE_KEY}`) {
+    return true;
+  }
+
   if (AUTOMATION_KEY) {
     return apiKey === AUTOMATION_KEY || authHeader === `Bearer ${AUTOMATION_KEY}`;
   }
 
-  return authHeader === `Bearer ${SERVICE_KEY}`;
+  return false;
 }
 
 export function buildAutomationHeaders(contentType = "application/json") {

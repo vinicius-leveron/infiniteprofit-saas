@@ -9,8 +9,6 @@ const VALID_DASHBOARD_TABS = new Set<DashboardTab>([
   "funil",
   "bumps",
   "anuncios",
-  "atribuicao",
-  "relatorio",
   "diagnostico",
   "simulador",
 ]);
@@ -42,16 +40,20 @@ export function readLastDashboardPreference(
     const stored = localStorage.getItem(storageKey(userId, clientId));
     if (!stored) return null;
     const parsed = JSON.parse(stored) as Partial<LastDashboardPreference>;
+    const storedTab =
+      parsed.dashboardTab === "atribuicao" || parsed.dashboardTab === "relatorio"
+        ? "geral"
+        : parsed.dashboardTab;
     if (
       parsed.userId !== userId ||
       parsed.clientId !== clientId ||
       typeof parsed.funnelId !== "string" ||
-      !VALID_DASHBOARD_TABS.has(parsed.dashboardTab as DashboardTab)
+      !VALID_DASHBOARD_TABS.has(storedTab as DashboardTab)
     ) {
       localStorage.removeItem(storageKey(userId, clientId));
       return null;
     }
-    return parsed as LastDashboardPreference;
+    return { ...parsed, dashboardTab: storedTab } as LastDashboardPreference;
   } catch {
     localStorage.removeItem(storageKey(userId, clientId));
     return null;

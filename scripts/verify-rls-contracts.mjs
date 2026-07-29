@@ -118,6 +118,11 @@ async function assertMemberContracts(client) {
     metaResult,
     syncSettingsResult,
     projectResult,
+    dimensionCatalogResult,
+    dimensionMetricsResult,
+    salesHeatmapResult,
+    rawEventsResult,
+    teamDirectoryResult,
   ] = await Promise.all([
     client.rpc("get_workspace_integration_safe", {
       _workspace_id: config.workspaceId,
@@ -136,12 +141,42 @@ async function assertMemberContracts(client) {
       .select("id, name, workspace_id")
       .eq("id", config.projectId)
       .single(),
+    client.rpc("list_dashboard_ad_dimensions", {
+      _project_id: config.projectId,
+    }),
+    client.rpc("get_dashboard_dimension_metrics", {
+      _project_id: config.projectId,
+      _from: null,
+      _to: null,
+      _account_ids: [],
+      _campaign_ids: [],
+      _adset_ids: [],
+    }),
+    client.rpc("get_dashboard_sales_heatmap", {
+      _project_id: config.projectId,
+      _from: "2000-01-01",
+      _to: "2100-01-01",
+      _account_ids: [],
+      _campaign_ids: [],
+      _adset_ids: [],
+    }),
+    client
+      .from("raw_events")
+      .select("id")
+      .eq("project_id", config.projectId)
+      .limit(1),
+    client.rpc("list_workspace_access_directory", {
+      _workspace_id: config.workspaceId,
+    }),
   ]);
 
   assertNoError(integrationResult, "Member integration safe contract");
   assertNoError(checkoutResult, "Member checkout safe contract");
   assertNoError(metaResult, "Member Meta catalog safe contract");
   assertNoError(projectResult, "Member non-secret project read");
+  assertNoError(dimensionCatalogResult, "Member dashboard dimension catalog");
+  assertNoError(dimensionMetricsResult, "Member dashboard dimension metrics");
+  assertNoError(salesHeatmapResult, "Member sales heatmap read model");
 
   for (const row of integrationResult.data ?? []) {
     if (row.gateway_webhook_token !== null) {
@@ -161,10 +196,24 @@ async function assertMemberContracts(client) {
   if (!syncSettingsResult.error) {
     throw new Error("Member received project sheet synchronization settings.");
   }
+  if (!rawEventsResult.error && (rawEventsResult.data ?? []).length > 0) {
+    throw new Error("Member raw event boundary is not enforced.");
+  }
+  if (!teamDirectoryResult.error) {
+    throw new Error("Member received the administrative team directory.");
+  }
 }
 
 async function assertAdminContracts(client) {
-  const [integrationResult, checkoutResult, metaResult, syncSettingsResult] =
+  const [
+    integrationResult,
+    checkoutResult,
+    metaResult,
+    syncSettingsResult,
+    dimensionCatalogResult,
+    dimensionMetricsResult,
+    salesHeatmapResult,
+  ] =
     await Promise.all([
       client.rpc("get_workspace_integration_safe", {
         _workspace_id: config.workspaceId,
@@ -178,12 +227,34 @@ async function assertAdminContracts(client) {
       client.rpc("get_project_sync_settings_safe", {
         _project_id: config.projectId,
       }),
+      client.rpc("list_dashboard_ad_dimensions", {
+        _project_id: config.projectId,
+      }),
+      client.rpc("get_dashboard_dimension_metrics", {
+        _project_id: config.projectId,
+        _from: null,
+        _to: null,
+        _account_ids: [],
+        _campaign_ids: [],
+        _adset_ids: [],
+      }),
+      client.rpc("get_dashboard_sales_heatmap", {
+        _project_id: config.projectId,
+        _from: "2000-01-01",
+        _to: "2100-01-01",
+        _account_ids: [],
+        _campaign_ids: [],
+        _adset_ids: [],
+      }),
     ]);
 
   assertNoError(integrationResult, "Admin integration safe contract");
   assertNoError(checkoutResult, "Admin checkout safe contract");
   assertNoError(metaResult, "Admin Meta catalog safe contract");
   assertNoError(syncSettingsResult, "Admin project sync settings contract");
+  assertNoError(dimensionCatalogResult, "Admin dashboard dimension catalog");
+  assertNoError(dimensionMetricsResult, "Admin dashboard dimension metrics");
+  assertNoError(salesHeatmapResult, "Admin sales heatmap read model");
 
   for (const row of metaResult.data ?? []) {
     if (Object.hasOwn(row, "access_token")) {

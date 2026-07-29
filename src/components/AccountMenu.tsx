@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { ChevronUp, Command, LifeBuoy, LogOut } from "lucide-react";
+import { ChevronUp, Command, LifeBuoy, LogOut, Plus } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import {
   createAppNavigation,
@@ -166,6 +166,20 @@ export function AccountMenu({
                 })}
               </section>
             ))}
+            {canManageOrganization && (
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileOpen(false);
+                  onNavigate?.();
+                  navigate("/clients?new=1");
+                }}
+                className="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm font-medium text-primary hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <Plus className="h-4 w-4" />
+                <span>Novo cliente</span>
+              </button>
+            )}
             <div className="my-2 h-px bg-border/60" />
             <button
               type="button"
@@ -262,6 +276,18 @@ export function AccountMenu({
             })}
           </div>
         ))}
+        {canManageOrganization && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onSelect={() => navigate("/clients?new=1")}
+              className="min-h-10 gap-3 font-medium text-primary"
+            >
+              <Plus className="h-4 w-4" />
+              Novo cliente
+            </DropdownMenuItem>
+          </>
+        )}
         <DropdownMenuSeparator />
         <DropdownMenuItem
           onSelect={openHelp}
