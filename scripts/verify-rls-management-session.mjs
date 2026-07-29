@@ -21,6 +21,7 @@ const candidates = await runQuery(
     with member_candidate as (
       select
         member.workspace_id,
+        workspace.organization_id,
         member.user_id as member_user_id,
         project.id as project_id,
         (
@@ -55,9 +56,17 @@ const candidates = await runQuery(
           where account.workspace_id = member.workspace_id
         ) as has_meta
       from public.workspace_members member
+      join public.workspaces workspace
+        on workspace.id = member.workspace_id
       join public.projects project
         on project.workspace_id = member.workspace_id
       where member.role = 'member'
+        and not exists (
+          select 1
+          from public.organization_members existing_org_member
+          where existing_org_member.organization_id = workspace.organization_id
+            and existing_org_member.user_id = member.user_id
+        )
       order by
         (
           exists (
@@ -84,6 +93,7 @@ if (!candidate) {
 }
 for (const value of [
   candidate.workspace_id,
+  candidate.organization_id,
   candidate.member_user_id,
   candidate.admin_user_id,
   candidate.project_id,
@@ -127,7 +137,35 @@ const memberRows = await runAsAuthenticated(
           ${uuidLiteral(candidate.workspace_id)}
         ) account
         where pg_catalog.to_jsonb(account) ? 'access_token'
-      ) as meta_secret_absent
+      ) as meta_secret_absent,
+      (
+        select pg_catalog.count(*) >= 0
+        from public.list_dashboard_ad_dimensions(
+          ${uuidLiteral(candidate.project_id)}
+        )
+      ) as dimension_catalog_available,
+      (
+        select pg_catalog.count(*) >= 0
+        from public.get_dashboard_dimension_metrics(
+          ${uuidLiteral(candidate.project_id)},
+          null,
+          null,
+          array[]::text[],
+          array[]::text[],
+          array[]::text[]
+        )
+      ) as dimension_metrics_available,
+      (
+        select pg_catalog.count(*) >= 0
+        from public.get_dashboard_sales_heatmap(
+          ${uuidLiteral(candidate.project_id)},
+          '2000-01-01'::date,
+          '2100-01-01'::date,
+          array[]::text[],
+          array[]::text[],
+          array[]::text[]
+        )
+      ) as sales_heatmap_available
   `,
 );
 assertAllTrue(memberRows[0], "Member");
@@ -179,10 +217,118 @@ const adminRows = await runAsInheritedAuthenticated(
           ${uuidLiteral(candidate.workspace_id)}
         ) account
         where pg_catalog.to_jsonb(account) ? 'access_token'
-      ) as meta_secret_absent
+      ) as meta_secret_absent,
+      (
+        select pg_catalog.count(*) >= 0
+        from public.list_workspace_access_directory(
+          ${uuidLiteral(candidate.workspace_id)}
+        )
+      ) as team_directory_available,
+      (
+        select pg_catalog.count(*) >= 0
+        from public.list_dashboard_ad_dimensions(
+          ${uuidLiteral(candidate.project_id)}
+        )
+      ) as dimension_catalog_available,
+      (
+        select pg_catalog.count(*) >= 0
+        from public.get_dashboard_dimension_metrics(
+          ${uuidLiteral(candidate.project_id)},
+          null,
+          null,
+          array[]::text[],
+          array[]::text[],
+          array[]::text[]
+        )
+      ) as dimension_metrics_available
   `,
 );
 assertAllTrue(adminRows[0], "Admin");
+
+await assertPermissionDenied(
+  candidate.member_user_id,
+  `
+    select *
+    from public.list_workspace_access_directory(
+      ${uuidLiteral(candidate.workspace_id)}
+    )
+  `,
+  "Member administrative team directory",
+);
+
+await assertPermissionDenied(
+  candidate.member_user_id,
+  `
+    select id
+    from public.raw_events
+    where project_id = ${uuidLiteral(candidate.project_id)}
+    limit 1
+  `,
+  "Member raw events",
+);
+
+const organizationMemberRows = await runAsOrganizationMember(
+  candidate.member_user_id,
+  candidate.organization_id,
+  candidate.workspace_id,
+  `
+    select
+      auth.uid() = ${uuidLiteral(candidate.member_user_id)} as claim_ok,
+      app_private.is_workspace_member(
+        ${uuidLiteral(candidate.workspace_id)}
+      ) as inherited_member,
+      not app_private.is_workspace_admin(
+        ${uuidLiteral(candidate.workspace_id)}
+      ) as is_not_admin,
+      exists (
+        select 1
+        from public.projects project
+        where project.id = ${uuidLiteral(candidate.project_id)}
+      ) as project_visible,
+      (
+        select pg_catalog.count(*) >= 0
+        from public.get_dashboard_dimension_metrics(
+          ${uuidLiteral(candidate.project_id)},
+          null,
+          null,
+          array[]::text[],
+          array[]::text[],
+          array[]::text[]
+        )
+      ) as metrics_visible
+  `,
+);
+assertAllTrue(organizationMemberRows[0], "Organization Member");
+
+const runAsTemporaryOrganizationMember = (userId, statement) =>
+  runAsOrganizationMember(
+    userId,
+    candidate.organization_id,
+    candidate.workspace_id,
+    statement,
+  );
+await assertPermissionDenied(
+  candidate.member_user_id,
+  `
+    select *
+    from public.list_workspace_access_directory(
+      ${uuidLiteral(candidate.workspace_id)}
+    )
+  `,
+  "Organization Member administrative team directory",
+  runAsTemporaryOrganizationMember,
+);
+await assertPermissionDenied(
+  candidate.member_user_id,
+  `
+    select id
+    from public.raw_events
+    where project_id = ${uuidLiteral(candidate.project_id)}
+    limit 1
+  `,
+  "Organization Member raw events",
+  runAsTemporaryOrganizationMember,
+);
 
 const directSecretQueries = [
   [
@@ -226,20 +372,45 @@ for (const [label, query] of directSecretQueries) {
   );
 }
 
+for (const [label, query] of directSecretQueries) {
+  await assertPermissionDenied(
+    candidate.member_user_id,
+    query,
+    `Organization Member direct ${label}`,
+    runAsTemporaryOrganizationMember,
+  );
+}
+
 const restoredMembershipRows = await runQuery(
   `
-    select exists (
-      select 1
-      from public.workspace_members membership
-      where membership.workspace_id = ${uuidLiteral(candidate.workspace_id)}
-        and membership.user_id = ${uuidLiteral(candidate.admin_user_id)}
-    ) as explicit_membership_restored
+    select
+      exists (
+        select 1
+        from public.workspace_members membership
+        where membership.workspace_id = ${uuidLiteral(candidate.workspace_id)}
+          and membership.user_id = ${uuidLiteral(candidate.admin_user_id)}
+      ) as admin_membership_restored,
+      exists (
+        select 1
+        from public.workspace_members membership
+        where membership.workspace_id = ${uuidLiteral(candidate.workspace_id)}
+          and membership.user_id = ${uuidLiteral(candidate.member_user_id)}
+      ) as member_membership_restored,
+      not exists (
+        select 1
+        from public.organization_members membership
+        where membership.organization_id = ${uuidLiteral(candidate.organization_id)}
+          and membership.user_id = ${uuidLiteral(candidate.member_user_id)}
+      ) as temporary_org_membership_removed
   `,
   { readOnly: true },
 );
-if (restoredMembershipRows[0]?.explicit_membership_restored !== true) {
+if (
+  !restoredMembershipRows[0] ||
+  Object.values(restoredMembershipRows[0]).some((value) => value !== true)
+) {
   throw new Error(
-    "O rollback do teste de acesso herdado não restaurou a membership explícita.",
+    "O rollback do gate RLS não restaurou o estado original das memberships.",
   );
 }
 
@@ -254,6 +425,7 @@ console.log(
       artifact_url:
         process.env.READINESS_ARTIFACT_URL?.trim() || null,
       member_redacted: true,
+      organization_member_inherited_access: true,
       admin_inherited_access: true,
       direct_credentials_denied: true,
       sync_token_denied: true,
@@ -266,6 +438,10 @@ console.log(
         "member effective role",
         "member webhook tokens redacted",
         "member project sync settings denied",
+        "member dashboard dimensions and heatmap available",
+        "member raw events and team directory denied",
+        "organization member inherited dashboard access",
+        "organization member administration denied",
         "admin safe contracts available",
         "organization admin inherited access",
         "temporary membership removal rolled back",
@@ -309,6 +485,43 @@ async function runAsInheritedAuthenticated(userId, workspaceId, statement) {
       delete from public.workspace_members membership
       where membership.workspace_id = ${uuidLiteral(workspaceId)}
         and membership.user_id = ${uuidLiteral(userId)};
+      select pg_catalog.set_config(
+        'request.jwt.claims',
+        ${claims},
+        true
+      );
+      set local role authenticated;
+      ${statement};
+      rollback;
+    `,
+    { readOnly: false },
+  );
+}
+
+async function runAsOrganizationMember(
+  userId,
+  organizationId,
+  workspaceId,
+  statement,
+) {
+  const claims = sqlText(
+    JSON.stringify({ sub: userId, role: "authenticated" }),
+  );
+  return await runQuery(
+    `
+      begin;
+      delete from public.workspace_members membership
+      where membership.workspace_id = ${uuidLiteral(workspaceId)}
+        and membership.user_id = ${uuidLiteral(userId)};
+      insert into public.organization_members (
+        organization_id,
+        user_id,
+        role
+      ) values (
+        ${uuidLiteral(organizationId)},
+        ${uuidLiteral(userId)},
+        'member'::public.organization_role
+      );
       select pg_catalog.set_config(
         'request.jwt.claims',
         ${claims},

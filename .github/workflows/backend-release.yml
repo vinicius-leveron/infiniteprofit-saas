@@ -7,6 +7,10 @@ on:
         description: Type the production Supabase project ref to confirm.
         required: true
         type: string
+      canary_project_id:
+        description: Existing internal funnel UUID used for the first historical backfill.
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -25,21 +29,12 @@ jobs:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
       SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+      SUPABASE_URL: https://nztnctrkmfrgclrnflfa.supabase.co
       VITE_SUPABASE_URL: https://nztnctrkmfrgclrnflfa.supabase.co
       VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
       VITE_SUPABASE_PROJECT_ID: nztnctrkmfrgclrnflfa
       PROBE_APP_URL: ${{ vars.APP_PUBLIC_URL }}
-      PROBE_AUTH_EMAIL: ${{ secrets.PROBE_AUTH_EMAIL }}
-      PROBE_AUTH_PASSWORD: ${{ secrets.PROBE_AUTH_PASSWORD }}
-      RLS_WORKSPACE_ID: ${{ vars.RLS_WORKSPACE_ID }}
-      RLS_PROJECT_ID: ${{ vars.RLS_PROJECT_ID }}
-      RLS_MEMBER_EMAIL: ${{ secrets.RLS_MEMBER_EMAIL }}
-      RLS_MEMBER_PASSWORD: ${{ secrets.RLS_MEMBER_PASSWORD }}
-      RLS_ADMIN_EMAIL: ${{ secrets.RLS_ADMIN_EMAIL }}
-      RLS_ADMIN_PASSWORD: ${{ secrets.RLS_ADMIN_PASSWORD }}
       APP_PUBLIC_URL: ${{ vars.APP_PUBLIC_URL }}
-      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
-      RESEND_FROM_EMAIL: ${{ vars.RESEND_FROM_EMAIL }}
 
     steps:
       - name: Checkout exact release commit
@@ -52,8 +47,10 @@ jobs:
           test -n "$SUPABASE_ACCESS_TOKEN" || (echo "SUPABASE_ACCESS_TOKEN secret is required" && exit 1)
           test -n "$SUPABASE_DB_PASSWORD" || (echo "SUPABASE_DB_PASSWORD secret is required" && exit 1)
           test -n "$APP_PUBLIC_URL" || (echo "APP_PUBLIC_URL variable is required" && exit 1)
-          test -n "$RESEND_API_KEY" || (echo "RESEND_API_KEY secret is required" && exit 1)
-          test -n "$RESEND_FROM_EMAIL" || (echo "RESEND_FROM_EMAIL variable is required" && exit 1)
+          case "${{ inputs.canary_project_id }}" in
+            ????????-????-????-????-????????????) ;;
+            *) echo "canary_project_id must be a UUID"; exit 1 ;;
+          esac
 
       - name: Setup Node
         uses: actions/setup-node@v7
@@ -88,6 +85,11 @@ jobs:
       - name: Preview database migration
         run: supabase db push --linked --dry-run | tee migration-dry-run.txt
 
+      - name: Pause background jobs before database writes
+        env:
+          BACKGROUND_CRON_PRODUCTION_ACK: ${{ inputs.confirm_project_ref }}
+        run: npm run ops:cron -- pause | tee background-cron-pause.json
+
       - name: Apply non-blocking production indexes
         run: |
           for migration in supabase/online-migrations/[0-9]*.sql; do
@@ -99,13 +101,14 @@ jobs:
       - name: Apply database migrations
         run: supabase db push --linked
 
-      - name: Configure production function secrets
+      - name: Lint deployed database contracts
+        run: supabase db lint --linked --level error
+
+      - name: Preserve production function URLs
         run: |
           supabase secrets set \
             APP_PUBLIC_URL="$APP_PUBLIC_URL" \
             CANARY_APP_URL="$APP_PUBLIC_URL" \
-            RESEND_API_KEY="$RESEND_API_KEY" \
-            RESEND_FROM_EMAIL="$RESEND_FROM_EMAIL" \
             --project-ref "$SUPABASE_PROJECT_REF"
 
       - name: Deploy exact backend function inventory
@@ -118,8 +121,30 @@ jobs:
       - name: Verify function inventory
         run: npm run check:function-drift
 
+      - name: Acquire masked backend key for release-only data repair
+        run: |
+          service_role_key="$(supabase projects api-keys \
+            --project-ref "$SUPABASE_PROJECT_REF" \
+            --output json | jq -r 'map(select(.name == "service_role"))[0].api_key // empty')"
+          test -n "$service_role_key" || (echo "service_role key was not returned" && exit 1)
+          echo "::add-mask::$service_role_key"
+          echo "SUPABASE_SERVICE_ROLE_KEY=$service_role_key" >> "$GITHUB_ENV"
+
+      - name: Preview historical metrics backfill
+        run: npm run ops:backfill-feedback-metrics | tee feedback-backfill-plan.json
+
+      - name: Backfill and reconcile internal canary
+        env:
+          FEEDBACK_METRICS_BACKFILL_ACK: ${{ inputs.confirm_project_ref }}
+        run: |
+          npm run ops:backfill-feedback-metrics -- \
+            --project="${{ inputs.canary_project_id }}" \
+            --execute | tee feedback-backfill-canary.json
+
       - name: Verify production RLS contracts
-        run: npm run ops:verify-rls | tee rls-contracts.json
+        env:
+          RLS_MANAGEMENT_SESSION_ACK: ${{ inputs.confirm_project_ref }}
+        run: node scripts/verify-rls-management-session.mjs | tee rls-contracts.json
 
       - name: Production canary
         run: npm run ops:probe | tee backend-canary.json
@@ -147,6 +172,9 @@ jobs:
           path: |
             migration-dry-run.txt
             online-indexes.log
+            background-cron-pause.json
+            feedback-backfill-plan.json
+            feedback-backfill-canary.json
             rls-contracts.json
             backend-canary.json
             background-cron-resume.json
