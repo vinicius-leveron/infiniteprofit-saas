@@ -576,15 +576,63 @@ function inviteEmailHtml(scopeName: string, inviteUrl: string, expiresAt: string
     dateStyle: "long",
     timeZone: "America/Sao_Paulo",
   }).format(new Date(expiresAt));
-  return `<!doctype html><html lang="pt-BR"><body style="font-family:Arial,sans-serif;color:#172033">
-    <div style="max-width:560px;margin:0 auto;padding:32px 20px">
-      <p style="font-size:12px;font-weight:700;letter-spacing:.12em;color:#6d5bd0">INFINITE PROFIT</p>
-      <h1 style="font-size:24px">Você foi convidado para ${safeScope}</h1>
-      <p style="line-height:1.6;color:#566074">Use o botão abaixo para revisar e aceitar o acesso. Este convite expira em ${expiration}.</p>
-      <p style="margin:28px 0"><a href="${safeUrl}" style="display:inline-block;padding:12px 18px;border-radius:8px;background:#6d5bd0;color:white;text-decoration:none;font-weight:700">Revisar convite</a></p>
-      <p style="font-size:12px;color:#7b8495">Se você não esperava este convite, ignore esta mensagem.</p>
-    </div>
-  </body></html>`;
+  return `<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>Convite para ${safeScope}</title>
+  </head>
+  <body style="margin:0;padding:0;background:#f3f6f5;font-family:Arial,'Helvetica Neue',sans-serif;">
+    <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">Você recebeu um convite para acessar ${safeScope} no Infinite Profit.</div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;background:#f3f6f5;">
+      <tr>
+        <td align="center" style="padding:32px 16px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;border-collapse:separate;">
+            <tr>
+              <td style="padding:22px 26px;border-radius:16px 16px 0 0;background:#0d1728;">
+                <table role="presentation" cellpadding="0" cellspacing="0">
+                  <tr>
+                    <td width="38" height="38" align="center" bgcolor="#47d7a2" style="width:38px;height:38px;border-radius:10px;color:#0d1728;font-size:14px;font-weight:800;">IP</td>
+                    <td style="padding-left:12px;color:#f4f8f7;font-size:17px;font-weight:700;">Infinite Profit</td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:34px 30px 30px;border:1px solid #dfe7e4;border-top:0;border-radius:0 0 16px 16px;background:#ffffff;">
+                <p style="margin:0 0 10px;color:#168b69;font-size:11px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;">Convite de acesso</p>
+                <h1 style="margin:0 0 18px;color:#0d1728;font-size:25px;line-height:1.25;">Você foi convidado para ${safeScope}</h1>
+                <p style="margin:0 0 18px;color:#526071;font-size:15px;line-height:1.7;">Revise o acesso e configure sua conta para entrar na plataforma. Este convite expira em <strong style="color:#0d1728;">${expiration}</strong>.</p>
+                <table role="presentation" cellpadding="0" cellspacing="0" style="margin:28px 0 24px;">
+                  <tr>
+                    <td bgcolor="#47d7a2" style="border-radius:10px;">
+                      <a href="${safeUrl}" style="display:inline-block;padding:14px 22px;color:#0d1728;font-size:15px;font-weight:700;text-decoration:none;border-radius:10px;">Revisar convite</a>
+                    </td>
+                  </tr>
+                </table>
+                <p style="margin:0 0 8px;color:#7b8794;font-size:12px;line-height:1.6;">Se o botão não funcionar, copie e cole este endereço no navegador:</p>
+                <p style="margin:0;color:#526071;font-size:12px;line-height:1.6;word-break:break-all;"><a href="${safeUrl}" style="color:#168b69;text-decoration:underline;">${safeUrl}</a></p>
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:30px;border-top:1px solid #e7ecea;">
+                  <tr>
+                    <td style="padding-top:20px;color:#89948f;font-size:12px;line-height:1.6;">
+                      Se você não esperava este convite, pode ignorar esta mensagem.<br>
+                      Precisa de ajuda? <a href="mailto:suporte@infiniteprofit.com.br" style="color:#526071;text-decoration:underline;">suporte@infiniteprofit.com.br</a>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding:18px;color:#95a09b;font-size:11px;line-height:1.5;">Infinite Profit · Inteligência para operações de performance</td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
 }
 
 function normalizeScopeType(value: unknown): ScopeType {

@@ -16,6 +16,7 @@
     "check:function-manifest": "node scripts/check-supabase-function-drift.mjs --local-only",
     "check:function-drift": "node scripts/check-supabase-function-drift.mjs",
     "ops:load": "node scripts/load-test-backend.mjs",
+    "ops:auth-email-templates": "node scripts/deploy-auth-email-templates.mjs",
     "ops:cron": "node scripts/manage-background-cron.mjs",
     "ops:backfill-feedback-metrics": "node scripts/backfill-feedback-metrics.mjs",
     "ops:function-logs": "node scripts/inspect-supabase-function-logs.mjs",
