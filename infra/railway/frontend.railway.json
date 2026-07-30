@@ -1,0 +1,28 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "Dockerfile.railway.frontend",
+    "watchPatterns": [
+      "/src/**",
+      "/public/**",
+      "/index.html",
+      "/package.json",
+      "/package-lock.json",
+      "/vite.config.ts",
+      "/tailwind.config.ts",
+      "/postcss.config.js",
+      "/Dockerfile.railway.frontend",
+      "/infra/railway/Caddyfile",
+      "/infra/railway/frontend.railway.json"
+    ]
+  },
+  "deploy": {
+    "healthcheckPath": "/healthz",
+    "healthcheckTimeout": 120,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 3,
+    "overlapSeconds": "30",
+    "drainingSeconds": "10"
+  }
+}

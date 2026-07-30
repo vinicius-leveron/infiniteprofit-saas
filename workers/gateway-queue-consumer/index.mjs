@@ -41,6 +41,7 @@ const HEARTBEAT_INTERVAL_MS = boundedInteger(
 );
 const WORKER_ID =
   process.env.GATEWAY_QUEUE_WORKER_ID ||
+  process.env.RAILWAY_SERVICE_NAME ||
   process.env.RENDER_SERVICE_NAME ||
   `gateway-consumer-${process.pid}`;
 
