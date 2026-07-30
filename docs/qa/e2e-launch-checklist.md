@@ -4,7 +4,7 @@ Este checklist valida o Infinite Profit como usuario real antes de disponibiliza
 
 ## Ambiente
 
-- Producao: `https://infiniteprofit-saas.onrender.com`
+- Producao: `https://infiniteprofit.com.br`
 - Projeto real inicial: Projeto Yasmin
 - Projeto ID recomendado para QA: `c4f027b4-f867-4d7f-a522-dfb272c33104`
 
@@ -13,7 +13,7 @@ Este checklist valida o Infinite Profit como usuario real antes de disponibiliza
 Crie um `.env` local ou exporte no shell:
 
 ```bash
-PLAYWRIGHT_BASE_URL=https://infiniteprofit-saas.onrender.com
+PLAYWRIGHT_BASE_URL=https://infiniteprofit.com.br
 E2E_EMAIL=qa-admin@example.com
 E2E_PASSWORD=senha-do-usuario-qa
 E2E_PROJECT_ID=c4f027b4-f867-4d7f-a522-dfb272c33104

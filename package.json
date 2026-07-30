@@ -34,7 +34,7 @@
     "qa:prod:data": "node scripts/qa-prod-data.mjs",
     "qa:release": "node scripts/qa-release.mjs",
     "qa": "npm run build && npm run lint && npm test && npm run e2e",
-    "qa:prod": "PLAYWRIGHT_BASE_URL=https://infiniteprofit-saas.onrender.com npm run e2e",
+    "qa:prod": "PLAYWRIGHT_BASE_URL=https://infiniteprofit.com.br npm run e2e",
     "e2e": "playwright test",
     "e2e:ui": "playwright test --ui",
     "e2e:install": "playwright install chromium",

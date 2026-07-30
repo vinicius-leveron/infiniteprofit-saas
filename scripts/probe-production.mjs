@@ -3,7 +3,7 @@
 const APP_URL =
   process.env.PROBE_APP_URL ??
   process.env.PLAYWRIGHT_BASE_URL ??
-  "https://infiniteprofit-saas.onrender.com";
+  "https://infiniteprofit.com.br";
 const SUPABASE_URL =
   process.env.SUPABASE_URL ??
   process.env.VITE_SUPABASE_URL ??
