@@ -32,7 +32,11 @@ const MAX_POLL_INTERVAL_MS = Math.max(
   Number(process.env.CREATIVE_WORKER_MAX_POLL_INTERVAL_MS || "60000"),
 );
 const BATCH_SIZE = Number(process.env.CREATIVE_WORKER_BATCH_SIZE || "2");
-const WORKER_ID = process.env.CREATIVE_WORKER_ID || process.env.RENDER_SERVICE_NAME || os.hostname();
+const WORKER_ID =
+  process.env.CREATIVE_WORKER_ID ||
+  process.env.RAILWAY_SERVICE_NAME ||
+  process.env.RENDER_SERVICE_NAME ||
+  os.hostname();
 const HEARTBEAT_INTERVAL_MS = Number(process.env.CREATIVE_WORKER_HEARTBEAT_INTERVAL_MS || "30000");
 const FFMPEG_BIN = process.env.FFMPEG_PATH || "ffmpeg";
 const FFPROBE_BIN = process.env.FFPROBE_PATH || "ffprobe";
@@ -44,6 +48,10 @@ let processedCount = 0;
 let failedCount = 0;
 let lastHeartbeatAt = 0;
 let currentPollIntervalMs = POLL_INTERVAL_MS;
+let stopping = false;
+
+process.on("SIGTERM", requestStop);
+process.on("SIGINT", requestStop);
 
 main().catch((error) => {
   console.error("creative worker fatal error", error);
@@ -53,41 +61,54 @@ main().catch((error) => {
 async function main() {
   console.log(`creative worker started as ${WORKER_ID}`);
   await reportHeartbeat({ status: "starting", force: true });
-  while (true) {
-    try {
-      await reportHeartbeat({ status: "claiming" });
-      const jobs = await claimJobs(BATCH_SIZE);
-      if (jobs.length === 0) {
-        await reportHeartbeat({ status: "idle" });
-        await sleep(currentPollIntervalMs);
-        currentPollIntervalMs = Math.min(
-          MAX_POLL_INTERVAL_MS,
-          Math.ceil(currentPollIntervalMs * 1.5),
-        );
-        continue;
-      }
-      currentPollIntervalMs = POLL_INTERVAL_MS;
-
-      for (const job of jobs) {
-        await reportHeartbeat({ status: "processing", activeJobId: job.id, force: true });
-        const succeeded = await processJob(job);
-        if (succeeded) {
-          processedCount += 1;
-        } else {
-          failedCount += 1;
+  try {
+    while (!stopping) {
+      try {
+        await reportHeartbeat({ status: "claiming" });
+        const jobs = await claimJobs(BATCH_SIZE);
+        if (jobs.length === 0) {
+          await reportHeartbeat({ status: "idle" });
+          await sleep(currentPollIntervalMs);
+          currentPollIntervalMs = Math.min(
+            MAX_POLL_INTERVAL_MS,
+            Math.ceil(currentPollIntervalMs * 1.5),
+          );
+          continue;
         }
-        await reportHeartbeat({ status: "idle", force: true });
+        currentPollIntervalMs = POLL_INTERVAL_MS;
+
+        for (const job of jobs) {
+          await reportHeartbeat({ status: "processing", activeJobId: job.id, force: true });
+          const succeeded = await processJob(job);
+          if (succeeded) {
+            processedCount += 1;
+          } else {
+            failedCount += 1;
+          }
+          await reportHeartbeat({ status: "idle", force: true });
+          if (stopping) break;
+        }
+      } catch (error) {
+        console.error("creative worker loop error", error);
+        await reportHeartbeat({ status: "error", lastError: error instanceof Error ? error.message : String(error), force: true });
+        if (!stopping) {
+          await sleep(currentPollIntervalMs);
+          currentPollIntervalMs = Math.min(
+            MAX_POLL_INTERVAL_MS,
+            Math.ceil(currentPollIntervalMs * 1.5),
+          );
+        }
       }
-    } catch (error) {
-      console.error("creative worker loop error", error);
-      await reportHeartbeat({ status: "error", lastError: error instanceof Error ? error.message : String(error), force: true });
-      await sleep(currentPollIntervalMs);
-      currentPollIntervalMs = Math.min(
-        MAX_POLL_INTERVAL_MS,
-        Math.ceil(currentPollIntervalMs * 1.5),
-      );
     }
+  } finally {
+    await reportHeartbeat({ status: "stopping", force: true });
   }
+}
+
+function requestStop() {
+  if (stopping) return;
+  stopping = true;
+  console.log("creative worker stopping after the active job");
 }
 
 async function reportHeartbeat({ status, activeJobId = null, lastError = null, force = false }) {
