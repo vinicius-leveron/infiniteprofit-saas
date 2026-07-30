@@ -123,18 +123,60 @@ export async function authorizeHotmartClientCredentials(args: {
   clientSecret: string;
   basicToken: string;
 }) {
+  const normalizedBasicToken = normalizeHotmartBasicToken(args.basicToken);
+  if (!normalizedBasicToken) {
+    throw new HotmartApiError(
+      "O Token Basic está incompleto. Copie o valor inteiro em Credenciais Developers.",
+      400,
+      false,
+    );
+  }
   const token = await exchangeHotmartToken({
     grantType: "client_credentials",
     clientId: args.clientId,
     clientSecret: args.clientSecret,
-    basicToken: args.basicToken,
+    basicToken: normalizedBasicToken,
   });
   return {
     ...token,
     client_id: args.clientId,
     client_secret: args.clientSecret,
-    basic_token: args.basicToken,
+    basic_token: normalizedBasicToken,
   } satisfies HotmartCredential;
+}
+
+export function normalizeHotmartBasicToken(value: string) {
+  let token = String(value ?? "").trim();
+  if (
+    token.length >= 2
+    && (
+      (token.startsWith('"') && token.endsWith('"'))
+      || (token.startsWith("'") && token.endsWith("'"))
+    )
+  ) {
+    token = token.slice(1, -1).trim();
+  }
+
+  token = token.replace(/^authorization\s*:\s*/i, "").trim();
+  if (/^bearer(?:\s|$)/i.test(token)) return null;
+  token = token.replace(/^basic(?:\s+|$)/i, "").replace(/\s+/g, "");
+  if (token.length < 8 || !/^[A-Za-z0-9+/_=-]+$/.test(token)) return null;
+
+  return `Basic ${token}`;
+}
+
+export function hotmartAuthorizationErrorMessage(status: number) {
+  if (status === 400 || status === 401) {
+    return "A Hotmart recusou estas credenciais. Confirme que Client ID, Client Secret e Token Basic pertencem à mesma credencial de produção.";
+  }
+  if (status === 403) {
+    return "Essa credencial não tem permissão para acessar os recursos da conta Hotmart.";
+  }
+  if (status === 429) {
+    return "A Hotmart limitou temporariamente as autorizações. Aguarde um momento e tente novamente.";
+  }
+  if (status >= 500) return "A Hotmart está temporariamente indisponível.";
+  return "Não foi possível concluir a autorização Hotmart.";
 }
 
 async function exchangeHotmartToken(args: {
@@ -144,7 +186,14 @@ async function exchangeHotmartToken(args: {
   basicToken: string;
 }) {
   const tokenUrl = Deno.env.get("HOTMART_OAUTH_TOKEN_URL") || DEFAULT_TOKEN_URL;
-  const basicValue = args.basicToken;
+  const basicValue = normalizeHotmartBasicToken(args.basicToken);
+  if (!basicValue) {
+    throw new HotmartApiError(
+      "O Token Basic está incompleto. Copie o valor inteiro em Credenciais Developers.",
+      400,
+      false,
+    );
+  }
   const url = new URL(tokenUrl);
   url.searchParams.set("grant_type", args.grantType);
   url.searchParams.set("client_id", args.clientId);
@@ -154,19 +203,16 @@ async function exchangeHotmartToken(args: {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: basicValue.startsWith("Basic ")
-        ? basicValue
-        : `Basic ${basicValue}`,
+      Authorization: basicValue,
     },
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok || !payload?.access_token) {
+    const errorStatus = response.ok ? 502 : response.status;
     throw new HotmartApiError(
-      response.status === 401
-        ? "A Hotmart recusou a autorização."
-        : "Não foi possível concluir a autorização Hotmart.",
-      response.status,
-      response.status >= 500,
+      hotmartAuthorizationErrorMessage(errorStatus),
+      errorStatus,
+      errorStatus === 429 || errorStatus >= 500,
     );
   }
 

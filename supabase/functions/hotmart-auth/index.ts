@@ -3,6 +3,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import {
   authorizeHotmartClientCredentials,
+  HotmartApiError,
   hotmartAccessToken,
   hotmartApiJson,
   storeHotmartCredential,
@@ -35,6 +36,7 @@ class HttpError extends Error {
 }
 
 Deno.serve(async (req) => {
+  let action = "";
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -48,7 +50,7 @@ Deno.serve(async (req) => {
     if (!caller) return json({ error: "Unauthorized" }, 401);
 
     const body = await req.json().catch(() => ({}));
-    const action = String(body.action ?? "");
+    action = String(body.action ?? "");
     const workspaceId = stringOrNull(body.workspace_id);
     if (!workspaceId) {
       return json({ error: "workspace_id obrigatorio" }, 400);
@@ -156,11 +158,17 @@ Deno.serve(async (req) => {
     const status = error instanceof HttpError
       ? error.status
       : Number((error as { status?: number })?.status) || 500;
+    const isInvalidConnectionCredential =
+      action === "connect"
+      && error instanceof HotmartApiError
+      && [400, 401, 403].includes(status);
     const code = error instanceof HttpError
       ? error.code
-      : status === 401
-        ? "HOTMART_REAUTH_REQUIRED"
-        : "HOTMART_AUTH_FAILED";
+      : isInvalidConnectionCredential
+        ? "HOTMART_INVALID_CREDENTIALS"
+        : status === 401
+          ? "HOTMART_REAUTH_REQUIRED"
+          : "HOTMART_AUTH_FAILED";
     console.error(JSON.stringify({
       event: "hotmart_auth_failed",
       status,

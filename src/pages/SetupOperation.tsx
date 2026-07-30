@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { HublaImportPicker } from "@/components/hubla/HublaImportPicker";
+import { HotmartCredentialsFields } from "@/components/checkout/HotmartCredentialsFields";
 import { HotmartImportPicker } from "@/components/checkout/HotmartImportPicker";
 import { HotmartProductBindings } from "@/components/checkout/HotmartProductBindings";
 import { supabase } from "@/integrations/supabase/client";
@@ -61,6 +62,10 @@ import {
   listWorkspaceMetaAccountsSafe,
 } from "@/lib/operationalReadApi";
 import { edgeFunctionErrorMessage } from "@/lib/edgeFunctionError";
+import {
+  normalizeHotmartBasicTokenInput,
+  validateHotmartCredentialDraft,
+} from "@/lib/hotmartCredentials";
 import { isHotmartCheckoutEnabled } from "@/lib/publicConfig";
 import type {
   SetupDraftV2,
@@ -258,12 +263,13 @@ export default function SetupOperation() {
 
   async function connectHotmart() {
     if (!client?.id) return;
-    if (
-      !hotmartClientId.trim()
-      || !hotmartClientSecret.trim()
-      || !hotmartBasicToken.trim()
-    ) {
-      setHotmartError("Informe Client ID, Client Secret e token Basic.");
+    const credentialError = validateHotmartCredentialDraft({
+      clientId: hotmartClientId,
+      clientSecret: hotmartClientSecret,
+      basicToken: hotmartBasicToken,
+    });
+    if (credentialError) {
+      setHotmartError(credentialError);
       return;
     }
     setHublaSecret("");
@@ -282,7 +288,7 @@ export default function SetupOperation() {
           label: selectedHotmartIntegration?.label ?? "Hotmart",
           client_id: hotmartClientId.trim(),
           client_secret: hotmartClientSecret.trim(),
-          basic_token: hotmartBasicToken.trim(),
+          basic_token: normalizeHotmartBasicTokenInput(hotmartBasicToken),
         },
       });
       if (error) {
@@ -1627,56 +1633,26 @@ export default function SetupOperation() {
                 </div>
               </div>
             ) : (
-              <div className="space-y-4 rounded-xl border bg-muted/20 p-4">
-                <div>
-                  <p className="text-sm font-medium">
-                    Credenciais Developers
-                  </p>
-                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                    Na Hotmart, abra Ferramentas → Credenciais, crie uma
-                    credencial e copie Client ID, Client Secret e o token Basic.
-                    Nada será salvo no navegador.
-                  </p>
-                </div>
-                <div className="grid gap-3 md:grid-cols-2">
-                  <Field label="Client ID" htmlFor="setup-hotmart-client-id">
-                    <Input
-                      id="setup-hotmart-client-id"
-                      type="password"
-                      autoComplete="off"
-                      value={hotmartClientId}
-                      onChange={(event) =>
-                        setHotmartClientId(event.target.value)
-                      }
-                    />
-                  </Field>
-                  <Field
-                    label="Client Secret"
-                    htmlFor="setup-hotmart-client-secret"
-                  >
-                    <Input
-                      id="setup-hotmart-client-secret"
-                      type="password"
-                      autoComplete="off"
-                      value={hotmartClientSecret}
-                      onChange={(event) =>
-                        setHotmartClientSecret(event.target.value)
-                      }
-                    />
-                  </Field>
-                </div>
-                <Field label="Token Basic" htmlFor="setup-hotmart-basic">
-                  <Input
-                    id="setup-hotmart-basic"
-                    type="password"
-                    autoComplete="off"
-                    value={hotmartBasicToken}
-                    onChange={(event) =>
-                      setHotmartBasicToken(event.target.value)
-                    }
-                    placeholder="Basic ..."
-                  />
-                </Field>
+              <div className="space-y-4">
+                <HotmartCredentialsFields
+                  idPrefix="setup-hotmart"
+                  clientId={hotmartClientId}
+                  clientSecret={hotmartClientSecret}
+                  basicToken={hotmartBasicToken}
+                  disabled={hotmartWorking}
+                  onClientIdChange={(value) => {
+                    setHotmartClientId(value);
+                    setHotmartError(null);
+                  }}
+                  onClientSecretChange={(value) => {
+                    setHotmartClientSecret(value);
+                    setHotmartError(null);
+                  }}
+                  onBasicTokenChange={(value) => {
+                    setHotmartBasicToken(value);
+                    setHotmartError(null);
+                  }}
+                />
                 <Button
                   type="button"
                   className="min-h-11 gap-2"

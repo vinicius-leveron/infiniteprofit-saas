@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   CheckCircle2,
+  CircleAlert,
   KeyRound,
   Loader2,
   Plus,
@@ -10,6 +11,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { StatusPill } from "@/components/admin/StatusPill";
+import { HotmartCredentialsFields } from "@/components/checkout/HotmartCredentialsFields";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -38,6 +40,10 @@ import {
 } from "@/components/ui/sheet";
 import { supabase } from "@/integrations/supabase/client";
 import { edgeFunctionErrorMessage } from "@/lib/edgeFunctionError";
+import {
+  normalizeHotmartBasicTokenInput,
+  validateHotmartCredentialDraft,
+} from "@/lib/hotmartCredentials";
 import {
   type CheckoutProvider,
   type WorkspaceCheckoutIntegrationSafeRow,
@@ -81,6 +87,7 @@ export function CheckoutIntegrationsPanel({
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
+  const [editorError, setEditorError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [workingId, setWorkingId] = useState<string | null>(null);
 
@@ -104,27 +111,32 @@ export function CheckoutIntegrationsPanel({
     void load();
   }, [load]);
 
+  function openEditor(next: EditorState) {
+    setEditorError(null);
+    setEditor(next);
+  }
+
   async function saveIntegration() {
     if (!editor?.provider) return;
     const savesHotmartCredential =
       editor.provider === "hotmart" && !editor.editHotmartHottok;
-    if (
-      savesHotmartCredential
-      && (
-        !editor.hotmartClientId.trim()
-        || !editor.hotmartClientSecret.trim()
-        || !editor.hotmartBasicToken.trim()
-      )
-    ) {
-      toast.error("Informe Client ID, Client Secret e token Basic.");
-      return;
+    if (savesHotmartCredential) {
+      const credentialError = validateHotmartCredentialDraft({
+        clientId: editor.hotmartClientId,
+        clientSecret: editor.hotmartClientSecret,
+        basicToken: editor.hotmartBasicToken,
+      });
+      if (credentialError) {
+        setEditorError(credentialError);
+        return;
+      }
     }
     if (
       editor.provider === "hotmart"
       && editor.editHotmartHottok
       && !editor.webhookSecret.trim()
     ) {
-      toast.error("Informe o Hottok.");
+      setEditorError("Informe o Hottok.");
       return;
     }
     if (
@@ -132,10 +144,11 @@ export function CheckoutIntegrationsPanel({
       && !editor.integration
       && !editor.webhookSecret.trim()
     ) {
-      toast.error("Informe o secret do webhook.");
+      setEditorError("Informe o secret do webhook.");
       return;
     }
 
+    setEditorError(null);
     setSaving(true);
     try {
       if (savesHotmartCredential) {
@@ -149,7 +162,9 @@ export function CheckoutIntegrationsPanel({
               label: editor.label.trim() || "Hotmart",
               client_id: editor.hotmartClientId.trim(),
               client_secret: editor.hotmartClientSecret.trim(),
-              basic_token: editor.hotmartBasicToken.trim(),
+              basic_token: normalizeHotmartBasicTokenInput(
+                editor.hotmartBasicToken,
+              ),
             },
           },
         );
@@ -165,6 +180,7 @@ export function CheckoutIntegrationsPanel({
         const integrationId = String(data?.integration_id ?? "");
         if (!integrationId) throw new Error("Integração Hotmart não criada.");
         setEditor(null);
+        setEditorError(null);
         await load();
         try {
           await syncHotmartCatalog(workspaceId, integrationId);
@@ -206,6 +222,7 @@ export function CheckoutIntegrationsPanel({
       }
       if (data?.ok === false) throw new Error(data.error);
       setEditor(null);
+      setEditorError(null);
       await load();
       toast.success(
         editor.provider === "hotmart"
@@ -213,7 +230,7 @@ export function CheckoutIntegrationsPanel({
           : `${providerLabel(editor.provider)} conectada`,
       );
     } catch (error) {
-      toast.error(
+      setEditorError(
         error instanceof Error ? error.message : "Falha ao salvar checkout.",
       );
     } finally {
@@ -307,7 +324,7 @@ export function CheckoutIntegrationsPanel({
             {canManage ? (
               <Button
                 className="min-h-11 gap-2"
-                onClick={() => setEditor(EMPTY_EDITOR)}
+                onClick={() => openEditor(EMPTY_EDITOR)}
               >
                 <Plus className="h-4 w-4" aria-hidden="true" />
                 Adicionar checkout
@@ -392,7 +409,7 @@ export function CheckoutIntegrationsPanel({
                             variant="outline"
                             className="min-h-11 gap-2"
                             onClick={() =>
-                              setEditor({
+                              openEditor({
                                 integration,
                                 provider: integration.provider,
                                 label: integration.label,
@@ -412,7 +429,7 @@ export function CheckoutIntegrationsPanel({
                             className="min-h-11"
                             disabled={workingId === integration.id}
                             onClick={() =>
-                              setEditor({
+                              openEditor({
                                 integration,
                                 provider: "hotmart",
                                 label: integration.label,
@@ -432,7 +449,7 @@ export function CheckoutIntegrationsPanel({
                           variant="outline"
                           className="min-h-11"
                           onClick={() =>
-                            setEditor({
+                            openEditor({
                               integration,
                                 provider: integration.provider,
                                 label: integration.label,
@@ -468,7 +485,15 @@ export function CheckoutIntegrationsPanel({
         </CardContent>
       </Card>
 
-      <Sheet open={editor != null} onOpenChange={(open) => !open && setEditor(null)}>
+      <Sheet
+        open={editor != null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEditor(null);
+            setEditorError(null);
+          }
+        }}
+      >
         <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
           <SheetHeader>
             <SheetTitle>
@@ -480,12 +505,35 @@ export function CheckoutIntegrationsPanel({
           </SheetHeader>
           {editor ? (
             <div className="space-y-5 py-6">
+              {editorError ? (
+                <div
+                  className="flex gap-3 rounded-xl border border-destructive/25 bg-destructive/5 p-4"
+                  role="alert"
+                >
+                  <CircleAlert
+                    className="mt-0.5 h-4 w-4 shrink-0 text-destructive"
+                    aria-hidden="true"
+                  />
+                  <div>
+                    <p className="text-sm font-medium text-destructive">
+                      Não foi possível validar
+                    </p>
+                    <p className="mt-1 text-sm leading-5 text-muted-foreground">
+                      {editorError}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Revise os campos abaixo e tente novamente.
+                    </p>
+                  </div>
+                </div>
+              ) : null}
               <div className="space-y-2">
                 <Label htmlFor="checkout-provider">Provedor</Label>
                 <Select
                   value={editor.provider}
                   disabled={Boolean(editor.integration)}
-                  onValueChange={(provider) =>
+                  onValueChange={(provider) => {
+                    setEditorError(null);
                     setEditor((current) =>
                       current
                         ? {
@@ -494,8 +542,8 @@ export function CheckoutIntegrationsPanel({
                           label: providerLabel(provider as CheckoutProvider),
                         }
                         : current,
-                    )
-                  }
+                    );
+                  }}
                 >
                   <SelectTrigger id="checkout-provider" className="min-h-11">
                     <SelectValue placeholder="Selecione o provedor" />
@@ -523,77 +571,32 @@ export function CheckoutIntegrationsPanel({
               </div>
               {editor.provider === "hotmart"
               && !editor.editHotmartHottok ? (
-                <div className="space-y-4 rounded-xl border bg-muted/20 p-4">
-                  <div>
-                    <p className="text-sm font-medium">
-                      Credenciais Developers da Hotmart
-                    </p>
-                    <p className="mt-1 text-xs leading-4 text-muted-foreground">
-                      Em Ferramentas → Credenciais, crie uma credencial e copie
-                      os três valores. Eles serão validados e guardados no Vault.
-                    </p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="hotmart-client-id">Client ID</Label>
-                    <Input
-                      id="hotmart-client-id"
-                      type="password"
-                      autoComplete="off"
-                      value={editor.hotmartClientId}
-                      onChange={(event) =>
-                        setEditor((current) =>
-                          current
-                            ? {
-                                ...current,
-                                hotmartClientId: event.target.value,
-                              }
-                            : current,
-                        )
-                      }
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="hotmart-client-secret">
-                      Client Secret
-                    </Label>
-                    <Input
-                      id="hotmart-client-secret"
-                      type="password"
-                      autoComplete="off"
-                      value={editor.hotmartClientSecret}
-                      onChange={(event) =>
-                        setEditor((current) =>
-                          current
-                            ? {
-                                ...current,
-                                hotmartClientSecret: event.target.value,
-                              }
-                            : current,
-                        )
-                      }
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="hotmart-basic-token">Token Basic</Label>
-                    <Input
-                      id="hotmart-basic-token"
-                      type="password"
-                      autoComplete="off"
-                      value={editor.hotmartBasicToken}
-                      onChange={(event) =>
-                        setEditor((current) =>
-                          current
-                            ? {
-                                ...current,
-                                hotmartBasicToken: event.target.value,
-                              }
-                            : current,
-                        )
-                      }
-                      placeholder="Basic ..."
-                    />
-                  </div>
-                </div>
+                <HotmartCredentialsFields
+                  idPrefix="checkout-hotmart"
+                  clientId={editor.hotmartClientId}
+                  clientSecret={editor.hotmartClientSecret}
+                  basicToken={editor.hotmartBasicToken}
+                  disabled={saving}
+                  onClientIdChange={(value) =>
+                    setEditor((current) =>
+                      current ? { ...current, hotmartClientId: value } : current
+                    )
+                  }
+                  onClientSecretChange={(value) =>
+                    setEditor((current) =>
+                      current
+                        ? { ...current, hotmartClientSecret: value }
+                        : current
+                    )
+                  }
+                  onBasicTokenChange={(value) =>
+                    setEditor((current) =>
+                      current
+                        ? { ...current, hotmartBasicToken: value }
+                        : current
+                    )
+                  }
+                />
               ) : editor.provider ? (
                 <div className="space-y-2">
                   <Label htmlFor="checkout-secret">
@@ -641,7 +644,9 @@ export function CheckoutIntegrationsPanel({
               )}
               {editor?.provider === "hotmart"
               && !editor.editHotmartHottok
-                ? "Validar e conectar"
+                ? editorError
+                  ? "Tentar novamente"
+                  : "Validar e conectar"
                 : editor?.editHotmartHottok
                   ? "Salvar Hottok"
                   : "Salvar checkout"}
