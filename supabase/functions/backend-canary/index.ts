@@ -7,7 +7,7 @@ const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
 const appUrl = (
   Deno.env.get("CANARY_APP_URL") ??
-    "https://infiniteprofit-saas.onrender.com"
+    "https://infiniteprofit.up.railway.app"
 ).replace(/\/$/, "");
 
 Deno.serve(async (request) => {

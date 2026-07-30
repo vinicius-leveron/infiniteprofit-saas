@@ -1,4 +1,4 @@
-const DEFAULT_APP_URL = "https://infiniteprofit-saas.onrender.com";
+const DEFAULT_APP_URL = "https://infiniteprofit.up.railway.app";
 const DEFAULT_HOTMART_CANARY_WORKSPACE_IDS =
   "ce21f804-5915-40fa-8499-e43092d2884b";
 
