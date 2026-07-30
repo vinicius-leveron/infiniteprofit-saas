@@ -47,7 +47,7 @@ const anonKey =
 const appUrl = (
   process.env.READINESS_APP_URL ??
   process.env.PROBE_APP_URL ??
-  "https://infiniteprofit-saas.onrender.com"
+  "https://infiniteprofit.com.br"
 ).replace(/\/$/, "");
 const enforce = process.argv.includes("--enforce");
 const enforceOperational = process.argv.includes("--enforce-operational");

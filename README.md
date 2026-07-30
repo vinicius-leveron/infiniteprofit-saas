@@ -131,16 +131,16 @@ Cada projeto gera uma URL opaca neste formato:
 
 O secret do provedor fica em `workspace_integrations.gateway_webhook_secret`.
 
-## Produção: Auth + Render
+## Produção: Auth + Railway
 
 O deploy atual de produção está em:
 
-- `https://infiniteprofit-saas.onrender.com`
+- `https://infiniteprofit.com.br`
 
 O `supabase/config.toml` já foi alinhado com:
 
-- `auth.site_url = https://infiniteprofit-saas.onrender.com`
-- redirects extras para `localhost:5173`, `127.0.0.1:5173` e o próprio domínio do Render
+- `auth.site_url = https://infiniteprofit.com.br`
+- redirects extras para desenvolvimento local e os endereços de rollback
 
 Depois de alterar esse bloco, publique no projeto remoto:
 
@@ -148,20 +148,12 @@ Depois de alterar esse bloco, publique no projeto remoto:
 supabase config push --project-ref nztnctrkmfrgclrnflfa --yes
 ```
 
-Para o Render:
+Para o Railway:
 
 - o serviço está conectado ao repositório GitHub
 - cada `git push` na branch `main` dispara novo deploy
-- o site precisa de uma rewrite `/* -> /index.html` para o `react-router`
-
-A rewrite já foi criada na produção atual. Se precisar recriar em outro serviço Render, use a API:
-
-```bash
-curl -X POST "https://api.render.com/v1/services/<service-id>/routes" \
-  -H "Authorization: Bearer <render-api-key>" \
-  -H "Content-Type: application/json" \
-  -d '{"type":"rewrite","source":"/*","destination":"/index.html"}'
-```
+- o container frontend responde `/healthz` e faz fallback de SPA para o `react-router`
+- `https://infiniteprofit.up.railway.app` permanece como endereço técnico de rollback
 
 ## Functions relevantes
 
@@ -209,7 +201,7 @@ npm run qa:prod
 Variáveis opcionais ativam os fluxos autenticados:
 
 ```env
-PLAYWRIGHT_BASE_URL=https://infiniteprofit-saas.onrender.com
+PLAYWRIGHT_BASE_URL=https://infiniteprofit.com.br
 E2E_EMAIL=qa-admin@example.com
 E2E_PASSWORD=senha-do-usuario-qa
 E2E_PROJECT_ID=c4f027b4-f867-4d7f-a522-dfb272c33104

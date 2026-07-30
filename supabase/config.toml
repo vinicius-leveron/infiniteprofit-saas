@@ -1,11 +1,13 @@
 project_id = "nztnctrkmfrgclrnflfa"
 
 [auth]
-site_url = "https://infiniteprofit.up.railway.app"
+site_url = "https://infiniteprofit.com.br"
 minimum_password_length = 8
 additional_redirect_urls = [
   "http://localhost:5173/**",
   "http://127.0.0.1:5173/**",
+  "https://infiniteprofit.com.br/**",
+  "https://www.infiniteprofit.com.br/**",
   "https://infiniteprofit.up.railway.app/**",
   "https://infiniteprofit-saas.onrender.com/**",
 ]
