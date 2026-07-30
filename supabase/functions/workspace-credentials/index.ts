@@ -819,6 +819,13 @@ async function upsertCheckoutBinding(
       _enabled: body.enabled !== false,
       _product_bindings: productBindings,
     });
+    if (error?.code === "42702") {
+      throw new HttpError(
+        "Não foi possível salvar as fontes do funil. Atualize a página e tente novamente.",
+        500,
+        "CHECKOUT_BINDING_INTERNAL_ERROR",
+      );
+    }
     if (error) throw new HttpError(error.message, 422);
     return Array.isArray(data) ? data[0] : data;
   }

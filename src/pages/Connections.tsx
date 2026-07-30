@@ -8,10 +8,12 @@ import {
   Circle,
   Copy,
   CreditCard,
+  Database,
   Link as LinkIcon,
   Loader2,
   Megaphone,
   PlayCircle,
+  Radio,
   Search,
   Settings2,
   Trash2,
@@ -676,9 +678,13 @@ export default function Connections({ mode = "sources" }: { mode?: ConnectionsMo
                     </Select>
                     {selectedCheckoutIntegration ? (
                       <p className="text-xs text-muted-foreground">
-                        {selectedCheckoutIntegration.status === "connected"
-                          ? "Conta conectada e pronta para o funil."
-                          : "Esta conexão ainda requer atenção nas Integrações do Cliente."}
+                        {selectedCheckoutIntegration.provider === "hotmart"
+                        && selectedCheckoutIntegration.status === "connected"
+                        && !selectedCheckoutIntegration.has_webhook_secret
+                          ? "API conectada para catálogo e histórico. Falta configurar o Hottok para receber vendas novas."
+                          : selectedCheckoutIntegration.status === "connected"
+                            ? "Conta conectada e pronta para o funil."
+                            : "Esta conexão ainda requer atenção nas Integrações do Cliente."}
                       </p>
                     ) : null}
                   </div>
@@ -695,6 +701,15 @@ export default function Connections({ mode = "sources" }: { mode?: ConnectionsMo
                       Usar {selectedCheckoutIntegration?.label ?? "checkout"} neste
                       funil
                     </label>
+                  ) : null}
+
+                  {checkoutEnabled
+                  && selectedCheckoutIntegration?.provider === "hotmart" ? (
+                    <HotmartDataFlow
+                      hasHottok={
+                        selectedCheckoutIntegration.has_webhook_secret
+                      }
+                    />
                   ) : null}
 
                   {checkoutEnabled
@@ -727,6 +742,9 @@ export default function Connections({ mode = "sources" }: { mode?: ConnectionsMo
                     <div className="rounded-lg border border-border/60 bg-muted/20 p-4">
                       {selectedCheckoutIntegration?.provider === "hotmart" ? (
                         <HotmartWebhookGuide
+                          hasHottok={
+                            selectedCheckoutIntegration.has_webhook_secret
+                          }
                           lastEventAt={
                             selectedCheckoutIntegration.last_event_at
                           }
@@ -738,18 +756,30 @@ export default function Connections({ mode = "sources" }: { mode?: ConnectionsMo
                         </p>
                       )}
                       <div className="flex flex-wrap gap-2">
-                        <Button
-                          variant="outline"
-                          className="min-h-11 gap-2"
-                          onClick={() => {
-                            if (!gatewayWebhookUrl) return;
-                            void navigator.clipboard.writeText(gatewayWebhookUrl);
-                            toast.success("Webhook copiado");
-                          }}
-                        >
-                          <Copy className="h-4 w-4" />
-                          Copiar webhook
-                        </Button>
+                        {selectedCheckoutIntegration?.provider !== "hotmart"
+                        || selectedCheckoutIntegration.has_webhook_secret ? (
+                          <Button
+                            variant="outline"
+                            className="min-h-11 gap-2"
+                            onClick={() => {
+                              if (!gatewayWebhookUrl) return;
+                              void navigator.clipboard.writeText(gatewayWebhookUrl);
+                              toast.success("Webhook copiado");
+                            }}
+                          >
+                            <Copy className="h-4 w-4" />
+                            Copiar webhook
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="outline"
+                            className="min-h-11 gap-2"
+                            onClick={() => navigate(integrationsPath)}
+                          >
+                            <Settings2 className="h-4 w-4" />
+                            Configurar Hottok
+                          </Button>
+                        )}
                         {project
                         && selectedCheckoutIntegration?.provider === "hotmart" ? (
                           <>
@@ -869,10 +899,26 @@ function SourceSection({
 }
 
 function HotmartWebhookGuide({
+  hasHottok,
   lastEventAt,
 }: {
+  hasHottok: boolean;
   lastEventAt: string | null;
 }) {
+  if (!hasHottok) {
+    return (
+      <div className="mb-4 rounded-lg border border-amber-500/25 bg-amber-500/5 p-4">
+        <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+          Webhook ainda não pode receber eventos
+        </p>
+        <p className="mt-1 text-sm leading-5 text-muted-foreground">
+          Primeiro salve o Hottok nas Integrações do Cliente. Depois volte,
+          copie a URL deste funil e cadastre-a na Hotmart.
+        </p>
+      </div>
+    );
+  }
+
   const steps = [
     "Abra Ferramentas → Webhook na Hotmart.",
     "Crie uma configuração na versão 2.0.0.",
@@ -910,13 +956,44 @@ function HotmartWebhookGuide({
         )}
         <span>
           {lastEventAt
-            ? `Primeiro evento confirmado em ${format(
+            ? `A integração recebeu um evento em ${format(
                 new Date(lastEventAt),
                 "dd/MM/yyyy 'às' HH:mm",
                 { locale: ptBR },
               )}`
             : "Aguardando o evento de teste da Hotmart"}
         </span>
+      </div>
+    </div>
+  );
+}
+
+function HotmartDataFlow({ hasHottok }: { hasHottok: boolean }) {
+  return (
+    <div className="grid gap-3 rounded-xl border border-blue-500/20 bg-blue-500/5 p-4 md:grid-cols-2">
+      <div className="flex gap-3">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background text-blue-700">
+          <Database className="h-4 w-4" aria-hidden="true" />
+        </span>
+        <div>
+          <p className="text-sm font-semibold">API conectada</p>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            Carrega produtos, ofertas e o histórico de vendas.
+          </p>
+        </div>
+      </div>
+      <div className="flex gap-3">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background text-blue-700">
+          <Radio className="h-4 w-4" aria-hidden="true" />
+        </span>
+        <div>
+          <p className="text-sm font-semibold">
+            Webhook {hasHottok ? "protegido" : "pendente"}
+          </p>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            Recebe vendas, reembolsos e chargebacks novos em tempo real.
+          </p>
+        </div>
       </div>
     </div>
   );
