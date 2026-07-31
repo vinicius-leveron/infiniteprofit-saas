@@ -7,7 +7,16 @@ const CLIENT_ID = "33333333-3333-4333-8333-333333333333";
 const FUNNEL_ID = "44444444-4444-4444-8444-444444444444";
 const AUTH_STORAGE_KEY = "sb-nztnctrkmfrgclrnflfa-auth-token";
 
-async function mockAuthenticatedPlatform(page: Page) {
+async function mockAuthenticatedPlatform(
+  page: Page,
+  {
+    workspaceRole = "owner",
+    organizationRole = "owner",
+  }: {
+    workspaceRole?: "owner" | "admin" | "member";
+    organizationRole?: "owner" | "admin" | "member" | null;
+  } = {},
+) {
   await page.addInitScript(
     ({ storageKey, userId }) => {
       const encode = (value: object) =>
@@ -72,7 +81,7 @@ async function mockAuthenticatedPlatform(page: Page) {
     if (table === "workspace_members") {
       body = [
         {
-          role: "owner",
+          role: workspaceRole,
           workspaces: {
             id: CLIENT_ID,
             name: "Loja Aurora",
@@ -82,15 +91,17 @@ async function mockAuthenticatedPlatform(page: Page) {
         },
       ];
     } else if (table === "organization_members") {
-      body = [
-        {
-          role: "owner",
-          organizations: {
-            id: ORGANIZATION_ID,
-            name: "Agência Infinite",
-          },
-        },
-      ];
+      body = organizationRole
+        ? [
+            {
+              role: organizationRole,
+              organizations: {
+                id: ORGANIZATION_ID,
+                name: "Agência Infinite",
+              },
+            },
+          ]
+        : [];
     } else if (table === "workspaces") {
       body = [
         {
@@ -224,5 +235,39 @@ test.describe("contextual navigation shell", () => {
       () => document.documentElement.scrollWidth - window.innerWidth,
     );
     expect(horizontalOverflow).toBeLessThanOrEqual(1);
+  });
+});
+
+test.describe("member route guards", () => {
+  test.beforeEach(async ({ page }) => {
+    await mockAuthenticatedPlatform(page, {
+      workspaceRole: "member",
+      organizationRole: null,
+    });
+  });
+
+  test("redirects direct administrative URLs to safe read-only destinations", async ({
+    page,
+  }) => {
+    for (const path of [
+      `/clients/${CLIENT_ID}/integrations`,
+      `/clients/${CLIENT_ID}/team`,
+      `/clients/${CLIENT_ID}/settings`,
+      `/clients/${CLIENT_ID}/funnels/new`,
+      `/clients/${CLIENT_ID}/funnels/import`,
+    ]) {
+      await page.goto(path);
+      await expect(page).toHaveURL(`/clients/${CLIENT_ID}/funnels`);
+    }
+
+    for (const path of ["/organization/team", "/organization/settings"]) {
+      await page.goto(path);
+      await expect(page).toHaveURL("/clients");
+    }
+
+    for (const destination of ["sources", "sharing"]) {
+      await page.goto(`/funnels/${FUNNEL_ID}/${destination}`);
+      await expect(page).toHaveURL(`/dashboard?project=${FUNNEL_ID}`);
+    }
   });
 });

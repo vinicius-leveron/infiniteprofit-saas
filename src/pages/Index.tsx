@@ -740,7 +740,7 @@ const Index = () => {
               )}
             />
             {hasMediaFilters && attributionCoverage && (
-              <div className="flex flex-col gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-col gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100 sm:flex-row sm:items-center sm:justify-between">
                 <span>
                   Resultado atribuído aos anúncios selecionados. Eventos sem identificação confiável ficam fora.
                 </span>

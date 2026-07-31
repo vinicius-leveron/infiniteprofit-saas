@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   BrowserRouter,
@@ -7,6 +7,7 @@ import {
   Routes,
   useLocation,
   useNavigate,
+  useParams,
   useSearchParams,
 } from "react-router-dom";
 import { Loader2 } from "lucide-react";
@@ -18,6 +19,7 @@ import { AppErrorBoundary } from "@/components/AppErrorBoundary";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { WorkspaceProvider, useWorkspace } from "@/hooks/useWorkspace";
 import { resolveClientLandingDestination } from "@/lib/lastDashboard";
+import { supabase } from "@/integrations/supabase/client";
 
 const Index = lazy(() => import("./pages/Index.tsx"));
 const Auth = lazy(() => import("./pages/Auth.tsx"));
@@ -178,6 +180,88 @@ function LegacyOrganizationRedirect() {
   );
 }
 
+function ClientAdminRoute({ children }: { children: ReactNode }) {
+  const { clientId } = useParams<{ clientId: string }>();
+  const { loading, workspaces } = useWorkspace();
+  if (loading) return <RouteLoader />;
+
+  const client = workspaces.find((workspace) => workspace.id === clientId);
+  const canManage = client?.role === "owner" || client?.role === "admin";
+  if (canManage) return children;
+
+  return (
+    <Navigate
+      to={client ? `/clients/${encodeURIComponent(client.id)}/funnels` : "/clients"}
+      replace
+    />
+  );
+}
+
+function CurrentClientAdminRoute({ children }: { children: ReactNode }) {
+  const { loading, currentWorkspaceId, isWorkspaceAdmin } = useWorkspace();
+  if (loading) return <RouteLoader />;
+  if (isWorkspaceAdmin) return children;
+  return (
+    <Navigate
+      to={
+        currentWorkspaceId
+          ? `/clients/${encodeURIComponent(currentWorkspaceId)}/funnels`
+          : "/clients"
+      }
+      replace
+    />
+  );
+}
+
+function OrganizationAdminRoute({ children }: { children: ReactNode }) {
+  const { loading, isOrganizationAdmin } = useWorkspace();
+  if (loading) return <RouteLoader />;
+  return isOrganizationAdmin ? children : <Navigate to="/clients" replace />;
+}
+
+function FunnelAdminRoute({ children }: { children: ReactNode }) {
+  const { funnelId } = useParams<{ funnelId: string }>();
+  const { loading, workspaces } = useWorkspace();
+  const [workspaceId, setWorkspaceId] = useState<string | null | undefined>(
+    undefined,
+  );
+
+  useEffect(() => {
+    let active = true;
+    if (!funnelId) {
+      setWorkspaceId(null);
+      return;
+    }
+    setWorkspaceId(undefined);
+    void supabase
+      .from("projects")
+      .select("workspace_id")
+      .eq("id", funnelId)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (active) setWorkspaceId(error ? null : data?.workspace_id ?? null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [funnelId]);
+
+  if (loading || workspaceId === undefined) return <RouteLoader />;
+  if (!workspaceId) return <Navigate to="/clients" replace />;
+  const workspace = workspaces.find((item) => item.id === workspaceId);
+  const canManage = workspace?.role === "owner" || workspace?.role === "admin";
+  if (canManage) return children;
+
+  return funnelId ? (
+    <Navigate
+      to={`/dashboard?project=${encodeURIComponent(funnelId)}`}
+      replace
+    />
+  ) : (
+    <Navigate to="/clients" replace />
+  );
+}
+
 const App = () => (
   <AppErrorBoundary>
   <QueryClientProvider client={queryClient}>
@@ -203,17 +287,63 @@ const App = () => (
 
                   <Route path="/clients" element={<Clients />} />
                   <Route path="/clients/:clientId/funnels" element={<Projects />} />
-                  <Route path="/clients/:clientId/funnels/new" element={<SetupOperation />} />
+                  <Route
+                    path="/clients/:clientId/funnels/new"
+                    element={(
+                      <ClientAdminRoute>
+                        <SetupOperation />
+                      </ClientAdminRoute>
+                    )}
+                  />
                   <Route
                     path="/clients/:clientId/funnels/import"
-                    element={<FunnelCsvImport />}
+                    element={(
+                      <ClientAdminRoute>
+                        <FunnelCsvImport />
+                      </ClientAdminRoute>
+                    )}
                   />
-                  <Route path="/clients/:clientId/integrations" element={<ClientIntegrations />} />
-                  <Route path="/clients/:clientId/team" element={<ClientTeam />} />
-                  <Route path="/clients/:clientId/settings" element={<ClientSettings />} />
+                  <Route
+                    path="/clients/:clientId/integrations"
+                    element={(
+                      <ClientAdminRoute>
+                        <ClientIntegrations />
+                      </ClientAdminRoute>
+                    )}
+                  />
+                  <Route
+                    path="/clients/:clientId/team"
+                    element={(
+                      <ClientAdminRoute>
+                        <ClientTeam />
+                      </ClientAdminRoute>
+                    )}
+                  />
+                  <Route
+                    path="/clients/:clientId/settings"
+                    element={(
+                      <ClientAdminRoute>
+                        <ClientSettings />
+                      </ClientAdminRoute>
+                    )}
+                  />
 
-                  <Route path="/organization/settings" element={<OrganizationGeneral />} />
-                  <Route path="/organization/team" element={<OrganizationTeam />} />
+                  <Route
+                    path="/organization/settings"
+                    element={(
+                      <OrganizationAdminRoute>
+                        <OrganizationGeneral />
+                      </OrganizationAdminRoute>
+                    )}
+                  />
+                  <Route
+                    path="/organization/team"
+                    element={(
+                      <OrganizationAdminRoute>
+                        <OrganizationTeam />
+                      </OrganizationAdminRoute>
+                    )}
+                  />
 
                   <Route path="/health" element={<HealthOverview />} />
                   <Route
@@ -222,18 +352,33 @@ const App = () => (
                   />
                   <Route
                     path="/funnels/:funnelId/sources"
-                    element={<Connections mode="sources" />}
+                    element={(
+                      <FunnelAdminRoute>
+                        <Connections mode="sources" />
+                      </FunnelAdminRoute>
+                    )}
                   />
                   <Route path="/funnels/:funnelId/health" element={<Diagnostics />} />
                   <Route
                     path="/funnels/:funnelId/sharing"
-                    element={<Connections mode="sharing" />}
+                    element={(
+                      <FunnelAdminRoute>
+                        <Connections mode="sharing" />
+                      </FunnelAdminRoute>
+                    )}
                   />
 
                   <Route path="/dashboard" element={<DashboardEntry />} />
 
                   <Route path="/projects" element={<Projects />} />
-                  <Route path="/setup-operation" element={<SetupOperation />} />
+                  <Route
+                    path="/setup-operation"
+                    element={(
+                      <CurrentClientAdminRoute>
+                        <SetupOperation />
+                      </CurrentClientAdminRoute>
+                    )}
+                  />
                   <Route
                     path="/connections"
                     element={<LegacyFunnelRedirect destination="sources" />}

@@ -24,7 +24,7 @@ export async function login(page: Page) {
 
   await page.goto("/auth");
   await page.getByLabel("Email").fill(qaEmail);
-  await page.getByLabel("Senha").fill(qaPassword);
+  await page.locator("#password").fill(qaPassword);
   await page.getByRole("button", { name: /^Entrar$/ }).click();
   await expect(page).toHaveURL(
     /\/(dashboard|clients(?:\/[^/]+\/funnels)?|welcome)(\?.*)?$/,

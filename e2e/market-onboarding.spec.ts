@@ -47,7 +47,7 @@ test.describe("staging market onboarding", () => {
 
       await page.goto("/auth");
       await page.getByLabel("Email").fill(email);
-      await page.getByLabel("Senha").fill(password);
+      await page.locator("#password").fill(password);
       await page.getByRole("button", { name: /^Entrar$/ }).click();
       await expect(page).toHaveURL(/\/welcome$/);
 

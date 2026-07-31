@@ -33,6 +33,7 @@
     "qa:data": "node scripts/qa-data.mjs",
     "qa:dashboard": "node scripts/qa-dashboard.mjs",
     "qa:prod:data": "node scripts/qa-prod-data.mjs",
+    "qa:prod:auth": "node scripts/run-production-auth-qa.mjs",
     "qa:release": "node scripts/qa-release.mjs",
     "qa": "npm run build && npm run lint && npm test && npm run e2e",
     "qa:prod": "PLAYWRIGHT_BASE_URL=https://infiniteprofit.com.br npm run e2e",
