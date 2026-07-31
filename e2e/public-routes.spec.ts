@@ -15,7 +15,10 @@ test.describe("public and auth boundaries", () => {
 
   test("invalid public share token shows a controlled error", async ({ page }) => {
     await page.goto("/share/invalid-e2e-token");
-    await expect(page.getByText(/Link invalido|Link inválido|Link indispon/i)).toBeVisible();
+    await expect(
+      page.getByText(/Link invalido|Link inválido|Link indispon|Link desativado/i),
+    ).toBeVisible();
+    await expect(page.getByText(/Edge Function|non-2xx|status code/i)).toHaveCount(0);
     await expect(page.getByText(/Conexões|Workspace Settings|Sincronizar Meta|Sincronizar VTurb/)).toHaveCount(0);
   });
 

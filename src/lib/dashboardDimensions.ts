@@ -92,6 +92,44 @@ export function filterDashboardAdDimensions(
   );
 }
 
+export function reconcileDashboardMediaFilters(
+  dimensions: DashboardAdDimension[],
+  filters: DashboardFilterState,
+) {
+  if (dimensions.length === 0) return filters;
+
+  const availableAccounts = new Set(
+    dimensions.map((row) => row.account_id).filter(isPresent),
+  );
+  const accountIds = filters.accountIds.filter((id) => availableAccounts.has(id));
+  const accountDimensions = accountIds.length === 0
+    ? dimensions
+    : dimensions.filter((row) => Boolean(row.account_id && accountIds.includes(row.account_id)));
+
+  const availableCampaigns = new Set(
+    accountDimensions.map((row) => row.campaign_id).filter(isPresent),
+  );
+  const campaignIds = filters.campaignIds.filter((id) => availableCampaigns.has(id));
+  const campaignDimensions = campaignIds.length === 0
+    ? accountDimensions
+    : accountDimensions.filter((row) => Boolean(row.campaign_id && campaignIds.includes(row.campaign_id)));
+
+  const availableAdsets = new Set(
+    campaignDimensions.map((row) => row.adset_id).filter(isPresent),
+  );
+  const adsetIds = filters.adsetIds.filter((id) => availableAdsets.has(id));
+
+  if (
+    sameIds(accountIds, filters.accountIds) &&
+    sameIds(campaignIds, filters.campaignIds) &&
+    sameIds(adsetIds, filters.adsetIds)
+  ) {
+    return filters;
+  }
+
+  return { accountIds, campaignIds, adsetIds };
+}
+
 export function applyDashboardDimensionMetrics(
   baseRows: DailyRow[],
   metrics: DashboardDimensionMetricRow[],
@@ -192,6 +230,14 @@ export function calculateAttributionCoverage(
 
 function number(value: number | null | undefined) {
   return Number.isFinite(Number(value)) ? Number(value) : 0;
+}
+
+function isPresent(value: string | null): value is string {
+  return Boolean(value);
+}
+
+function sameIds(left: string[], right: string[]) {
+  return left.length === right.length && left.every((id, index) => id === right[index]);
 }
 
 function ratio(numerator: number, denominator: number) {

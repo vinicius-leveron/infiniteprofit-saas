@@ -2,25 +2,28 @@
 import { spawnSync } from "node:child_process";
 import { exitForResults, writeQaReport } from "./qa-common.mjs";
 
-const DEFAULT_DENISE_PROJECTS = [
-  "2ec7d87c-fbe5-4006-8d82-b73e24d18480",
-  "edcf2417-99af-460f-865c-f685bb4eca96",
-];
-
-const projectIds = (process.env.QA_PROJECT_IDS ?? DEFAULT_DENISE_PROJECTS.join(","))
-  .split(",")
-  .map((value) => value.trim())
-  .filter(Boolean);
+const rawDataSourcesSql = "'meta', 'vturb', 'gateway', 'sheet_override'";
+const configuredProjectIds = process.env.QA_PROJECT_IDS?.trim();
+const projectIds = configuredProjectIds
+  ? configuredProjectIds
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean)
+  : discoverProjectsWithData();
 const shouldReprocess = process.argv.includes("--reprocess") || process.env.QA_REPROCESS === "1";
 const forcedReprocessDates = parseDateList(process.env.QA_REPROCESS_DATES ?? "");
-const rawDataSourcesSql = "'meta', 'vturb', 'gateway', 'sheet_override'";
 const results = [];
 const projects = [];
 
 for (const projectId of projectIds) {
   try {
     const summary = await auditProject(projectId);
-    const reprocessDates = forcedReprocessDates.length > 0 ? forcedReprocessDates : summary.missingDailyDates;
+    const reprocessDates = forcedReprocessDates.length > 0
+      ? forcedReprocessDates
+      : [...new Set([
+          ...summary.missingDailyDates,
+          ...summary.missingDimensionDates,
+        ])].sort();
     if (shouldReprocess && reprocessDates.length > 0) {
       await reprocessProjectDates(projectId, reprocessDates);
       summary.afterReprocess = await auditProject(projectId);
@@ -115,6 +118,44 @@ async function auditProject(projectId) {
     order by event_date;
   `).map((row) => row.event_date);
   const missingDailyDates = rawDates.filter((date) => !dailyDates.includes(date));
+  const metaRawDates = runSql(`
+    select distinct event_date::text as event_date
+    from public.raw_events
+    where project_id = ${sqlString(projectId)}
+      and source = 'meta'
+      and event_type = 'insight_ad'
+      and nullif(payload ->> 'ad_id', '') is not null
+    order by event_date;
+  `).map((row) => row.event_date);
+  const dimensionDates = runSql(`
+    select distinct event_date::text as event_date
+    from public.daily_ad_dimension_metrics
+    where project_id = ${sqlString(projectId)}
+    order by event_date;
+  `).map((row) => row.event_date);
+  const missingDimensionDates = metaRawDates.filter(
+    (date) => !dimensionDates.includes(date),
+  );
+  const [dimensionSummary = {}] = runSql(`
+    select
+      pg_catalog.count(*)::int as rows,
+      pg_catalog.count(distinct nullif(account_id, ''))::int as accounts,
+      pg_catalog.count(distinct nullif(campaign_id, ''))::int as campaigns,
+      pg_catalog.count(distinct nullif(adset_id, ''))::int as adsets,
+      pg_catalog.count(distinct ad_id)::int as ads,
+      coalesce(pg_catalog.sum(investimento), 0)::numeric as dimension_spend,
+      coalesce((
+        select pg_catalog.sum(
+          coalesce(nullif(event.payload ->> 'spend', '')::numeric, 0)
+        )
+        from public.raw_events event
+        where event.project_id = ${sqlString(projectId)}
+          and event.source = 'meta'
+          and event.event_type = 'insight_ad'
+      ), 0)::numeric as raw_meta_spend
+    from public.daily_ad_dimension_metrics
+    where project_id = ${sqlString(projectId)};
+  `);
   const juneRows = runSql(`
     select event_date::text as event_date, investimento, imposto_meta, cliques, landing_pageviews, taxa_carreg,
       pageviews, views_unicas, chegaram_pitch, checkouts, vendas_totais, fat_bruto, fat_liquido, reembolsos
@@ -132,6 +173,10 @@ async function auditProject(projectId) {
     rawDates,
     dailyDates,
     missingDailyDates,
+    metaRawDates,
+    dimensionDates,
+    missingDimensionDates,
+    dimensionSummary,
     juneRows,
     rawJuneDates,
     day22,
@@ -145,6 +190,10 @@ function projectResults(summary) {
     rawDates: summary.rawDates.length,
     dailyDates: summary.dailyDates.length,
     missingDailyDates: summary.missingDailyDates,
+    metaRawDates: summary.metaRawDates.length,
+    dimensionDates: summary.dimensionDates.length,
+    missingDimensionDates: summary.missingDimensionDates,
+    dimensionSummary: summary.dimensionSummary,
     juneRows: summary.juneRows.length,
     day22: summary.day22,
   });
@@ -154,6 +203,24 @@ function projectResults(summary) {
       status: summary.missingDailyDates.length > 0 ? "blocker" : "pass",
       exitCode: summary.missingDailyDates.length > 0 ? 1 : 0,
       command: "raw date coverage",
+      startedAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+      stdout: output,
+    },
+    {
+      name: `${name}: Meta events have dashboard filter dimensions`,
+      status: summary.missingDimensionDates.length > 0 ? "blocker" : "pass",
+      exitCode: summary.missingDimensionDates.length > 0 ? 1 : 0,
+      command: "Meta dimension date coverage",
+      startedAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+      stdout: output,
+    },
+    {
+      name: `${name}: dimensional spend reconciles with Meta events`,
+      status: spendMatches(summary.dimensionSummary) ? "pass" : "blocker",
+      exitCode: spendMatches(summary.dimensionSummary) ? 0 : 1,
+      command: "Meta dimensional spend reconciliation",
       startedAt: new Date().toISOString(),
       finishedAt: new Date().toISOString(),
       stdout: output,
@@ -292,6 +359,20 @@ async function reprocessProjectDatesViaSql(projectId, dates) {
     on conflict (project_id, event_date) do update set
       ${updates};
   `);
+  runSql(`
+    select public.refresh_dashboard_ad_dimensions(
+      ${sqlString(projectId)}::uuid,
+      array[${dates.map((date) => `date ${sqlString(date)}`).join(", ")}]
+    );
+  `);
+}
+
+function spendMatches(summary) {
+  const rawSpend = Number(summary?.raw_meta_spend ?? 0);
+  const dimensionSpend = Number(summary?.dimension_spend ?? 0);
+  return Number.isFinite(rawSpend)
+    && Number.isFinite(dimensionSpend)
+    && Math.abs(rawSpend - dimensionSpend) <= 0.01;
 }
 
 function runSql(sql) {
@@ -310,6 +391,20 @@ function runSql(sql) {
   if (!Number.isFinite(jsonStart)) return [];
   const parsed = JSON.parse(result.stdout.slice(jsonStart));
   return Array.isArray(parsed) ? parsed : parsed.rows ?? [];
+}
+
+function discoverProjectsWithData() {
+  return runSql(`
+    select project.id
+    from public.projects project
+    where exists (
+      select 1
+      from public.raw_events event
+      where event.project_id = project.id
+        and event.source in (${rawDataSourcesSql})
+    )
+    order by project.created_at;
+  `).map((row) => row.id);
 }
 
 function sqlString(value) {

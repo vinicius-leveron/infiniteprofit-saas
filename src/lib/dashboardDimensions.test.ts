@@ -4,6 +4,7 @@ import {
   applyDashboardDimensionMetrics,
   calculateAttributionCoverage,
   filterDashboardAdDimensions,
+  reconcileDashboardMediaFilters,
   type DashboardAdDimension,
   type DashboardDimensionMetricRow,
 } from "./dashboardDimensions";
@@ -48,6 +49,28 @@ describe("dashboard dimension filters", () => {
       campaignIds: ["campaign-a"],
       adsetIds: ["adset-y"],
     }).map((row) => row.ad_id)).toEqual(["ad-2"]);
+  });
+
+  it("removes persisted selections that no longer exist in the current funnel", () => {
+    expect(reconcileDashboardMediaFilters(dimensions, {
+      accountIds: ["account-deleted", "account-2"],
+      campaignIds: ["campaign-a", "campaign-deleted"],
+      adsetIds: ["adset-x", "adset-y", "adset-deleted"],
+    })).toEqual({
+      accountIds: ["account-2"],
+      campaignIds: ["campaign-a"],
+      adsetIds: ["adset-y"],
+    });
+  });
+
+  it("preserves the same filter object when every persisted selection is valid", () => {
+    const filters = {
+      accountIds: ["account-2"],
+      campaignIds: ["campaign-b"],
+      adsetIds: ["adset-z"],
+    };
+
+    expect(reconcileDashboardMediaFilters(dimensions, filters)).toBe(filters);
   });
 
   it("recalculates AOV and unique offer conversion from attributed data", () => {

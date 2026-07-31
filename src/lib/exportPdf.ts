@@ -1,5 +1,3 @@
-import jsPDF from "jspdf";
-import html2canvas from "html2canvas";
 import { toast } from "sonner";
 
 /**
@@ -13,6 +11,11 @@ export async function exportElementToPdf(
 ): Promise<void> {
   const toastId = toast.loading("Gerando PDF...");
   try {
+    const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
+      import("html2canvas"),
+      import("jspdf"),
+    ]);
+
     // Forcar fundo branco para PDF legivel
     const bgColor = "#ffffff";
 

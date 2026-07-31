@@ -101,10 +101,9 @@ Deno.serve(async (req) => {
       },
     );
     if (dimensionError) {
-      console.warn("dashboard dimension refresh failed", {
-        project_id,
-        message: dimensionError.message,
-      });
+      throw new Error(
+        `dashboard dimension refresh failed: ${dimensionError.message}`,
+      );
     }
 
     return json({

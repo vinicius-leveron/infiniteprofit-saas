@@ -84,12 +84,14 @@ export const DayDrilldownDialog = ({ row, onOpenChange, projectId, editable, onO
   const [editingObs, setEditingObs] = useState(false);
   const [obsDraft, setObsDraft] = useState("");
   const [savingObs, setSavingObs] = useState(false);
+  const rowTimestamp = row?.date?.getTime();
+  const rowObservation = row?.obs ?? "";
 
   // Reset edição ao trocar de dia / fechar
   useEffect(() => {
     setEditingObs(false);
-    setObsDraft(row?.obs ?? "");
-  }, [row?.date?.getTime()]);
+    setObsDraft(rowObservation);
+  }, [rowObservation, rowTimestamp]);
 
   if (!row) return null;
   const dateStr = row.date

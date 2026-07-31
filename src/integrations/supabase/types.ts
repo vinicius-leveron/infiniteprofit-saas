@@ -1253,6 +1253,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      classify_superseded_sync_jobs: {
+        Args: { _succeeded_job_id: string }
+        Returns: number
+      }
       claim_creative_asset_jobs: {
         Args: { job_limit: number; worker_name: string }
         Returns: Database["public"]["Tables"]["creative_asset_jobs"]["Row"][]

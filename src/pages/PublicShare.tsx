@@ -9,6 +9,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { dailyMetricsToDailyRows, type DailyMetricsRow } from "@/lib/dailyMetrics";
 import { getDashboardPeriodRows } from "@/lib/dashboardRows";
 import { exportElementToPdf } from "@/lib/exportPdf";
+import { edgeFunctionErrorMessage } from "@/lib/edgeFunctionError";
 import type { DailyRow } from "@/lib/csv";
 
 interface PublicProject {
@@ -44,7 +45,8 @@ function getErrorInfo(error: string): { title: string; description: string; icon
   }
   return {
     title: "Link indisponivel",
-    description: error,
+    description:
+      "Nao foi possivel abrir este compartilhamento agora. Tente novamente em alguns instantes.",
     icon: <AlertTriangle className="w-10 h-10 mx-auto text-amber-500" />,
   };
 }
@@ -63,9 +65,15 @@ export default function PublicShare() {
   useEffect(() => {
     if (!token) return;
     setLoading(true);
-    void supabase.functions.invoke("public-share", { body: { token } }).then(({ data, error: invokeError }) => {
+    void supabase.functions.invoke("public-share", { body: { token } }).then(async ({ data, error: invokeError }) => {
       if (invokeError || data?.error) {
-        setError(data?.error ?? invokeError?.message ?? "Link indisponível");
+        setError(
+          data?.error ??
+            await edgeFunctionErrorMessage(
+              invokeError,
+              "Link indisponivel",
+            ),
+        );
         setLoading(false);
         return;
       }

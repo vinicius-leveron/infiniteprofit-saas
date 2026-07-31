@@ -14,7 +14,7 @@ const query = `
   from function_logs
   where regexp_contains(
     event_message,
-    'sync_scheduler|sync_worker|sync_watchdog|gateway_webhook'
+    'sync_scheduler|sync_worker|sync_watchdog|gateway_webhook|aggregate-daily|team-access|hotmart|workspace-credentials|dashboard.dimension'
   )
   order by timestamp desc
   limit 30

@@ -8,16 +8,20 @@ test.describe("dashboard data regression", () => {
     await login(page);
   });
 
-  test("monthly dashboard keeps data after period changes and reload", async ({ page }) => {
+  test("this-month dashboard keeps data after period changes and reload", async ({ page }) => {
     await page.goto(`/dashboard?project=${qaProjectId}`);
     await expect(page.getByRole("heading", { name: /Visão Geral|Visao Geral/ })).toBeVisible();
 
-    await page.getByRole("button", { name: "30 dias" }).click();
+    await expect(page.getByRole("button", { name: "Este mês" })).toBeVisible();
+    await page.getByRole("button", { name: "Mês passado" }).click();
+    await expect(page.getByRole("button", { name: "Mês passado" })).toBeVisible();
+    await page.getByRole("button", { name: "Este mês" }).click();
     await expect(page.getByText("Nenhum dia no período")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "30 dias" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Este mês" })).toBeVisible();
 
     await page.reload();
     await expect(page.getByText("Nenhum dia no período")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Este mês" })).toBeVisible();
     await expect(page.getByRole("heading", { name: /Visão Geral|Visao Geral/ })).toBeVisible();
 
     await page.goto(`/dashboard?project=${qaProjectId}&tab=trafego`);

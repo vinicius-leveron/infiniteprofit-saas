@@ -170,7 +170,7 @@ Deno.serve(async (req) => {
           throw new Error("Worker perdeu a lease exclusiva antes do job.");
         }
         const result = await processJob(sb, job, traceId, jobTimeoutMs);
-        await markSucceeded(sb, job.id, job.payload ?? {}, result);
+        await markSucceeded(sb, job, job.payload ?? {}, result);
         results.push({
           job_id: job.id,
           source: job.source,
@@ -566,7 +566,7 @@ async function assertDailyMetricsRows(
 
 async function markSucceeded(
   sb: SupabaseClientAny,
-  jobId: string,
+  job: ClaimedSyncJob,
   previousPayload: Record<string, unknown>,
   result: Record<string, unknown>,
 ) {
@@ -585,8 +585,21 @@ async function markSucceeded(
         last_result: compactResult(result),
       },
     })
-    .eq("id", jobId);
+    .eq("id", job.id);
   if (error) throw new Error(error.message);
+
+  const { error: classificationError } = await sb.rpc(
+    "classify_superseded_sync_jobs",
+    { _succeeded_job_id: job.id },
+  );
+  if (classificationError) {
+    console.warn(JSON.stringify({
+      event: "sync_job_superseded_classification_failed",
+      job_id: job.id,
+      source: job.source,
+      message: classificationError.message,
+    }));
+  }
 }
 
 async function markFailedOrRetry(

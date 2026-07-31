@@ -36,6 +36,7 @@ import {
   getDashboardDimensionMetrics,
   hasDashboardMediaFilters,
   listDashboardAdDimensions,
+  reconcileDashboardMediaFilters,
   type DashboardAdDimension,
   type DashboardAttributionCoverage,
 } from "@/lib/dashboardDimensions";
@@ -384,7 +385,12 @@ const Index = () => {
     setDimensionFilterError(null);
     void listDashboardAdDimensions(currentProjectId)
       .then((dimensions) => {
-        if (!cancelled) setAdDimensions(dimensions);
+        if (!cancelled) {
+          setAdDimensions(dimensions);
+          setMediaFilters((current) =>
+            reconcileDashboardMediaFilters(dimensions, current)
+          );
+        }
       })
       .catch((error) => {
         if (!cancelled) {
