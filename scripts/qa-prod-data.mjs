@@ -136,26 +136,10 @@ async function auditProject(projectId) {
   const missingDimensionDates = metaRawDates.filter(
     (date) => !dimensionDates.includes(date),
   );
-  const [dimensionSummary = {}] = runSql(`
-    select
-      pg_catalog.count(*)::int as rows,
-      pg_catalog.count(distinct nullif(account_id, ''))::int as accounts,
-      pg_catalog.count(distinct nullif(campaign_id, ''))::int as campaigns,
-      pg_catalog.count(distinct nullif(adset_id, ''))::int as adsets,
-      pg_catalog.count(distinct ad_id)::int as ads,
-      coalesce(pg_catalog.sum(investimento), 0)::numeric as dimension_spend,
-      coalesce((
-        select pg_catalog.sum(
-          coalesce(nullif(event.payload ->> 'spend', '')::numeric, 0)
-        )
-        from public.raw_events event
-        where event.project_id = ${sqlString(projectId)}
-          and event.source = 'meta'
-          and event.event_type = 'insight_ad'
-      ), 0)::numeric as raw_meta_spend
-    from public.daily_ad_dimension_metrics
-    where project_id = ${sqlString(projectId)};
-  `);
+  const dimensionSummary = await waitForDimensionReconciliation(
+    projectId,
+    queryDimensionSummary(projectId),
+  );
   const juneRows = runSql(`
     select event_date::text as event_date, investimento, imposto_meta, cliques, landing_pageviews, taxa_carreg,
       pageviews, views_unicas, chegaram_pitch, checkouts, vendas_totais, fat_bruto, fat_liquido, reembolsos
@@ -181,6 +165,43 @@ async function auditProject(projectId) {
     rawJuneDates,
     day22,
   };
+}
+
+function queryDimensionSummary(projectId) {
+  const [summary = {}] = runSql(`
+    select
+      pg_catalog.count(*)::int as rows,
+      pg_catalog.count(distinct nullif(account_id, ''))::int as accounts,
+      pg_catalog.count(distinct nullif(campaign_id, ''))::int as campaigns,
+      pg_catalog.count(distinct nullif(adset_id, ''))::int as adsets,
+      pg_catalog.count(distinct ad_id)::int as ads,
+      coalesce(pg_catalog.sum(investimento), 0)::numeric as dimension_spend,
+      coalesce((
+        select pg_catalog.sum(
+          coalesce(nullif(event.payload ->> 'spend', '')::numeric, 0)
+        )
+        from public.raw_events event
+        where event.project_id = ${sqlString(projectId)}
+          and event.source = 'meta'
+          and event.event_type = 'insight_ad'
+      ), 0)::numeric as raw_meta_spend
+    from public.daily_ad_dimension_metrics
+    where project_id = ${sqlString(projectId)};
+  `);
+  return summary;
+}
+
+async function waitForDimensionReconciliation(
+  projectId,
+  initialSummary,
+  { attempts = 15, intervalMs = 2_000 } = {},
+) {
+  let summary = initialSummary;
+  for (let attempt = 1; attempt < attempts && !spendMatches(summary); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    summary = queryDimensionSummary(projectId);
+  }
+  return summary;
 }
 
 function projectResults(summary) {

@@ -308,6 +308,47 @@ describe("SetupOperation Meta step", () => {
     });
   });
 
+  it("postpones only the checkout choice currently open", async () => {
+    render(
+      <MemoryRouter initialEntries={["/setup-operation"]}>
+        <SetupOperation />
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByLabelText("Nome"), {
+      target: { value: "Funil com escolhas independentes" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fontes opcionais" }));
+    fireEvent.click(screen.getByRole("button", { name: /Quick win Hotmart/i }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Fazer depois" })[0]);
+
+    expect(
+      screen.getByRole("button", {
+        name: /Hotmart.*Adiado para depois/i,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: /Histórico Hubla.*Ainda não configurado/i,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: /Gateway.*Ainda não configurado/i,
+      }),
+    ).toBeInTheDocument();
+
+    await waitFor(() => {
+      const draft = JSON.parse(
+        window.sessionStorage.getItem(
+          "infiniteprofit.setupOperationDraft.workspace-1",
+        ) ?? "{}",
+      );
+      expect(draft.skippedCheckoutChoices).toEqual(["hotmart"]);
+      expect(draft.skippedSources).not.toContain("gateway");
+    });
+  });
+
   it("opens the neutral activation experience when every source is postponed", async () => {
     fromMock.mockImplementation((table: string) => {
       if (table === "projects") {

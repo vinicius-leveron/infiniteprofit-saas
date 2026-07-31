@@ -25,28 +25,28 @@ function getErrorInfo(error: string): { title: string; description: string; icon
   if (errorLower.includes("desativado") || errorLower.includes("disabled")) {
     return {
       title: "Link desativado",
-      description: "O proprietario desativou este link de compartilhamento.",
+      description: "O proprietário desativou este link de compartilhamento.",
       icon: <LinkIcon className="w-10 h-10 mx-auto text-muted-foreground" />,
     };
   }
   if (errorLower.includes("expirado") || errorLower.includes("expired")) {
     return {
       title: "Link expirado",
-      description: "Este link nao e mais valido. Solicite um novo ao proprietario.",
+      description: "Este link não é mais válido. Solicite um novo ao proprietário.",
       icon: <Clock className="w-10 h-10 mx-auto text-muted-foreground" />,
     };
   }
   if (errorLower.includes("token") || errorLower.includes("invalido") || errorLower.includes("not found") || errorLower.includes("nao encontrado")) {
     return {
-      title: "Link invalido",
-      description: "Este link nao existe ou esta incorreto. Verifique a URL.",
+      title: "Link inválido",
+      description: "Este link não existe ou está incorreto. Verifique a URL.",
       icon: <AlertTriangle className="w-10 h-10 mx-auto text-amber-500" />,
     };
   }
   return {
-    title: "Link indisponivel",
+    title: "Link indisponível",
     description:
-      "Nao foi possivel abrir este compartilhamento agora. Tente novamente em alguns instantes.",
+      "Não foi possível abrir este compartilhamento agora. Tente novamente em alguns instantes.",
     icon: <AlertTriangle className="w-10 h-10 mx-auto text-amber-500" />,
   };
 }
@@ -71,7 +71,7 @@ export default function PublicShare() {
           data?.error ??
             await edgeFunctionErrorMessage(
               invokeError,
-              "Link indisponivel",
+              "Link indisponível",
             ),
         );
         setLoading(false);
@@ -110,7 +110,7 @@ export default function PublicShare() {
           <h1 className="text-lg font-semibold mb-2">{info.title}</h1>
           <p className="text-sm text-muted-foreground mb-4">{info.description}</p>
           <p className="text-xs text-muted-foreground">
-            Se acredita que isso e um erro, entre em contato com o proprietario do projeto.
+            Se acredita que isso é um erro, entre em contato com o proprietário do projeto.
           </p>
         </div>
       </main>

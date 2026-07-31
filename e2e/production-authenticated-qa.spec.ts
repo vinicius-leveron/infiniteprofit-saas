@@ -66,6 +66,13 @@ test.describe("production authenticated QA", () => {
         page.getByRole("heading", { name: "Convidar pessoa" }),
       ).toBeVisible();
       await expect(page.getByRole("button", { name: "Convidar" })).toBeVisible();
+
+      await page.goto(`/funnels/${fixture!.projectId}/activation`);
+      await expect(
+        page.getByRole("heading", {
+          name: /Seu primeiro resultado chegou|Sua primeira conexão foi confirmada/i,
+        }),
+      ).toBeVisible();
       expect(errors).toEqual([]);
       await page.context().clearCookies();
       await page.evaluate(() => localStorage.clear());
@@ -123,6 +130,20 @@ test.describe("production authenticated QA", () => {
       await expect(page.getByText(/Visão Geral|Visao Geral/).first()).toBeVisible();
       await expect(page.getByRole("button", { name: /Sincronizar agora/i })).toHaveCount(0);
       await expect(page.getByLabel(/token|secret|api key|webhook/i)).toHaveCount(0);
+
+      await page.goto(`/health?client=${fixture!.workspaceId}`);
+      await expect(
+        page.getByRole("heading", { name: "Saúde das fontes" }),
+      ).toBeVisible();
+      await expect(page.getByRole("button", { name: "Ver detalhe" })).toBeVisible();
+
+      await page.goto(`/funnels/${fixture!.projectId}/health`);
+      await expect(
+        page.getByRole("heading", { name: /Saúde do funil/i }),
+      ).toBeVisible();
+      await expect(page.getByText("Ações operacionais")).toHaveCount(0);
+      await expect(page.getByText("Diagnóstico avançado")).toHaveCount(0);
+      await expect(page.getByRole("button", { name: /Sincronizar/i })).toHaveCount(0);
       expect(errors).toEqual([]);
       await page.context().clearCookies();
       await page.evaluate(() => localStorage.clear());
@@ -172,6 +193,31 @@ test.describe("production authenticated QA", () => {
       expect(errors).toEqual([]);
       await context.close();
     }
+  });
+
+  test("postponing Hotmart does not postpone the other checkout paths", async ({
+    page,
+  }) => {
+    const errors = collectRuntimeErrors(page);
+    await loginAs(page, fixture!.roles.owner);
+    await page.goto(`/clients/${fixture!.workspaceId}/funnels/new`);
+    await page.getByLabel("Nome").fill(`QA onboarding ${Date.now()}`);
+    await page.getByRole("button", { name: "Fontes opcionais" }).click();
+    await page.getByRole("button", { name: /Quick win Hotmart/i }).click();
+    await page.getByRole("button", { name: "Fazer depois" }).first().click();
+
+    await expect(
+      page.getByRole("button", { name: /Hotmart.*Adiado para depois/i }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", {
+        name: /Histórico Hubla.*Ainda não configurado/i,
+      }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /Gateway.*Ainda não configurado/i }),
+    ).toBeVisible();
+    expect(errors).toEqual([]);
   });
 });
 

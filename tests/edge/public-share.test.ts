@@ -27,7 +27,7 @@ async function invoke(functionName: string, body: unknown, headers: Record<strin
 }
 
 remoteDescribe("public-share edge contract", () => {
-  it("rejects invalid public share tokens without leaking project data", async () => {
+  it("represents invalid public share tokens as an expected business state", async () => {
     if (!supabaseUrl || !anonKey) {
       console.warn("Skipping public-share edge test: Supabase env vars are not set.");
       return;
@@ -35,10 +35,12 @@ remoteDescribe("public-share edge contract", () => {
 
     const { response, json } = await invoke("public-share", { token: "invalid-e2e-token" });
 
-    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(response.ok).toBe(true);
+    expect(json.ok).toBe(false);
+    expect(json.state).toBe("invalid");
     expect(json.project).toBeUndefined();
     expect(json.metrics).toBeUndefined();
-    expect(String(json.error ?? "")).toMatch(/inválido|invalido|desativado|not found|invalid/i);
+    expect(String(json.error ?? "")).toMatch(/inválido|invalido|not found|invalid/i);
   });
 
   it("returns project and metrics for a valid public token", async () => {

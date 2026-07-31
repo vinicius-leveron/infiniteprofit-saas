@@ -27,9 +27,26 @@ Deno.serve(async (req) => {
       .maybeSingle();
 
     if (linkError) throw new Error(linkError.message);
-    if (!link?.enabled) return json({ error: "Link inválido ou desativado" }, 404);
+    if (!link) {
+      return json({
+        ok: false,
+        state: "invalid",
+        error: "Link inválido",
+      });
+    }
+    if (!link.enabled) {
+      return json({
+        ok: false,
+        state: "disabled",
+        error: "Link desativado",
+      });
+    }
     if (link.expires_at && new Date(link.expires_at).getTime() < Date.now()) {
-      return json({ error: "Link expirado" }, 410);
+      return json({
+        ok: false,
+        state: "expired",
+        error: "Link expirado",
+      });
     }
 
     const [{ data: project, error: projectError }, { data: metrics, error: metricsError }] = await Promise.all([
@@ -47,7 +64,13 @@ Deno.serve(async (req) => {
 
     if (projectError) throw new Error(projectError.message);
     if (metricsError) throw new Error(metricsError.message);
-    if (!project) return json({ error: "Projeto não encontrado" }, 404);
+    if (!project) {
+      return json({
+        ok: false,
+        state: "unavailable",
+        error: "Projeto não encontrado",
+      });
+    }
 
     await sb
       .from("project_public_links")

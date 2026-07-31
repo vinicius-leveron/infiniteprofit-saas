@@ -68,6 +68,7 @@ import {
 } from "@/lib/hotmartCredentials";
 import { isHotmartCheckoutEnabled } from "@/lib/publicConfig";
 import type {
+  SetupCheckoutChoice,
   SetupDraftV2,
   SetupSource,
   SetupStepId as StepId,
@@ -76,6 +77,11 @@ import { cn } from "@/lib/utils";
 import { trackProductEvent } from "@/lib/productEvents";
 
 const SETUP_DRAFT_STORAGE_KEY = "infiniteprofit.setupOperationDraft";
+const CHECKOUT_CHOICES: SetupCheckoutChoice[] = [
+  "hotmart",
+  "hubla_history",
+  "gateway",
+];
 
 type SourceSetupStatus = "not_started" | "prepared" | "configured" | "skipped" | "error";
 type SourceChoice =
@@ -146,6 +152,9 @@ export default function SetupOperation() {
   const [hydratedDraftKey, setHydratedDraftKey] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [skippedSources, setSkippedSources] = useState<SetupSource[]>([]);
+  const [skippedCheckoutChoices, setSkippedCheckoutChoices] = useState<
+    SetupCheckoutChoice[]
+  >([]);
   const [existingMetaAccounts, setExistingMetaAccounts] = useState<WorkspaceMetaAccount[]>([]);
   const [selectedExistingMetaIds, setSelectedExistingMetaIds] = useState<string[]>([]);
   const [metaToken, setMetaToken] = useState("");
@@ -275,7 +284,7 @@ export default function SetupOperation() {
     setHublaSecret("");
     setHublaHistory(null);
     setHotmartHistory(null);
-    resumeSource("gateway");
+    resumeCheckoutChoice("hotmart");
     setHotmartWorking(true);
     setHotmartWorkingStage("authorizing");
     setHotmartError(null);
@@ -458,16 +467,18 @@ export default function SetupOperation() {
   const hasHotmartFront =
     hotmartProducts.filter((item) => item.role === "front").length === 1;
   const hotmartStatus: SourceSetupStatus =
-    selectedHotmartIntegration?.status === "requires_action"
-    || selectedHotmartIntegration?.status === "disconnected"
-      ? "error"
-      : selectedHotmartIntegration?.status === "connected"
-        && selectedHotmartIntegration.has_webhook_secret
-        && hasHotmartFront
-        ? "configured"
+    skippedCheckoutChoices.includes("hotmart")
+      ? "skipped"
+      : selectedHotmartIntegration?.status === "requires_action"
+      || selectedHotmartIntegration?.status === "disconnected"
+        ? "error"
         : selectedHotmartIntegration?.status === "connected"
-          ? "prepared"
-          : "not_started";
+          && selectedHotmartIntegration.has_webhook_secret
+          && hasHotmartFront
+          ? "configured"
+          : selectedHotmartIntegration?.status === "connected"
+            ? "prepared"
+            : "not_started";
   const metaStatus: SourceSetupStatus = skippedSources.includes("meta")
     ? "skipped"
     : hasMetaTestError || metaDiscoveryIsStale
@@ -482,13 +493,21 @@ export default function SetupOperation() {
       : vturbKey.trim() && playerIds.length > 0
         ? "configured"
         : "not_started";
-  const hublaGatewayStatus: SourceSetupStatus = skippedSources.includes("gateway")
-    ? "skipped"
-    : hublaSecret.trim()
-      ? "configured"
+  const hublaHistoryStatus: SourceSetupStatus =
+    skippedCheckoutChoices.includes("hubla_history")
+      ? "skipped"
       : hublaHistory
         ? "prepared"
         : "not_started";
+  const hublaGatewayStatus: SourceSetupStatus =
+    skippedCheckoutChoices.includes("gateway")
+      ? "skipped"
+      : hublaSecret.trim()
+        ? "configured"
+        : "not_started";
+  const allCheckoutChoicesSkipped = CHECKOUT_CHOICES.every((choice) =>
+    skippedCheckoutChoices.includes(choice)
+  );
   const gatewayStatus: SourceSetupStatus =
     hotmartStatus === "configured"
       ? "configured"
@@ -496,7 +515,13 @@ export default function SetupOperation() {
         ? "error"
         : hotmartStatus === "prepared"
           ? "prepared"
-          : hublaGatewayStatus;
+          : hublaGatewayStatus === "configured"
+            ? "configured"
+            : hublaHistoryStatus === "prepared"
+              ? "prepared"
+              : allCheckoutChoicesSkipped
+                ? "skipped"
+                : "not_started";
   const sourceStatuses: Record<SetupSource, SourceSetupStatus> = {
     meta: metaStatus,
     vturb: vturbStatus,
@@ -532,9 +557,20 @@ export default function SetupOperation() {
       setVturbKey("");
       setPlayersText("");
       setVturbTestResult(null);
-    } else {
-      setHublaSecret("");
-      setHublaHistory(null);
+    }
+  }
+
+  function resumeCheckoutChoice(choice: SetupCheckoutChoice) {
+    setSkippedCheckoutChoices((current) =>
+      current.filter((item) => item !== choice)
+    );
+  }
+
+  function skipCheckoutChoice(choice: SetupCheckoutChoice) {
+    setSkippedCheckoutChoices((current) => [
+      ...new Set([...current, choice]),
+    ]);
+    if (choice === "hotmart") {
       setHotmartIntegrationId("");
       setHotmartProducts([]);
       setHotmartClientId("");
@@ -542,6 +578,11 @@ export default function SetupOperation() {
       setHotmartBasicToken("");
       setShowHotmartCredentials(false);
       setHotmartHottok("");
+      setHotmartHistory(null);
+    } else if (choice === "hubla_history") {
+      setHublaHistory(null);
+    } else {
+      setHublaSecret("");
     }
   }
 
@@ -552,8 +593,18 @@ export default function SetupOperation() {
       return;
     }
     (Object.entries(sourceStatuses) as Array<[SetupSource, SourceSetupStatus]>)
+      .filter(([source]) => source !== "gateway")
       .filter(([, status]) => status !== "prepared" && status !== "configured")
       .forEach(([source]) => skipSource(source));
+    (
+      [
+        ["hotmart", hotmartStatus],
+        ["hubla_history", hublaHistoryStatus],
+        ["gateway", hublaGatewayStatus],
+      ] as Array<[SetupCheckoutChoice, SourceSetupStatus]>
+    )
+      .filter(([, status]) => status !== "prepared" && status !== "configured")
+      .forEach(([choice]) => skipCheckoutChoice(choice));
     setActiveSourceChoice(null);
     setStep("revisao");
   }
@@ -710,7 +761,10 @@ export default function SetupOperation() {
     setHotmartClientSecret("");
     setHotmartBasicToken("");
     setShowHotmartCredentials(false);
-    setSkippedSources(draft.skippedSources);
+    setSkippedSources(
+      draft.skippedSources.filter((source) => source !== "gateway"),
+    );
+    setSkippedCheckoutChoices(draft.skippedCheckoutChoices);
     setMetaTestResults({});
     setVturbTestResult(null);
     setHydratedDraftKey(draftStorageKey);
@@ -725,7 +779,11 @@ export default function SetupOperation() {
       name,
       selectedExistingMetaIds,
       playersText,
-      skippedSources,
+      skippedSources: [
+        ...skippedSources.filter((source) => source !== "gateway"),
+        ...(allCheckoutChoicesSkipped ? ["gateway" as const] : []),
+      ],
+      skippedCheckoutChoices,
     };
 
     if (isSetupDraftEmpty(draft)) {
@@ -735,11 +793,13 @@ export default function SetupOperation() {
 
     sessionStorage.setItem(draftStorageKey, JSON.stringify(draft));
   }, [
+    allCheckoutChoicesSkipped,
     draftStorageKey,
     hydratedDraftKey,
     name,
     playersText,
     selectedExistingMetaIds,
+    skippedCheckoutChoices,
     skippedSources,
     step,
   ]);
@@ -759,6 +819,13 @@ export default function SetupOperation() {
 
     let createdProjectId: string | null = null;
     const configuredSources: ActivationSource[] = [];
+    const activationSkippedSources = (
+      Object.entries(sourceStatuses) as Array<
+        [ActivationSource, SourceSetupStatus]
+      >
+    )
+      .filter(([, status]) => status === "skipped")
+      .map(([source]) => source);
     setSaving(true);
     setSavingLabel("Criando a estrutura do funil");
     try {
@@ -1022,7 +1089,7 @@ export default function SetupOperation() {
         projectId: project.id,
         workspaceId: client.id,
         configuredSources,
-        skippedSources,
+        skippedSources: activationSkippedSources,
         syncSources,
         syncState: syncSources.length > 0 ? "pending" : "complete",
         createdAt: new Date().toISOString(),
@@ -1040,7 +1107,7 @@ export default function SetupOperation() {
           projectId: createdProjectId,
           workspaceId: client.id,
           configuredSources,
-          skippedSources,
+          skippedSources: activationSkippedSources,
           syncSources,
           syncState: syncSources.length > 0 ? "pending" : "error",
           createdAt: new Date().toISOString(),
@@ -1161,10 +1228,10 @@ export default function SetupOperation() {
           <ProgressiveSourceChooser
             metaStatus={metaStatus}
             vturbStatus={vturbStatus}
-            gatewayStatus={gatewayStatus}
+            gatewayStatus={hublaGatewayStatus}
             hotmartStatus={hotmartStatus}
             hotmartEnabled={hotmartEnabled}
-            hasHublaHistory={Boolean(hublaHistory)}
+            hublaHistoryStatus={hublaHistoryStatus}
             onSelect={setActiveSourceChoice}
             onBack={() => setStep("nome")}
             onContinue={continueWithSelectedSources}
@@ -1476,10 +1543,10 @@ export default function SetupOperation() {
             <SourceSetupHeader
               status={hotmartStatus}
               onSkip={() => {
-                skipSource("gateway");
+                skipCheckoutChoice("hotmart");
                 setActiveSourceChoice(null);
               }}
-              onResume={() => resumeSource("gateway")}
+              onResume={() => resumeCheckoutChoice("hotmart")}
             />
 
             <div className="rounded-xl border border-primary/20 bg-primary/[0.03] p-4">
@@ -1568,7 +1635,7 @@ export default function SetupOperation() {
                 <Select
                   value={hotmartIntegrationId}
                   onValueChange={(value) => {
-                    resumeSource("gateway");
+                    resumeCheckoutChoice("hotmart");
                     setHublaSecret("");
                     setHublaHistory(null);
                     setHotmartHistory(null);
@@ -1711,7 +1778,7 @@ export default function SetupOperation() {
                       autoComplete="off"
                       value={hotmartHottok}
                       onChange={(event) => {
-                        resumeSource("gateway");
+                        resumeCheckoutChoice("hotmart");
                         setHublaSecret("");
                         setHublaHistory(null);
                         setHotmartHottok(event.target.value);
@@ -1740,7 +1807,7 @@ export default function SetupOperation() {
                     value={hotmartProducts}
                     disabled={hotmartWorking}
                     onChange={(value) => {
-                      resumeSource("gateway");
+                      resumeCheckoutChoice("hotmart");
                       setHublaSecret("");
                       setHublaHistory(null);
                       setHotmartProducts(value);
@@ -1786,7 +1853,7 @@ export default function SetupOperation() {
                 variant="ghost"
                 className="min-h-11"
                 onClick={() => {
-                  skipSource("gateway");
+                  skipCheckoutChoice("hotmart");
                   setActiveSourceChoice(null);
                 }}
               >
@@ -1808,19 +1875,19 @@ export default function SetupOperation() {
         {step === "fontes" && activeSourceChoice === "gateway" && (
           <StepSection title="Gateway de pagamento">
             <SourceSetupHeader
-              status={gatewayStatus}
+              status={hublaGatewayStatus}
               onSkip={() => {
-                skipSource("gateway");
+                skipCheckoutChoice("gateway");
                 setActiveSourceChoice(null);
               }}
-              onResume={() => resumeSource("gateway")}
+              onResume={() => resumeCheckoutChoice("gateway")}
             />
             <Field label="Token/secret do webhook" htmlFor="gateway-secret">
               <Input
                 id="gateway-secret"
                 value={hublaSecret}
                 onChange={(event) => {
-                  resumeSource("gateway");
+                  resumeCheckoutChoice("gateway");
                   setHotmartIntegrationId("");
                   setHotmartProducts([]);
                   setHublaSecret(event.target.value);
@@ -1858,7 +1925,7 @@ export default function SetupOperation() {
                     setHotmartProducts([]);
                   }
                   setHublaHistory(next);
-                  if (next) resumeSource("gateway");
+                  if (next) resumeCheckoutChoice("hubla_history");
                 }}
                 disabled={saving}
                 compact
@@ -1873,7 +1940,7 @@ export default function SetupOperation() {
                 variant="ghost"
                 className="min-h-11"
                 onClick={() => {
-                  if (!hublaSecret.trim()) skipSource("gateway");
+                  skipCheckoutChoice("hubla_history");
                   setActiveSourceChoice(null);
                 }}
               >
@@ -2079,7 +2146,7 @@ function ProgressiveSourceChooser({
   gatewayStatus,
   hotmartStatus,
   hotmartEnabled,
-  hasHublaHistory,
+  hublaHistoryStatus,
   onSelect,
   onBack,
   onContinue,
@@ -2089,7 +2156,7 @@ function ProgressiveSourceChooser({
   gatewayStatus: SourceSetupStatus;
   hotmartStatus: SourceSetupStatus;
   hotmartEnabled: boolean;
-  hasHublaHistory: boolean;
+  hublaHistoryStatus: SourceSetupStatus;
   onSelect: (source: SourceChoice) => void;
   onBack: () => void;
   onContinue: () => void;
@@ -2120,7 +2187,7 @@ function ProgressiveSourceChooser({
       title: "Histórico Hubla",
       description: "Importe vendas passadas e abra o primeiro dashboard sem esperar novos eventos.",
       icon: FileUp,
-      status: hasHublaHistory ? "prepared" : gatewayStatus === "skipped" ? "skipped" : "not_started",
+      status: hublaHistoryStatus,
       recommended: true,
       order: hotmartEnabled ? "2" : "1",
     },
@@ -2411,13 +2478,26 @@ function readSetupDraft(storageKey: string) {
 
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const skippedSources = readStringArray(parsed.skippedSources).filter(
+      isSetupSource,
+    );
+    const hasExplicitCheckoutChoices = Array.isArray(
+      parsed.skippedCheckoutChoices,
+    );
     return {
       version: 2,
       step: readStepId(parsed.step),
       name: typeof parsed.name === "string" ? parsed.name : "",
       selectedExistingMetaIds: readStringArray(parsed.selectedExistingMetaIds),
       playersText: typeof parsed.playersText === "string" ? parsed.playersText : "",
-      skippedSources: readStringArray(parsed.skippedSources).filter(isSetupSource),
+      skippedSources,
+      skippedCheckoutChoices: hasExplicitCheckoutChoices
+        ? readStringArray(parsed.skippedCheckoutChoices).filter(
+            isSetupCheckoutChoice,
+          )
+        : skippedSources.includes("gateway")
+          ? [...CHECKOUT_CHOICES]
+          : [],
     } satisfies SetupDraftV2;
   } catch {
     sessionStorage.removeItem(storageKey);
@@ -2479,13 +2559,22 @@ function isSetupSource(value: string): value is SetupSource {
   return value === "meta" || value === "vturb" || value === "gateway";
 }
 
+function isSetupCheckoutChoice(value: string): value is SetupCheckoutChoice {
+  return (
+    value === "hotmart"
+    || value === "hubla_history"
+    || value === "gateway"
+  );
+}
+
 function isSetupDraftEmpty(draft: SetupDraftV2) {
   return (
     draft.step === "nome" &&
     !draft.name.trim() &&
     draft.selectedExistingMetaIds.length === 0 &&
     !draft.playersText.trim() &&
-    draft.skippedSources.length === 0
+    draft.skippedSources.length === 0 &&
+    draft.skippedCheckoutChoices.length === 0
   );
 }
 
@@ -2497,5 +2586,6 @@ function emptySetupDraft(): SetupDraftV2 {
     selectedExistingMetaIds: [],
     playersText: "",
     skippedSources: [],
+    skippedCheckoutChoices: [],
   };
 }
