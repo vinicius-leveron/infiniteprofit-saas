@@ -55,7 +55,17 @@ export const FunnelPanel = ({ rows }: Props) => {
     return { views, plays, pitch, checkouts, vendas };
   }, [effectiveRows]);
 
-  const fmax = Math.max(funnel.views, 1);
+  // Some providers can report downstream signals before page views arrive.
+  // Size the visual bars from the largest available stage so incomplete
+  // tracking never creates widths above 100%.
+  const fmax = Math.max(
+    funnel.views,
+    funnel.plays,
+    funnel.pitch,
+    funnel.checkouts,
+    funnel.vendas,
+    1,
+  );
 
   const stages: { label: string; value: number; tone: string; pctOfPrev?: number | null }[] = [
     { label: "Visualizações Únicas", value: funnel.views, tone: "kpi-cyan" },
@@ -103,24 +113,14 @@ export const FunnelPanel = ({ rows }: Props) => {
       >
         <div className="space-y-3">
           {stages.map((s, i) => {
-            const widthPct = Math.max((s.value / fmax) * 100, 6);
+            const widthPct =
+              s.value > 0
+                ? Math.min(100, Math.max((s.value / fmax) * 100, 6))
+                : 0;
             return (
-              <div key={s.label} className="flex items-center gap-4">
-                <div className="w-44 shrink-0 text-xs text-muted-foreground">{s.label}</div>
-                <div className="flex-1 h-10 bg-secondary/50 rounded-md overflow-hidden relative">
-                  <div
-                    className="h-full rounded-md flex items-center px-3 text-sm font-semibold tabular-nums transition-all"
-                    style={{
-                      width: `${widthPct}%`,
-                      background: `hsl(var(--${s.tone}) / 0.2)`,
-                      borderLeft: `3px solid hsl(var(--${s.tone}))`,
-                      color: `hsl(var(--${s.tone}))`,
-                    }}
-                  >
-                    {fNum(s.value)}
-                  </div>
-                </div>
-                <div className="w-20 shrink-0 text-right text-xs">
+              <div key={s.label} className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-2 sm:flex sm:items-center sm:gap-4">
+                <div className="min-w-0 text-xs text-muted-foreground sm:w-44 sm:shrink-0">{s.label}</div>
+                <div className="text-right text-xs sm:order-3 sm:w-20 sm:shrink-0">
                   {i === 0 ? (
                     <span className="text-muted-foreground">100%</span>
                   ) : s.pctOfPrev != null ? (
@@ -128,6 +128,19 @@ export const FunnelPanel = ({ rows }: Props) => {
                   ) : (
                     <span className="text-muted-foreground">—</span>
                   )}
+                </div>
+                <div className="col-span-2 h-10 min-w-0 overflow-hidden rounded-md bg-secondary/50 sm:col-span-1 sm:flex-1">
+                  <div
+                    className="flex h-full items-center rounded-md px-3 text-sm font-semibold tabular-nums text-foreground transition-all"
+                    aria-label={`${s.label}: ${fNum(s.value)}`}
+                    style={{
+                      width: `${widthPct}%`,
+                      background: `hsl(var(--${s.tone}) / 0.2)`,
+                      borderLeft: `3px solid hsl(var(--${s.tone}))`,
+                    }}
+                  >
+                    {fNum(s.value)}
+                  </div>
                 </div>
               </div>
             );

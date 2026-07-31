@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useId, useMemo, useState, useCallback } from "react";
 import {
   RotateCcw, ArrowRight, TrendingUp, TrendingDown,
   Save, History, Trash2, Loader2, Play,
@@ -521,15 +521,32 @@ export const SimulatorPanel = ({ rows }: Props) => {
             subtitle="Base real usada no lado esquerdo do comparativo"
             right={
               <div className="flex items-center gap-1.5">
-                <Button variant="ghost" size="sm" onClick={openHistory} className="gap-1.5 h-8">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={openHistory}
+                  aria-label="Abrir histórico de simulações"
+                  className="gap-1.5 h-8"
+                >
                   <History className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Historico</span>
+                  <span className="hidden sm:inline">Histórico</span>
                 </Button>
-                <Button variant="ghost" size="sm" onClick={reset} className="gap-1.5 h-8">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={reset}
+                  aria-label="Resetar simulação"
+                  className="gap-1.5 h-8"
+                >
                   <RotateCcw className="w-3.5 h-3.5" />
                   <span className="hidden sm:inline">Resetar</span>
                 </Button>
-                <Button size="sm" onClick={() => setSaveOpen(true)} className="gap-1.5 h-8">
+                <Button
+                  size="sm"
+                  onClick={() => setSaveOpen(true)}
+                  aria-label="Salvar simulação"
+                  className="gap-1.5 h-8"
+                >
                   <Save className="w-3.5 h-3.5" />
                   <span className="hidden sm:inline">Salvar</span>
                 </Button>
@@ -919,26 +936,31 @@ const NumberField = ({
   onChange: (v: number) => void;
   prefix?: string;
   step?: number;
-}) => (
-  <div className="space-y-1">
-    <label className="text-[11px] font-medium text-muted-foreground">{label}</label>
-    <div className="relative">
-      {prefix && (
-        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
-          {prefix}
-        </span>
-      )}
-      <Input
-        type="number"
-        value={Number.isFinite(value) ? value : 0}
-        step={step}
-        min={0}
-        onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
-        className={cn("h-9 text-sm tabular-nums", prefix && "pl-9")}
-      />
+}) => {
+  const inputId = useId();
+
+  return (
+    <div className="space-y-1">
+      <label htmlFor={inputId} className="text-[11px] font-medium text-muted-foreground">{label}</label>
+      <div className="relative">
+        {prefix && (
+          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+            {prefix}
+          </span>
+        )}
+        <Input
+          id={inputId}
+          type="number"
+          value={Number.isFinite(value) ? value : 0}
+          step={step}
+          min={0}
+          onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+          className={cn("h-9 text-sm tabular-nums", prefix && "pl-9")}
+        />
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 const SliderField = ({
   label, value, onChange, min, max, step, suffix, variant = "default",
@@ -965,6 +987,7 @@ const SliderField = ({
       min={min}
       max={max}
       step={step}
+      thumbAriaLabel={label}
       onValueChange={(arr) => onChange(arr[0])}
       className={variant === "muted" ? "[&_[role=slider]]:border-kpi-green [&_.bg-primary]:bg-kpi-green" : ""}
     />

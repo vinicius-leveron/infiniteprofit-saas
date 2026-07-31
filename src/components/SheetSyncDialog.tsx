@@ -410,7 +410,7 @@ function doGet(e) {
           )}
           {validation.kind === "ok" && (
             <div className="space-y-2 rounded-md border border-emerald-500/40 bg-emerald-500/10 p-3 text-xs">
-              <div className="flex items-center gap-2 font-semibold text-emerald-600 dark:text-emerald-400">
+              <div className="flex items-center gap-2 font-semibold text-emerald-300">
                 <CheckCircle2 className="w-4 h-4" />
                 {validation.message}
               </div>

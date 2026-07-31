@@ -37,6 +37,25 @@ test.describe("public and auth boundaries", () => {
     }
   });
 
+  test("unknown routes show a localized 404 without runtime errors", async ({
+    page,
+  }) => {
+    const runtimeErrors: string[] = [];
+    page.on("pageerror", (error) => runtimeErrors.push(error.message));
+    page.on("console", (message) => {
+      if (message.type() === "error") runtimeErrors.push(message.text());
+    });
+
+    await page.goto("/rota-que-nao-existe");
+    await expect(
+      page.getByRole("heading", { name: "Página não encontrada" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "Voltar para o início" }),
+    ).toBeVisible();
+    expect(runtimeErrors).toEqual([]);
+  });
+
   test("valid public share is read-only", async ({ page }) => {
     test.skip(!hasPublicShareEnv(), "Set E2E_PUBLIC_SHARE_TOKEN to run public share smoke test.");
 

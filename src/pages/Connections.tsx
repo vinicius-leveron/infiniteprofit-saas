@@ -838,7 +838,7 @@ export default function Connections({ mode = "sources" }: { mode?: ConnectionsMo
         <div className="rounded-xl border border-border/60 bg-card p-6">
           <h2 className="font-semibold">Acesso restrito</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Somente owners e admins do cliente podem gerenciar links públicos.
+            Somente administradores do cliente podem gerenciar links públicos.
           </p>
         </div>
       ) : (
@@ -873,7 +873,7 @@ function SourceSection({
           <div
             className={cn(
               "flex h-10 w-10 shrink-0 items-center justify-center rounded-lg",
-              connected ? "bg-green-500/10 text-green-700" : "bg-secondary text-muted-foreground",
+              connected ? "bg-green-500/10 text-green-300" : "bg-secondary text-muted-foreground",
             )}
           >
             {icon}
@@ -886,7 +886,7 @@ function SourceSection({
         <span
           className={cn(
             "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium",
-            connected ? "bg-green-500/10 text-green-700" : "bg-muted text-muted-foreground",
+            connected ? "bg-green-500/10 text-green-300" : "bg-muted text-muted-foreground",
           )}
         >
           {connected ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Circle className="h-3.5 w-3.5" />}
@@ -908,7 +908,7 @@ function HotmartWebhookGuide({
   if (!hasHottok) {
     return (
       <div className="mb-4 rounded-lg border border-amber-500/25 bg-amber-500/5 p-4">
-        <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+        <p className="text-sm font-semibold text-amber-200">
           Webhook ainda não pode receber eventos
         </p>
         <p className="mt-1 text-sm leading-5 text-muted-foreground">
@@ -944,7 +944,7 @@ function HotmartWebhookGuide({
         className={cn(
           "mt-4 flex min-h-11 items-center gap-3 rounded-lg border px-3 text-sm",
           lastEventAt
-            ? "border-green-500/25 bg-green-500/5 text-green-700"
+            ? "border-green-500/25 bg-green-500/5 text-green-300"
             : "border-blue-500/20 bg-blue-500/5 text-foreground",
         )}
         role="status"
@@ -972,7 +972,7 @@ function HotmartDataFlow({ hasHottok }: { hasHottok: boolean }) {
   return (
     <div className="grid gap-3 rounded-xl border border-blue-500/20 bg-blue-500/5 p-4 md:grid-cols-2">
       <div className="flex gap-3">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background text-blue-700">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background text-blue-300">
           <Database className="h-4 w-4" aria-hidden="true" />
         </span>
         <div>
@@ -983,7 +983,7 @@ function HotmartDataFlow({ hasHottok }: { hasHottok: boolean }) {
         </div>
       </div>
       <div className="flex gap-3">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background text-blue-700">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background text-blue-300">
           <Radio className="h-4 w-4" aria-hidden="true" />
         </span>
         <div>
@@ -1098,9 +1098,9 @@ function SharingList({
                 className={cn(
                   "w-fit rounded-full px-2.5 py-1 text-xs font-medium",
                   status === "Ativo"
-                    ? "bg-green-500/10 text-green-700"
+                    ? "bg-green-500/10 text-green-300"
                     : status === "Expirado"
-                      ? "bg-red-500/10 text-red-700"
+                      ? "bg-red-500/10 text-red-300"
                       : "bg-muted text-muted-foreground",
                 )}
               >

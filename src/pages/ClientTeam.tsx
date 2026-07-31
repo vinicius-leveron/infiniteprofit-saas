@@ -29,11 +29,6 @@ import type { WorkspaceRole } from "@/hooks/useWorkspace";
 import { runTeamAccess } from "@/lib/teamAccess";
 import { toast } from "sonner";
 
-interface DirectMember {
-  user_id: string;
-  role: WorkspaceRole;
-}
-
 interface DirectoryEntry {
   entry_id: string;
   entry_type: "member" | "invite";
@@ -70,15 +65,9 @@ export default function ClientTeam() {
     setErrorMessage(null);
     try {
       const [
-        { data: directRows, error: memberError },
         { data: inviteRows, error: inviteError },
         directoryResult,
       ] = await Promise.all([
-        supabase
-          .from("workspace_members")
-          .select("user_id, role")
-          .eq("workspace_id", clientId)
-          .order("created_at", { ascending: true }),
         supabase
           .from("workspace_invites")
           .select("id, email, role, token, expires_at, accepted_at, revoked_at, delivery_status, delivery_error, last_sent_at, send_count")
@@ -88,29 +77,24 @@ export default function ClientTeam() {
           _workspace_id: clientId,
         }),
       ]);
-      if (memberError) throw memberError;
       if (inviteError) throw inviteError;
+      if (directoryResult.error) {
+        throw new Error(
+          "Não foi possível carregar os nomes e emails da equipe. Tente novamente.",
+        );
+      }
 
-      const direct = (directRows ?? []) as DirectMember[];
-      const directory = directoryResult.error
-        ? []
-        : ((directoryResult.data ?? []) as DirectoryEntry[]);
+      const directory = (directoryResult.data ?? []) as DirectoryEntry[];
       const memberDirectory = directory.filter((entry) => entry.entry_type === "member");
       setMembers(
-        directoryResult.error
-          ? direct.map((member) => ({
-              userId: member.user_id,
-              role: member.role,
-              accessOrigin: "workspace",
-            }))
-          : memberDirectory.map((entry) => ({
-              userId: entry.entry_id,
-              role: entry.role,
-              accessOrigin: entry.access_origin,
-              email: entry.email,
-              fullName: entry.full_name,
-              inherited: entry.access_origin === "organization",
-            })),
+        memberDirectory.map((entry) => ({
+          userId: entry.entry_id,
+          role: entry.role,
+          accessOrigin: entry.access_origin,
+          email: entry.email,
+          fullName: entry.full_name,
+          inherited: entry.access_origin === "organization",
+        })),
       );
       setInvites((inviteRows ?? []) as AdminInvite[]);
     } catch (error) {

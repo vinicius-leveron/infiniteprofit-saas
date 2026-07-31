@@ -86,7 +86,7 @@ export function HotmartCredentialsFields({
         <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
       </a>
 
-      <div className="flex gap-2 rounded-lg border border-amber-500/25 bg-amber-500/5 p-3 text-xs leading-5 text-amber-900 dark:text-amber-200">
+      <div className="flex gap-2 rounded-lg border border-amber-500/25 bg-amber-500/5 p-3 text-xs leading-5 text-amber-200">
         <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
         <p>
           Use os três valores da mesma credencial de produção. Não use Hottok,

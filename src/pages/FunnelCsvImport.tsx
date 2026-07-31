@@ -86,7 +86,7 @@ export default function FunnelCsvImport() {
         <section className="section-card py-12 text-center" role="alert">
           <h1 className="text-xl font-semibold">Importação indisponível</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            Selecione um cliente em que você seja owner ou admin.
+            Selecione um cliente em que você seja administrador.
           </p>
           <Button className="mt-5" onClick={() => navigate("/clients")}>
             Ver clientes
@@ -134,7 +134,7 @@ export default function FunnelCsvImport() {
         ) : (
           <div className="mx-auto max-w-xl">
             <div className="flex items-start gap-4 rounded-xl border border-emerald-500/25 bg-emerald-500/5 p-4">
-              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-300">
                 <CheckCircle2 className="h-5 w-5" />
               </span>
               <div className="min-w-0">

@@ -416,7 +416,7 @@ function HierarchyView({
               <div className="ml-3 text-xs">
                 <span className="text-muted-foreground">{fBRL(campaign.spend)}</span>
                 <span className="mx-1">→</span>
-                <span className="font-medium text-emerald-600">{fBRL(campaign.gateway_revenue)}</span>
+                <span className="font-medium text-emerald-300">{fBRL(campaign.gateway_revenue)}</span>
                 <span className="ml-2 text-muted-foreground">Lucro {fBRL(campaign.profit)}</span>
                 <span className="ml-2 text-muted-foreground">CPA {fBRL(campaign.real_cpa)}</span>
               </div>
@@ -469,7 +469,7 @@ function HierarchyView({
                       <div className="ml-2 text-xs">
                         <span className="text-muted-foreground">{fBRL(adset.spend)}</span>
                         <span className="mx-1">→</span>
-                        <span className="font-medium text-emerald-600">{fBRL(adset.gateway_revenue)}</span>
+                        <span className="font-medium text-emerald-300">{fBRL(adset.gateway_revenue)}</span>
                         <span className="ml-2 text-muted-foreground">Lucro {fBRL(adset.profit)}</span>
                         <span className="ml-2 text-muted-foreground">CPA {fBRL(adset.real_cpa)}</span>
                       </div>
@@ -513,7 +513,7 @@ function HierarchyView({
                             <div className="ml-2 text-xs">
                               <span className="text-muted-foreground">{fBRL(ad.spend)}</span>
                               <span className="mx-1">→</span>
-                              <span className="font-medium text-emerald-600">{fBRL(ad.gateway_revenue)}</span>
+                              <span className="font-medium text-emerald-300">{fBRL(ad.gateway_revenue)}</span>
                               {ad.real_cpa && (
                                 <span className="ml-2 text-muted-foreground">CPA {fBRL(ad.real_cpa)}</span>
                               )}
@@ -623,7 +623,7 @@ function FunnelStep({
       className={cn(
         "text-center rounded",
         size === "sm" ? "px-1 py-0.5" : "px-1.5 py-0.5",
-        highlight && "bg-emerald-500/10 text-emerald-600"
+        highlight && "bg-emerald-500/10 text-emerald-300"
       )}
     >
       <div className={cn("font-semibold tabular-nums", size === "sm" ? "text-[10px]" : "text-xs")}>
@@ -642,7 +642,7 @@ function FunnelArrow({ rate }: { rate: number | null }) {
         <span
           className={cn(
             "text-[8px] tabular-nums",
-            rate >= 50 ? "text-emerald-600" : rate >= 20 ? "text-amber-600" : "text-muted-foreground"
+            rate >= 50 ? "text-emerald-300" : rate >= 20 ? "text-amber-300" : "text-muted-foreground"
           )}
         >
           {fPct(rate)}
@@ -682,8 +682,8 @@ function CorrelationBadge({
         className={cn(
           "inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-medium",
           size === "sm" ? "text-[9px]" : "text-[10px]",
-          isFull && "bg-emerald-500/10 text-emerald-600",
-          isPartial && "bg-amber-500/10 text-amber-600",
+          isFull && "bg-emerald-500/10 text-emerald-300",
+          isPartial && "bg-amber-500/10 text-amber-300",
           !isFull && !isPartial && "bg-muted text-muted-foreground"
         )}
       >
@@ -700,8 +700,8 @@ function CorrelationBadge({
       className={cn(
         "inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-medium",
         size === "sm" ? "text-[9px]" : "text-[10px]",
-        finalStatus === "full" && "bg-emerald-500/10 text-emerald-600",
-        finalStatus === "partial" && "bg-amber-500/10 text-amber-600",
+        finalStatus === "full" && "bg-emerald-500/10 text-emerald-300",
+        finalStatus === "partial" && "bg-amber-500/10 text-amber-300",
         finalStatus === "none" && "bg-muted text-muted-foreground"
       )}
     >
@@ -749,9 +749,9 @@ function RoasBadge({
       className={cn(
         "inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-medium tabular-nums",
         size === "sm" ? "text-[10px]" : "text-xs",
-        isGood && "bg-emerald-500/10 text-emerald-600",
+        isGood && "bg-emerald-500/10 text-emerald-300",
         isBad && "bg-red-500/10 text-red-500",
-        !isGood && !isBad && "bg-amber-500/10 text-amber-600"
+        !isGood && !isBad && "bg-amber-500/10 text-amber-300"
       )}
     >
       {isGood ? (

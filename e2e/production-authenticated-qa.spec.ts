@@ -58,6 +58,16 @@ test.describe("production authenticated QA", () => {
       await expect(page.getByRole("button", { name: "Convidar" })).toBeVisible();
       await expect(page.getByLabel(/token|secret|api key/i)).toHaveCount(0);
 
+      await page.goto(`/clients/${fixture!.workspaceId}/integrations`);
+      await expect(
+        page.getByRole("heading", { name: "Integrações" }),
+      ).toBeVisible();
+
+      await page.goto(`/clients/${fixture!.workspaceId}/settings`);
+      await expect(
+        page.getByRole("heading", { name: "Configurações" }),
+      ).toBeVisible();
+
       await page.goto("/organization/team");
       await expect(
         page.getByRole("heading", { name: "Equipe da organização" }),
@@ -66,6 +76,21 @@ test.describe("production authenticated QA", () => {
         page.getByRole("heading", { name: "Convidar pessoa" }),
       ).toBeVisible();
       await expect(page.getByRole("button", { name: "Convidar" })).toBeVisible();
+
+      await page.goto("/organization/settings");
+      await expect(
+        page.getByRole("heading", { name: "Configurações gerais" }),
+      ).toBeVisible();
+
+      await page.goto(`/funnels/${fixture!.projectId}/sources`);
+      await expect(
+        page.getByRole("heading", { name: "Fontes de dados" }),
+      ).toBeVisible();
+
+      await page.goto(`/funnels/${fixture!.projectId}/sharing`);
+      await expect(
+        page.getByRole("heading", { name: "Compartilhamento" }),
+      ).toBeVisible();
 
       await page.goto(`/funnels/${fixture!.projectId}/activation`);
       await expect(
@@ -144,6 +169,10 @@ test.describe("production authenticated QA", () => {
       await expect(page.getByText("Ações operacionais")).toHaveCount(0);
       await expect(page.getByText("Diagnóstico avançado")).toHaveCount(0);
       await expect(page.getByRole("button", { name: /Sincronizar/i })).toHaveCount(0);
+      await expect(
+        page.getByText("Peça a um administrador para revisar os detalhes operacionais."),
+      ).toBeVisible();
+      await expect(page.getByText(/moderador/i)).toHaveCount(0);
       expect(errors).toEqual([]);
       await page.context().clearCookies();
       await page.evaluate(() => localStorage.clear());
@@ -218,6 +247,122 @@ test.describe("production authenticated QA", () => {
       page.getByRole("button", { name: /Gateway.*Ainda não configurado/i }),
     ).toBeVisible();
     expect(errors).toEqual([]);
+  });
+
+  test("administrative surfaces remain responsive and accessible", async ({
+    browser,
+  }) => {
+    const surfaces = [
+      {
+        path: "/clients",
+        heading: "Clientes",
+      },
+      {
+        path: `/clients/${fixture!.workspaceId}/integrations`,
+        heading: "Integrações",
+      },
+      {
+        path: `/clients/${fixture!.workspaceId}/team`,
+        heading: "Equipe",
+      },
+      {
+        path: `/funnels/${fixture!.projectId}/sources`,
+        heading: "Fontes de dados",
+      },
+      {
+        path: `/funnels/${fixture!.projectId}/health`,
+        heading: /Saúde do funil/i,
+      },
+    ];
+
+    for (const viewport of [
+      { width: 390, height: 844 },
+      { width: 1440, height: 1000 },
+    ]) {
+      const context = await browser.newContext({ viewport });
+      const page = await context.newPage();
+      const errors = collectRuntimeErrors(page);
+      await loginAs(page, fixture!.roles.owner);
+
+      for (const surface of surfaces) {
+        await page.goto(surface.path);
+        await expect(
+          page.getByRole("heading", { name: surface.heading }).first(),
+        ).toBeVisible();
+        await expect(page.getByText("Carregando…")).toHaveCount(0);
+
+        const overflow = await page.evaluate(
+          () => document.documentElement.scrollWidth - window.innerWidth,
+        );
+        expect(overflow).toBeLessThanOrEqual(1);
+
+        const accessibility = await new AxeBuilder({ page })
+          .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+          .analyze();
+        expect(
+          accessibility.violations.filter(
+            (violation) =>
+              violation.impact === "serious" ||
+              violation.impact === "critical",
+          ),
+        ).toEqual([]);
+      }
+
+      expect(errors).toEqual([]);
+      await context.close();
+    }
+  });
+
+  test("all dashboard tabs remain responsive and accessible", async ({
+    browser,
+  }) => {
+    const tabs = [
+      "geral",
+      "trafego",
+      "funil",
+      "bumps",
+      "anuncios",
+      "diagnostico",
+      "simulador",
+    ];
+
+    for (const viewport of [
+      { width: 390, height: 844 },
+      { width: 1440, height: 1000 },
+    ]) {
+      const context = await browser.newContext({ viewport });
+      const page = await context.newPage();
+      const errors = collectRuntimeErrors(page);
+      await loginAs(page, fixture!.roles.owner);
+
+      for (const tab of tabs) {
+        await page.goto(
+          `/dashboard?project=${fixture!.projectId}&tab=${tab}`,
+        );
+        await expect(
+          page.locator('[aria-busy="true"]'),
+        ).toHaveCount(0, { timeout: 20_000 });
+
+        const overflow = await page.evaluate(
+          () => document.documentElement.scrollWidth - window.innerWidth,
+        );
+        expect(overflow).toBeLessThanOrEqual(1);
+
+        const accessibility = await new AxeBuilder({ page })
+          .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+          .analyze();
+        expect(
+          accessibility.violations.filter(
+            (violation) =>
+              violation.impact === "serious" ||
+              violation.impact === "critical",
+          ),
+        ).toEqual([]);
+      }
+
+      expect(errors).toEqual([]);
+      await context.close();
+    }
   });
 });
 

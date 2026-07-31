@@ -210,7 +210,7 @@ function ImportPreview({ result }: { result: HotmartImportResult }) {
     >
       <div className="flex items-start gap-3">
         {valid
-          ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green-700" />
+          ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green-300" />
           : <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />}
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium">

@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import { publicConfig } from "@/lib/publicConfig";
 
 export type ProductEventName =
   | "account_bootstrapped"
@@ -24,6 +25,8 @@ export function trackProductEvent({
   projectId,
   properties = {},
 }: ProductEventInput) {
+  if (!isCanonicalAppOrigin()) return;
+
   try {
     const request = supabase.functions.invoke("product-event", {
       body: {
@@ -39,5 +42,14 @@ export function trackProductEvent({
     });
   } catch {
     // Telemetria nunca bloqueia a jornada principal.
+  }
+}
+
+function isCanonicalAppOrigin() {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.location.origin === new URL(publicConfig.appUrl).origin;
+  } catch {
+    return false;
   }
 }

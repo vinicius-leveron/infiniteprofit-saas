@@ -49,7 +49,7 @@ export function HublaImportPicker({
     return (
       <div className="rounded-xl border border-green-500/30 bg-green-500/5 p-4" aria-live="polite">
         <div className="flex items-start gap-3">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-green-500/10 text-green-700">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-green-500/10 text-green-300">
             <CheckCircle2 className="h-5 w-5" />
           </span>
           <div className="min-w-0 flex-1">

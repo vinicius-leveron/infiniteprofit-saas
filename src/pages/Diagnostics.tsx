@@ -602,7 +602,7 @@ export default function Diagnostics() {
 
       {operationalAlerts.length === 0 && alerts.length === 0 && coverageIssues.length === 0 ? (
         <section className="section-card mb-6 border-green-500/30 p-4 md:p-6">
-          <div className="flex items-center gap-2 text-green-700">
+          <div className="flex items-center gap-2 text-green-300">
             <CheckCircle2 className="h-5 w-5" />
             <h2 className="font-semibold">Nenhuma ação necessária</h2>
           </div>
@@ -613,7 +613,7 @@ export default function Diagnostics() {
       ) : canSeeDetailedHealth ? (
         <section className="section-card mb-6 p-4 md:p-6">
           <div className="mb-4 flex items-center gap-2">
-            <AlertTriangle className="h-5 w-5 text-amber-600" />
+            <AlertTriangle className="h-5 w-5 text-amber-300" />
             <h2 className="text-lg font-semibold">Precisa de ação</h2>
           </div>
           <div className="grid gap-3 md:grid-cols-2">
@@ -633,8 +633,8 @@ export default function Diagnostics() {
                     className={cn(
                       "rounded-full px-2 py-1 text-[10px] font-semibold uppercase",
                       alert.severity === "critical"
-                        ? "bg-red-500/10 text-red-700"
-                        : "bg-amber-500/10 text-amber-700",
+                        ? "bg-red-500/10 text-red-300"
+                        : "bg-amber-500/10 text-amber-300",
                     )}
                   >
                     {alert.severity === "critical" ? "Crítico" : "Atenção"}
@@ -668,12 +668,12 @@ export default function Diagnostics() {
         </section>
       ) : (
         <section className="section-card mb-6 border-amber-500/30 p-4">
-          <div className="flex items-center gap-2 text-amber-700">
+          <div className="flex items-center gap-2 text-amber-300">
             <AlertTriangle className="h-5 w-5" />
             <h2 className="font-semibold">Este funil requer atenção</h2>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            Peça a um moderador ou administrador para revisar os detalhes operacionais.
+            Peça a um administrador para revisar os detalhes operacionais.
           </p>
         </section>
       )}
@@ -968,7 +968,7 @@ function SourceCard({
         <div className="flex items-center gap-3">
           <div className={cn(
             "flex h-10 w-10 shrink-0 items-center justify-center rounded-lg",
-            health.status === "healthy" ? "bg-green-500/10 text-green-700" : "bg-secondary text-muted-foreground",
+            health.status === "healthy" ? "bg-green-500/10 text-green-300" : "bg-secondary text-muted-foreground",
           )}>
             {icon}
           </div>
@@ -999,7 +999,7 @@ function SourceCard({
         {latestRun?.error_message && (
           <div>
             <dt className="text-muted-foreground">Erro</dt>
-            <dd className="mt-1 line-clamp-2 text-red-700">{latestRun.error_message}</dd>
+            <dd className="mt-1 line-clamp-2 text-red-300">{latestRun.error_message}</dd>
           </div>
         )}
       </dl>
@@ -1016,10 +1016,10 @@ function HealthStatusPill({ status }: { status: SourceHealthStatus }) {
       className={cn(
         "inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2 py-1 text-[10px] font-semibold",
         status === "not_configured" && "bg-muted text-muted-foreground",
-        status === "syncing" && "bg-blue-500/10 text-blue-700",
-        status === "healthy" && "bg-green-500/10 text-green-700",
-        status === "warning" && "bg-amber-500/10 text-amber-700",
-        status === "error" && "bg-red-500/10 text-red-700",
+        status === "syncing" && "bg-blue-500/10 text-blue-300",
+        status === "healthy" && "bg-green-500/10 text-green-300",
+        status === "warning" && "bg-amber-500/10 text-amber-300",
+        status === "error" && "bg-red-500/10 text-red-300",
       )}
     >
       {status === "healthy" ? (
@@ -1060,9 +1060,9 @@ function StatusPill({ status, reason }: { status: CoverageStatus; reason?: strin
     <span
       className={cn(
         "inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold",
-        status === "OK" && "bg-green-500/10 text-green-600",
-        status === "Parcial" && "bg-amber-500/10 text-amber-600",
-        status === "Faltando" && "bg-red-500/10 text-red-600",
+        status === "OK" && "bg-green-500/10 text-green-300",
+        status === "Parcial" && "bg-amber-500/10 text-amber-300",
+        status === "Faltando" && "bg-red-500/10 text-red-300",
         reason && "cursor-help",
       )}
     >
@@ -1115,10 +1115,10 @@ function JobStatusPill({ status }: { status: string }) {
     <span
       className={cn(
         "inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold",
-        status === "queued" && "bg-amber-500/10 text-amber-600",
+        status === "queued" && "bg-amber-500/10 text-amber-300",
         status === "running" && "bg-cyan-500/10 text-cyan-600",
-        status === "succeeded" && "bg-green-500/10 text-green-600",
-        status === "failed" && "bg-red-500/10 text-red-600",
+        status === "succeeded" && "bg-green-500/10 text-green-300",
+        status === "failed" && "bg-red-500/10 text-red-300",
         status === "dead_letter" && "bg-slate-500/10 text-slate-600",
       )}
     >

@@ -237,7 +237,7 @@ describe("SimulatorPanel", () => {
     fireEvent.change(numberInputs()[4], { target: { value: "777" } });
     fireEvent.change(numberInputs()[9], { target: { value: "888" } });
 
-    fireEvent.click(screen.getByRole("button", { name: /Historico/i }));
+    fireEvent.click(screen.getByRole("button", { name: /histórico/i }));
     fireEvent.click(await screen.findByRole("button", { name: /Carregar/i }));
 
     await waitFor(() => {

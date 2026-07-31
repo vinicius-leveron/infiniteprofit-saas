@@ -640,7 +640,7 @@ const Index = () => {
                   · Meta requer ação
                 </button>
               ) : metaIsSyncing ? (
-                <span className="ml-1.5 text-blue-600 dark:text-blue-300">
+                <span className="ml-1.5 text-blue-300">
                   · Meta sincronizando
                 </span>
               ) : lastSyncedAt && (

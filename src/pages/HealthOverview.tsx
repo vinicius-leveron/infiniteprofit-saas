@@ -473,10 +473,10 @@ export function HealthBadge({
     <span
       className={cn(
         "inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium",
-        status === "healthy" && "bg-green-500/10 text-green-700",
-        status === "syncing" && "bg-blue-500/10 text-blue-700",
-        status === "warning" && "bg-amber-500/10 text-amber-700",
-        status === "error" && "bg-red-500/10 text-red-700",
+        status === "healthy" && "bg-green-500/10 text-green-300",
+        status === "syncing" && "bg-blue-500/10 text-blue-300",
+        status === "warning" && "bg-amber-500/10 text-amber-300",
+        status === "error" && "bg-red-500/10 text-red-300",
         status === "not_configured" && "bg-muted text-muted-foreground",
       )}
     >

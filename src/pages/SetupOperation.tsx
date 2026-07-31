@@ -1197,7 +1197,7 @@ export default function SetupOperation() {
                 step === item.id
                   ? "border-primary bg-primary/10 text-primary"
                   : "border-border/60 text-muted-foreground hover:bg-muted/50",
-                stepCompletion[item.id] && step !== item.id && "text-green-600",
+                stepCompletion[item.id] && step !== item.id && "text-green-300",
               )}
             >
               {stepCompletion[item.id] && (
@@ -1304,7 +1304,7 @@ export default function SetupOperation() {
                             <div className="truncate text-sm font-medium">{account.label || account.account_id}</div>
                             <div className="break-all font-mono text-xs text-muted-foreground">{account.account_id}</div>
                             {testResult && (
-                              <div className={cn("mt-1 text-[11px]", testResult.ok ? "text-green-600" : "text-red-600")}>
+                              <div className={cn("mt-1 text-[11px]", testResult.ok ? "text-green-300" : "text-red-300")}>
                                 {testResult.ok ? `Conectada${testResult.name ? `: ${testResult.name}` : ""}` : testResult.error}
                               </div>
                             )}
@@ -1367,9 +1367,9 @@ export default function SetupOperation() {
                 </Button>
               </div>
 
-              {metaDiscoveryError && <p className="text-xs text-red-600">{metaDiscoveryError}</p>}
+              {metaDiscoveryError && <p className="text-xs text-red-300">{metaDiscoveryError}</p>}
               {metaDiscoveryIsStale && (
-                <p className="text-xs text-amber-600">
+                <p className="text-xs text-amber-300">
                   O token foi alterado. Suas contas continuam marcadas; busque novamente para validar o novo token.
                 </p>
               )}
@@ -1412,7 +1412,7 @@ export default function SetupOperation() {
                           <div className="break-all font-mono text-xs text-muted-foreground">{account.accountId}</div>
                           <div className={cn(
                             "mt-1 text-[11px]",
-                            metaDiscoveryIsStale ? "text-amber-600" : "text-green-600",
+                            metaDiscoveryIsStale ? "text-amber-300" : "text-green-300",
                           )}>
                             {metaDiscoveryIsStale ? "Aguardando validação do novo token" : "Acesso confirmado"}
                             {account.currency ? ` · ${account.currency}` : ""}
@@ -1481,7 +1481,7 @@ export default function SetupOperation() {
                 Detectar players
               </Button>
               {vturbTestResult && (
-                <span className={cn("text-xs", vturbTestResult.ok ? "text-green-600" : "text-red-600")}>
+                <span className={cn("text-xs", vturbTestResult.ok ? "text-green-300" : "text-red-300")}>
                   {vturbTestResult.ok ? `${vturbTestResult.players?.length ?? 0} player(s) encontrados` : vturbTestResult.error}
                 </span>
               )}
@@ -1749,8 +1749,8 @@ export default function SetupOperation() {
                       className={cn(
                         "flex h-9 w-9 items-center justify-center rounded-lg",
                         selectedHotmartIntegration.has_webhook_secret
-                          ? "bg-green-500/10 text-green-700"
-                          : "bg-amber-500/10 text-amber-700",
+                          ? "bg-green-500/10 text-green-300"
+                          : "bg-amber-500/10 text-amber-300",
                       )}
                     >
                       {selectedHotmartIntegration.has_webhook_secret ? (
@@ -2334,12 +2334,12 @@ function SourceStatus({ status }: { status: SourceSetupStatus }) {
     configured: {
       label: "Configurado",
       icon: CircleCheck,
-      className: "text-green-600",
+      className: "text-green-300",
     },
     prepared: {
       label: "Pronto para validar",
       icon: Clock3,
-      className: "text-blue-600",
+      className: "text-blue-300",
     },
     skipped: {
       label: "Adiado para depois",
@@ -2349,7 +2349,7 @@ function SourceStatus({ status }: { status: SourceSetupStatus }) {
     error: {
       label: "Precisa de atenção",
       icon: CircleAlert,
-      className: "text-red-600",
+      className: "text-red-300",
     },
   } satisfies Record<
     SourceSetupStatus,
@@ -2394,7 +2394,7 @@ function LoadingStage({
       )}
     >
       {done ? (
-        <Check className="h-4 w-4 text-green-600" />
+        <Check className="h-4 w-4 text-green-300" />
       ) : active ? (
         <Loader2 className="h-4 w-4 animate-spin text-primary motion-reduce:animate-none" />
       ) : (

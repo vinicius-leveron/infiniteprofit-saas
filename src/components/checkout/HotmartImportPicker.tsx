@@ -65,7 +65,7 @@ export function HotmartImportPicker({
         aria-live="polite"
       >
         <div className="flex items-start gap-3">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-green-500/10 text-green-700">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-green-500/10 text-green-300">
             <CheckCircle2 className="h-5 w-5" />
           </span>
           <div className="min-w-0 flex-1">
@@ -76,7 +76,7 @@ export function HotmartImportPicker({
                 : "CSV pronto para validação"}
             </p>
             {value.discardedColumns > 0 ? (
-              <p className="mt-2 flex items-center gap-1.5 text-xs text-green-800 dark:text-green-300">
+              <p className="mt-2 flex items-center gap-1.5 text-xs text-green-300">
                 <ShieldCheck className="h-3.5 w-3.5" />
                 {value.discardedColumns} coluna(s) com dados pessoais removida(s)
                 antes do envio.

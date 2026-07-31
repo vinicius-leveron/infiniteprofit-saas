@@ -299,7 +299,7 @@ export function CheckoutIntegrationsPanel({
         <CardHeader className="p-5 md:p-6">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div className="flex gap-3">
-              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-300">
                 <ShoppingBag className="h-5 w-5" aria-hidden="true" />
               </span>
               <div>

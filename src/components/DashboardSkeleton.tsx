@@ -1,33 +1,33 @@
 import { Skeleton } from "@/components/ui/skeleton";
 
 export const DashboardSkeleton = () => (
-  <main className="min-h-screen">
-    <div className="max-w-[1400px] mx-auto px-4 md:px-6 py-6 md:py-8 space-y-6 animate-fade-in">
+  <main className="min-h-screen" aria-busy="true" aria-label="Carregando dashboard">
+    <div className="mx-auto max-w-[1200px] space-y-6 px-4 py-6 animate-fade-in md:px-6 md:py-8 lg:px-8">
       {/* Header */}
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <Skeleton className="w-11 h-11 rounded-xl" />
-          <div className="space-y-2">
-            <Skeleton className="h-6 w-48" />
-            <Skeleton className="h-3 w-64" />
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-center gap-3">
+          <Skeleton className="h-11 w-11 shrink-0 rounded-xl" />
+          <div className="min-w-0 flex-1 space-y-2">
+            <Skeleton className="h-6 w-48 max-w-full" />
+            <Skeleton className="h-3 w-64 max-w-full" />
           </div>
         </div>
-        <div className="flex gap-2">
-          <Skeleton className="h-9 w-24" />
-          <Skeleton className="h-9 w-24" />
-          <Skeleton className="h-9 w-32" />
+        <div className="grid grid-cols-3 gap-2 sm:flex">
+          <Skeleton className="h-9 min-w-0 sm:w-24" />
+          <Skeleton className="h-9 min-w-0 sm:w-24" />
+          <Skeleton className="h-9 min-w-0 sm:w-32" />
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-2 border-b border-border/60 pb-2">
+      <div className="grid grid-cols-3 gap-2 border-b border-border/60 pb-2 sm:flex">
         {[...Array(5)].map((_, i) => (
-          <Skeleton key={i} className="h-8 w-28" />
+          <Skeleton key={i} className="h-8 min-w-0 sm:w-28" />
         ))}
       </div>
 
       {/* Period filter */}
-      <Skeleton className="h-10 w-80" />
+      <Skeleton className="h-10 w-80 max-w-full" />
 
       {/* Featured KPIs */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -60,7 +60,7 @@ export const DashboardSkeleton = () => (
 
       {/* Chart */}
       <div className="section-card space-y-4">
-        <Skeleton className="h-5 w-48" />
+        <Skeleton className="h-5 w-48 max-w-full" />
         <Skeleton className="h-72 w-full" />
       </div>
     </div>

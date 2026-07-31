@@ -719,6 +719,7 @@ export function AdsPanel({ projectId, dateRange, allowedAdIds = null, canManage 
               size="sm"
               onClick={syncCreatives}
               disabled={syncing}
+              aria-label={syncing ? "Sincronizando criativos" : "Sincronizar criativos"}
               className="gap-2 rounded-xl border-border/60 bg-muted/20 hover:bg-muted/40"
             >
               {syncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
@@ -874,6 +875,7 @@ export function AdsPanel({ projectId, dateRange, allowedAdIds = null, canManage 
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
                   placeholder="Buscar criativos..."
+                  aria-label="Buscar criativos"
                   className="pl-10 h-10 rounded-xl border-border/50 bg-background/60 placeholder:text-muted-foreground/60"
                 />
               </div>
@@ -1641,7 +1643,10 @@ function ToolbarSelect({
         {label}
       </div>
       <Select value={value} onValueChange={onValueChange}>
-        <SelectTrigger className="h-10 rounded-xl border-border/50 bg-background/60 text-sm">
+        <SelectTrigger
+          aria-label={`${label}: ${options.find((option) => option.value === value)?.label ?? value}`}
+          className="h-10 rounded-xl border-border/50 bg-background/60 text-sm"
+        >
           <SelectValue />
         </SelectTrigger>
         <SelectContent className="rounded-xl">
