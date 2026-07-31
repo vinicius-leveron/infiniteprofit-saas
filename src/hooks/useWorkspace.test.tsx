@@ -7,6 +7,10 @@ const mocks = vi.hoisted(() => ({
   workspaceMemberships: [] as unknown[],
   organizationMemberships: [] as unknown[],
   inheritedWorkspaces: [] as unknown[],
+  workspaceFailuresRemaining: 0,
+  organizationFailuresRemaining: 0,
+  workspaceAttempts: 0,
+  organizationAttempts: 0,
 }));
 
 vi.mock("./useAuth", () => ({
@@ -30,13 +34,30 @@ vi.mock("@/integrations/supabase/client", () => ({
         }
 
         return {
-          eq: vi.fn().mockImplementation(async () => ({
-            data:
-              table === "workspace_members"
-                ? mocks.workspaceMemberships
-                : mocks.organizationMemberships,
-            error: null,
-          })),
+          eq: vi.fn().mockImplementation(async () => {
+            if (table === "workspace_members") {
+              mocks.workspaceAttempts += 1;
+              if (mocks.workspaceFailuresRemaining > 0) {
+                mocks.workspaceFailuresRemaining -= 1;
+                return {
+                  data: null,
+                  error: { message: "TypeError: Failed to fetch" },
+                  status: 0,
+                };
+              }
+              return { data: mocks.workspaceMemberships, error: null, status: 200 };
+            }
+            mocks.organizationAttempts += 1;
+            if (mocks.organizationFailuresRemaining > 0) {
+              mocks.organizationFailuresRemaining -= 1;
+              return {
+                data: null,
+                error: { message: "TypeError: Failed to fetch" },
+                status: 0,
+              };
+            }
+            return { data: mocks.organizationMemberships, error: null, status: 200 };
+          }),
         };
       }),
     })),
@@ -64,6 +85,10 @@ describe("WorkspaceProvider", () => {
     mocks.workspaceMemberships = [];
     mocks.organizationMemberships = [];
     mocks.inheritedWorkspaces = [];
+    mocks.workspaceFailuresRemaining = 0;
+    mocks.organizationFailuresRemaining = 0;
+    mocks.workspaceAttempts = 0;
+    mocks.organizationAttempts = 0;
   });
 
   it("inherits every client from an organization and resolves the strongest role", async () => {
@@ -109,6 +134,34 @@ describe("WorkspaceProvider", () => {
         accessOrigin: "organization",
       }),
     ]);
+  });
+
+  it("recovers a transient access fetch without exposing a false access error", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.workspaceFailuresRemaining = 1;
+    mocks.workspaceMemberships = [
+      {
+        role: "member",
+        workspaces: {
+          id: "client-1",
+          name: "Cliente Um",
+          organization_id: "org-1",
+          organizations: { name: "Agência Atlas" },
+        },
+      },
+    ];
+
+    render(
+      <WorkspaceProvider>
+        <Probe />
+      </WorkspaceProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("onboarding")).toHaveTextContent("false"));
+    expect(mocks.workspaceAttempts).toBe(2);
+    expect(mocks.organizationAttempts).toBe(1);
+    expect(consoleError).not.toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 
   it("normalizes a legacy workspace owner to operational Admin", async () => {

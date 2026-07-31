@@ -85,6 +85,40 @@ const ROLE_WEIGHT: Record<EffectiveWorkspaceRole, number> = {
   admin: 3,
   member: 1,
 };
+const ACCESS_RETRY_DELAYS_MS = [250, 750];
+
+type AccessQueryResult = {
+  error: {
+    message?: string;
+    code?: string;
+  } | null;
+  status?: number;
+};
+
+async function withTransientAccessRetry<T extends AccessQueryResult>(
+  operation: () => PromiseLike<T>,
+) {
+  let result = await operation();
+  for (const delayMs of ACCESS_RETRY_DELAYS_MS) {
+    if (!isTransientAccessFailure(result)) return result;
+    await wait(delayMs);
+    result = await operation();
+  }
+  return result;
+}
+
+function isTransientAccessFailure(result: AccessQueryResult) {
+  if (!result.error) return false;
+  if (result.status && result.status >= 500) return true;
+  const value = `${result.error.code ?? ""} ${result.error.message ?? ""}`.toLowerCase();
+  return /failed to fetch|fetch failed|network|timeout|timed out|connection|502|503|504/.test(
+    value,
+  );
+}
+
+function wait(milliseconds: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
+}
 
 function resolveWorkspaceAccess(
   directRole: WorkspaceRole | null,
@@ -154,14 +188,18 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
     const [{ data: workspaceRows, error: workspaceError }, { data: orgRows, error: orgError }] =
       await Promise.all([
-        supabase
-          .from("workspace_members")
-          .select("role, workspaces(id, name, organization_id, organizations(name))")
-          .eq("user_id", userId),
-        supabase
-          .from("organization_members")
-          .select("role, organizations(id, name)")
-          .eq("user_id", userId),
+        withTransientAccessRetry(() =>
+          supabase
+            .from("workspace_members")
+            .select("role, workspaces(id, name, organization_id, organizations(name))")
+            .eq("user_id", userId)
+        ),
+        withTransientAccessRetry(() =>
+          supabase
+            .from("organization_members")
+            .select("role, organizations(id, name)")
+            .eq("user_id", userId)
+        ),
       ]);
 
     let mappedOrganizations: OrganizationAccess[] = [];
@@ -229,13 +267,15 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         organization.role !== null,
     );
     if (administeredOrganizations.length > 0) {
-      const { data, error: inheritedError } = await supabase
-        .from("workspaces")
-        .select("id, name, organization_id")
-        .in(
-          "organization_id",
-          administeredOrganizations.map((organization) => organization.id),
-        );
+      const { data, error: inheritedError } = await withTransientAccessRetry(() =>
+        supabase
+          .from("workspaces")
+          .select("id, name, organization_id")
+          .in(
+            "organization_id",
+            administeredOrganizations.map((organization) => organization.id),
+          )
+      );
 
       if (inheritedError) {
         console.error("inherited workspace access load failed", inheritedError);
