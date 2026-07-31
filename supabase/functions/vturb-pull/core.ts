@@ -293,6 +293,17 @@ export function hasCompleteUsableVturbSessionStats(
   return expectedDays.every((day) => usableDays.has(day));
 }
 
+export function isVturbDayWithinRequestedRange(
+  value: unknown,
+  startDay: string,
+  endDay: string,
+) {
+  const day = String(value ?? "").slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(day)
+    && day >= startDay
+    && day <= endDay;
+}
+
 export function summarizeVturbPlayerResults(results: Array<Record<string, unknown>>) {
   const failed = results.filter((result) => result.error);
   const hasSuccessfulPlayer = results.some((result) => !result.error);

@@ -6,6 +6,7 @@ import {
   filterSchedulableVturbProjects,
   hasCompleteUsableVturbSessionStats,
   hasFreshVturbMetadata,
+  isVturbDayWithinRequestedRange,
   normalizeVturbTrafficOriginRows,
   orderVturbPlayersForSync,
   parseVturbBatchOptions,
@@ -464,7 +465,7 @@ async function pullOnePlayer(
 
   for (const dayEntry of sessionStatsByDay) {
     const day = String(dayEntry?.date_key ?? dayEntry?.day ?? "").slice(0, 10);
-    if (!day) continue;
+    if (!isVturbDayWithinRequestedRange(day, startDay, endDay)) continue;
 
     const { error } = await sb.from("raw_events").upsert(
       {
@@ -490,7 +491,7 @@ async function pullOnePlayer(
   const eventsByDay = (statsResult.data as any)?.events_by_day ?? [];
   for (const dayEntry of eventsByDay) {
     const day = String(dayEntry?.day ?? "").slice(0, 10);
-    if (!day) continue;
+    if (!isVturbDayWithinRequestedRange(day, startDay, endDay)) continue;
 
     const { error } = await sb.from("raw_events").upsert(
       {
@@ -514,6 +515,10 @@ async function pullOnePlayer(
   }
 
   for (const trafficEntry of normalizeVturbTrafficOriginRows(trafficResult.data, playerId)) {
+    if (!isVturbDayWithinRequestedRange(trafficEntry.eventDate, startDay, endDay)) {
+      continue;
+    }
+
     const { error } = await sb.from("raw_events").upsert(
       {
         project_id: project.id,

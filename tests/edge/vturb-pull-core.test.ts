@@ -5,6 +5,7 @@ import {
   hasFreshVturbMetadata,
   hasUsableVturbSessionStats,
   hasUsableVturbSessionStatsPayload,
+  isVturbDayWithinRequestedRange,
   normalizeVturbTrafficOriginRows,
   orderVturbPlayersForSync,
   parseVturbBatchOptions,
@@ -176,6 +177,24 @@ describe("vturb pull batching", () => {
       { date_key: "2026-06-28", total_viewed_session_uniq: 10 },
       { date_key: "2026-06-29", total_started_session_uniq: "7" },
     ], "2026-06-28", "2026-06-29")).toBe(true);
+  });
+
+  it("rejects provider rows outside the requested local date range", () => {
+    expect(isVturbDayWithinRequestedRange(
+      "2026-07-31",
+      "2026-07-29",
+      "2026-07-31",
+    )).toBe(true);
+    expect(isVturbDayWithinRequestedRange(
+      "2026-08-01",
+      "2026-07-29",
+      "2026-07-31",
+    )).toBe(false);
+    expect(isVturbDayWithinRequestedRange(
+      "invalid",
+      "2026-07-29",
+      "2026-07-31",
+    )).toBe(false);
   });
 
   it("normalizes traffic origin rows into UTM-attributed raw events", () => {
