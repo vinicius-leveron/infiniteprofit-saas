@@ -79,21 +79,21 @@ describe("dashboardRows", () => {
   });
 
   it("uses calendar boundaries for this month and last month", () => {
-    const now = new Date();
-    const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-31T02:30:00.000Z"));
     const rows = [
-      row(localKey(lastMonthStart), { investimento: 1 }),
-      row(localKey(lastMonthEnd), { investimento: 1 }),
-      row(localKey(thisMonthStart), { investimento: 1 }),
-      row(localKey(now), { investimento: 1 }),
+      row("2026-06-01", { investimento: 1 }),
+      row("2026-06-30", { investimento: 1 }),
+      row("2026-07-01", { investimento: 1 }),
+      row("2026-07-30", { investimento: 1 }),
+      row("2026-07-31", { investimento: 1 }),
     ];
 
-    expect(getDashboardPeriodRows(rows, "this_month").current).toHaveLength(2);
+    expect(getDashboardPeriodRows(rows, "this_month").current.map((item) => item.data))
+      .toEqual(["01/07/2026", "30/07/2026"]);
     expect(getDashboardSelectedDateRange(rows, "last_month")).toEqual({
-      from: localKey(lastMonthStart),
-      to: localKey(lastMonthEnd),
+      from: "2026-06-01",
+      to: "2026-06-30",
     });
   });
 
@@ -148,8 +148,3 @@ describe("dashboardRows", () => {
     expect(selectedRange).toEqual({ from: "2026-07-01", to: "2026-07-05" });
   });
 });
-
-function localKey(date: Date) {
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
