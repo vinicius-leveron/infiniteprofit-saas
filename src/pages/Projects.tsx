@@ -4,6 +4,7 @@ import { format, formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
   BarChart3,
+  ArrowLeft,
   Calendar,
   FileSpreadsheet,
   FileUp,
@@ -31,6 +32,7 @@ import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { supabase } from "@/integrations/supabase/client";
+import { resolveClientLandingDestination } from "@/lib/lastDashboard";
 
 interface ProjectRow {
   id: string;
@@ -61,6 +63,7 @@ export default function Projects() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [toDelete, setToDelete] = useState<ProjectRow | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [returning, setReturning] = useState(false);
 
   const newFunnelPath = client
     ? `/clients/${client.id}/funnels/new`
@@ -154,6 +157,17 @@ export default function Projects() {
     }
   };
 
+  const returnToDashboard = async () => {
+    if (!userId || !client?.id) {
+      navigate("/clients");
+      return;
+    }
+    setReturning(true);
+    const destination = await resolveClientLandingDestination(userId, client.id);
+    navigate(destination);
+    setReturning(false);
+  };
+
   if (authLoading || workspaceLoading) {
     return (
       <main className="flex min-h-screen items-center justify-center">
@@ -181,6 +195,16 @@ export default function Projects() {
   return (
     <main className="min-h-screen">
       <div className="mx-auto max-w-[1200px] px-4 py-6 md:px-6 md:py-8 lg:px-8">
+        <Button
+          type="button"
+          variant="ghost"
+          className="-ml-3 mb-4 min-h-11 gap-2 text-muted-foreground"
+          disabled={returning}
+          onClick={() => void returnToDashboard()}
+        >
+          {returning ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowLeft className="h-4 w-4" />}
+          Voltar ao Dashboard
+        </Button>
         <header className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-sm font-medium text-primary">{client.name}</p>

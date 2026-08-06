@@ -18,7 +18,20 @@ export type CreativePipelineStatus =
   | "missing_media"
   | "missing_transcript"
   | "oversized_queued";
-export type CreativeSortKey = "purchases" | "roas" | "refund_rate" | "aov" | "hook_rate" | "ctr" | "cpm" | "spend";
+export type CreativeSortKey =
+  | "purchases"
+  | "roas"
+  | "refund_rate"
+  | "aov"
+  | "hook_rate"
+  | "ctr"
+  | "cpm"
+  | "spend"
+  | "recent"
+  | "revenue"
+  | "profit"
+  | "order_bump_orders"
+  | "upsell_orders";
 export type CreativeGroupBy = "none" | "campaign" | "adset" | "media_type";
 export type FixedCreativeGroupKey = "all" | "best-hooks" | "best-roas" | "highest-refunds" | "highest-aov";
 
@@ -67,6 +80,9 @@ export interface CreativeAssetAdRow {
   asset_id: string;
   ad_id: string;
   ad_created_time?: string | null;
+  ad_updated_time?: string | null;
+  ad_effective_status?: string | null;
+  ad_configured_status?: string | null;
   ad_name: string | null;
   adset_id: string | null;
   adset_name: string | null;
@@ -200,6 +216,8 @@ export interface CreativeAssetCard {
   processedAt: string | null;
   lastMetaSyncedAt: string | null;
   firstAdCreatedAt: string | null;
+  lastSpendAt: string | null;
+  deliveryStatus: "active" | "paused" | "unknown";
   adIds: string[];
   adNames: string[];
   campaignNames: string[];
@@ -250,6 +268,7 @@ export function buildCreativeAssetCards(input: {
   metrics: CreativeAssetMetricRow[];
   analyses: CreativeAssetAnalysisRow[];
   jobs?: CreativeAssetJobRow[];
+  lifecycleMetrics?: CreativeAssetMetricRow[];
 }): CreativeAssetCard[] {
   const analysisByAsset = new Map(input.analyses.map((analysis) => [analysis.asset_id, analysis]));
   const latestJobByAsset = new Map(
@@ -263,15 +282,26 @@ export function buildCreativeAssetCards(input: {
   );
   const adsByAsset = groupBy(input.ads, (row) => row.asset_id);
   const metricsByAsset = groupBy(input.metrics, (row) => row.asset_id);
+  const lifecycleMetricsByAsset = groupBy(
+    input.lifecycleMetrics ?? input.metrics,
+    (row) => row.asset_id,
+  );
 
   return input.assets.map((asset) => {
     const assetAds = adsByAsset.get(asset.id) ?? [];
     const assetMetrics = metricsByAsset.get(asset.id) ?? [];
+    const lifecycleMetrics = lifecycleMetricsByAsset.get(asset.id) ?? [];
     const analysis = analysisByAsset.get(asset.id) ?? null;
 
     const metricTotals = aggregateMetrics(assetMetrics);
     const adIds = unique(assetAds.map((row) => row.ad_id));
     const firstAdCreatedAt = earliestIso(assetAds.map((row) => row.ad_created_time).filter(Boolean) as string[]);
+    const lastSpendAt = latestDate(
+      lifecycleMetrics
+        .filter((row) => Number(row.spend ?? 0) > 0)
+        .map((row) => row.event_date),
+    );
+    const deliveryStatus = deriveDeliveryStatus(assetAds);
     const adNames = unique(assetAds.map((row) => row.ad_name).filter(Boolean) as string[]);
     const campaignNames = unique(assetAds.map((row) => row.campaign_name).filter(Boolean) as string[]);
     const adsetNames = unique(assetAds.map((row) => row.adset_name).filter(Boolean) as string[]);
@@ -338,6 +368,8 @@ export function buildCreativeAssetCards(input: {
       processedAt: analysis?.processed_at ?? null,
       lastMetaSyncedAt: asset.last_meta_synced_at,
       firstAdCreatedAt,
+      lastSpendAt,
+      deliveryStatus,
       adIds,
       adNames,
       campaignNames,
@@ -480,8 +512,9 @@ export function derivePipelineStatus(
     return "missing_media";
   }
   if (card.transcriptStatus === "oversized_queued") return "oversized_queued";
-  if ((card.activeJobStatus === "queued" || card.activeJobStatus === "running") && card.mediaType === "video" && card.transcriptStatus !== "ready") return "transcribing";
-  if ((card.activeJobStatus === "queued" || card.activeJobStatus === "running") && (card.transcriptStatus === "ready" || card.transcriptStatus === "not_applicable" || card.mediaType === "image")) return "analyzing";
+  if ((card.activeJobStatus === "queued" || card.activeJobStatus === "running") && card.mediaType === "video" && !card.transcript && card.transcriptStatus !== "ready") return "transcribing";
+  if ((card.activeJobStatus === "queued" || card.activeJobStatus === "running") && (Boolean(card.transcript) || card.transcriptStatus === "ready" || card.transcriptStatus === "not_applicable" || card.mediaType === "image")) return "analyzing";
+  if (card.transcript && card.analysisStatus === "processing") return "analyzing";
   if (card.mediaType === "video" && card.transcriptStatus === "failed" && !card.transcript) return "missing_transcript";
   if (card.transcript && card.transcriptStatus === "ready" && (card.analysisStatus === "failed" || card.analysisCoverage === "failed")) {
     return "ready";
@@ -650,6 +683,16 @@ function instagramUrlFallback(value: string | null) {
 
 function valueForCreativeSort(card: CreativeAssetCard, sortKey: CreativeSortKey) {
   switch (sortKey) {
+    case "recent":
+      return card.firstAdCreatedAt ? new Date(card.firstAdCreatedAt).getTime() : -Infinity;
+    case "revenue":
+      return card.revenue;
+    case "profit":
+      return card.profit;
+    case "order_bump_orders":
+      return card.orderBumpPurchases;
+    case "upsell_orders":
+      return card.upsellPurchases;
     case "spend":
       return card.spend;
     case "roas":
@@ -668,6 +711,26 @@ function valueForCreativeSort(card: CreativeAssetCard, sortKey: CreativeSortKey)
     default:
       return card.purchases;
   }
+}
+
+function latestDate(values: string[]) {
+  let winner: string | null = null;
+  for (const value of values) {
+    if (!winner || value > winner) winner = value;
+  }
+  return winner;
+}
+
+function deriveDeliveryStatus(ads: CreativeAssetAdRow[]): "active" | "paused" | "unknown" {
+  const statuses = ads
+    .flatMap((ad) => [ad.ad_effective_status, ad.ad_configured_status])
+    .filter((status): status is string => Boolean(status))
+    .map((status) => status.toUpperCase());
+  if (statuses.some((status) => status === "ACTIVE")) return "active";
+  if (statuses.some((status) => ["PAUSED", "ARCHIVED", "DELETED", "CAMPAIGN_PAUSED", "ADSET_PAUSED"].includes(status))) {
+    return "paused";
+  }
+  return "unknown";
 }
 
 function groupBy<T>(items: T[], getKey: (item: T) => string) {
@@ -880,7 +943,12 @@ function isPipelineStatus(value: unknown): value is CreativePipelineStatus {
 }
 
 function isCreativeSortKey(value: unknown): value is CreativeSortKey {
-  return value === "purchases" ||
+  return value === "recent" ||
+    value === "revenue" ||
+    value === "profit" ||
+    value === "order_bump_orders" ||
+    value === "upsell_orders" ||
+    value === "purchases" ||
     value === "roas" ||
     value === "refund_rate" ||
     value === "aov" ||

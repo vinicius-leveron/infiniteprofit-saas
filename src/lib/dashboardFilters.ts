@@ -19,14 +19,20 @@ export type StoredDashboardFilters = {
   accountIds?: string[];
   campaignIds?: string[];
   adsetIds?: string[];
+  activity?: DashboardDimensionActivity;
+  includeUnattributed?: boolean;
   /** Legacy single-account preference, migrated on read. */
   accountFilter?: string;
 };
+
+export type DashboardDimensionActivity = "spent_in_period" | "all";
 
 export type DashboardFilterState = {
   accountIds: string[];
   campaignIds: string[];
   adsetIds: string[];
+  activity: DashboardDimensionActivity;
+  includeUnattributed: boolean;
 };
 
 export function dashboardFilterStorageKey(projectId: string) {
@@ -57,6 +63,8 @@ export function readStoredDashboardFilters(
           : undefined),
       campaignIds: stringArray(parsed.campaignIds),
       adsetIds: stringArray(parsed.adsetIds),
+      activity: parsed.activity === "all" ? "all" : "spent_in_period",
+      includeUnattributed: parsed.includeUnattributed === true,
       accountFilter: typeof parsed.accountFilter === "string" ? parsed.accountFilter : undefined,
     };
   } catch {

@@ -48,6 +48,8 @@ describe("dashboard dimension filters", () => {
       accountIds: ["account-1", "account-2"],
       campaignIds: ["campaign-a"],
       adsetIds: ["adset-y"],
+      activity: "spent_in_period",
+      includeUnattributed: false,
     }).map((row) => row.ad_id)).toEqual(["ad-2"]);
   });
 
@@ -56,10 +58,14 @@ describe("dashboard dimension filters", () => {
       accountIds: ["account-deleted", "account-2"],
       campaignIds: ["campaign-a", "campaign-deleted"],
       adsetIds: ["adset-x", "adset-y", "adset-deleted"],
+      activity: "spent_in_period",
+      includeUnattributed: true,
     })).toEqual({
       accountIds: ["account-2"],
       campaignIds: ["campaign-a"],
       adsetIds: ["adset-y"],
+      activity: "spent_in_period",
+      includeUnattributed: true,
     });
   });
 
@@ -68,6 +74,8 @@ describe("dashboard dimension filters", () => {
       accountIds: ["account-2"],
       campaignIds: ["campaign-b"],
       adsetIds: ["adset-z"],
+      activity: "all" as const,
+      includeUnattributed: false,
     };
 
     expect(reconcileDashboardMediaFilters(dimensions, filters)).toBe(filters);

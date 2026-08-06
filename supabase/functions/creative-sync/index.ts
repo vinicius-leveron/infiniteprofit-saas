@@ -734,7 +734,7 @@ async function fetchAdDetailsBatch(accessToken: string, adIds: string[]) {
   url.searchParams.set("ids", adIds.join(","));
   url.searchParams.set(
     "fields",
-    "id,name,created_time,creative{id,name,body,title,image_url,thumbnail_url,link_url,object_type,call_to_action_type,object_story_id,effective_object_story_id,instagram_permalink_url,object_story_spec}",
+    "id,name,created_time,updated_time,effective_status,configured_status,creative{id,name,body,title,image_url,thumbnail_url,link_url,object_type,call_to_action_type,object_story_id,effective_object_story_id,instagram_permalink_url,object_story_spec}",
   );
   url.searchParams.set("access_token", accessToken);
 
@@ -762,7 +762,7 @@ async function fetchAdDetailsOne(accessToken: string, adId: string) {
   const url = new URL(`https://graph.facebook.com/v21.0/${adId}`);
   url.searchParams.set(
     "fields",
-    "id,name,created_time,creative{id,name,body,title,image_url,thumbnail_url,link_url,object_type,call_to_action_type,object_story_id,effective_object_story_id,instagram_permalink_url,object_story_spec}",
+    "id,name,created_time,updated_time,effective_status,configured_status,creative{id,name,body,title,image_url,thumbnail_url,link_url,object_type,call_to_action_type,object_story_id,effective_object_story_id,instagram_permalink_url,object_story_spec}",
   );
   url.searchParams.set("access_token", accessToken);
 
@@ -929,6 +929,7 @@ async function upsertCreativeAssetAds(
     const assetId = assetKey ? args.assetIdByKey.get(assetKey) : null;
     if (!assetId) continue;
     assetIdByAdId.set(adId, assetId);
+    const details = args.detailsByAdId.get(adId);
     rows.push({
       asset_id: assetId,
       project_id: args.project.id,
@@ -936,7 +937,10 @@ async function upsertCreativeAssetAds(
       user_id: args.project.user_id,
       creative_id: stringOrNull(payload.creative_id) ?? adId,
       ad_id: adId,
-      ad_created_time: normalizeMetaTimestamp(args.detailsByAdId.get(adId)?.created_time),
+      ad_created_time: normalizeMetaTimestamp(details?.created_time),
+      ad_updated_time: normalizeMetaTimestamp(details?.updated_time),
+      ad_effective_status: stringOrNull(details?.effective_status)?.toUpperCase() ?? null,
+      ad_configured_status: stringOrNull(details?.configured_status)?.toUpperCase() ?? null,
       ad_name: stringOrNull(payload.ad_name),
       adset_id: stringOrNull((payload as any).adset_id),
       adset_name: stringOrNull((payload as any).adset_name),

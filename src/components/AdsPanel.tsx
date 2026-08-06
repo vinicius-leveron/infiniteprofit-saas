@@ -1,12 +1,16 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
-import { format, formatDistanceToNow } from "date-fns";
+import { differenceInCalendarDays, format, formatDistanceToNow, parseISO, subDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
   AlertTriangle,
   Activity,
+  BarChart3,
+  CalendarDays,
+  CheckCircle2,
   ChevronDown,
   ChevronUp,
   Clapperboard,
+  Copy,
   Eye,
   ExternalLink,
   Filter,
@@ -93,7 +97,6 @@ import {
 } from "@/lib/creativeAssetSignedUrls";
 import { AdsFunnelView } from "@/components/ads/AdsFunnelView";
 import { useAuth } from "@/hooks/useAuth";
-import { type RawVturbPayload } from "@/lib/adFunnelCorrelation";
 
 interface AdsPanelProps {
   projectId: string | null;
@@ -121,6 +124,25 @@ type CreativeVturbMetrics = {
   pitchReached: number;
   playRate: number | null;
   pitchRetention: number | null;
+};
+
+type AdDimensionMetricRow = {
+  event_date: string;
+  ad_id: string;
+  investimento: number | null;
+  impressoes: number | null;
+  cliques: number | null;
+  hook_count: number | null;
+  pageviews: number | null;
+  plays_unicos: number | null;
+  chegaram_pitch: number | null;
+  vendas_front: number | null;
+  fat_bruto: number | null;
+  fat_liquido: number | null;
+  reembolsos: number | null;
+  valor_reembolsado: number | null;
+  order_bump_orders: number | null;
+  upsell_orders: number | null;
 };
 
 type GroupFormState = {
@@ -194,7 +216,7 @@ export function AdsPanel({ projectId, dateRange, allowedAdIds = null, canManage 
   const [groups, setGroups] = useState<CreativeGroupRow[]>([]);
   const [latestSyncRun, setLatestSyncRun] = useState<SyncRunRow | null>(null);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
-  const [vturbEvents, setVturbEvents] = useState<Array<{ payload: RawVturbPayload | null }>>([]);
+  const [adDimensionMetrics, setAdDimensionMetrics] = useState<AdDimensionMetricRow[]>([]);
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<CreativeSortKey>("purchases");
   const [mediaFilter, setMediaFilter] = useState<CreativeMediaType | "all">("all");
@@ -208,30 +230,27 @@ export function AdsPanel({ projectId, dateRange, allowedAdIds = null, canManage 
   const [groupForm, setGroupForm] = useState<GroupFormState>(EMPTY_GROUP_FORM);
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   const [groupToDelete, setGroupToDelete] = useState<CreativeGroupRow | null>(null);
+  const [analysisFrom, setAnalysisFrom] = useState("");
+  const [analysisTo, setAnalysisTo] = useState("");
+  const [analysisRoasCutoff, setAnalysisRoasCutoff] = useState("");
+  const [analysisPreferenceFor, setAnalysisPreferenceFor] = useState<string | null>(null);
 
   const load = useCallback(async (showPageLoader = true) => {
     if (!projectId) return;
     if (showPageLoader) setLoading(true);
     try {
-      let metricsQuery = supabase
+      const metricsQuery = supabase
         .from("creative_asset_daily_metrics")
         .select("asset_id, event_date, spend, impressions, clicks, outbound_clicks, ctr, link_ctr, cpm, purchases, revenue, net_revenue, profit, refunds, refund_value, refund_rate, order_bump_purchases, order_bump_revenue, upsell_purchases, upsell_revenue, order_bump_conversion, upsell_conversion, roas, cpa, hook_rate, has_meta_data, has_gateway_data")
-        .eq("project_id", projectId);
+        .eq("project_id", projectId)
+        .order("event_date", { ascending: true })
+        .limit(10_000);
 
-      if (dateRange?.from) metricsQuery = metricsQuery.gte("event_date", dateRange.from);
-      if (dateRange?.to) metricsQuery = metricsQuery.lte("event_date", dateRange.to);
-
-      let vturbMetricQuery = supabase
+      const vturbMetricQuery = supabase
         .from("daily_ad_dimension_metrics")
-        .select("ad_id, pageviews, plays_unicos, chegaram_pitch")
+        .select("event_date, ad_id, investimento, impressoes, cliques, hook_count, pageviews, plays_unicos, chegaram_pitch, vendas_front, fat_bruto, fat_liquido, reembolsos, valor_reembolsado, order_bump_orders, upsell_orders")
         .eq("project_id", projectId)
         .order("event_date", { ascending: true });
-      if (dateRange?.from) {
-        vturbMetricQuery = vturbMetricQuery.gte("event_date", dateRange.from);
-      }
-      if (dateRange?.to) {
-        vturbMetricQuery = vturbMetricQuery.lte("event_date", dateRange.to);
-      }
 
       const [
         { data: projectRow },
@@ -256,7 +275,7 @@ export function AdsPanel({ projectId, dateRange, allowedAdIds = null, canManage 
           .order("updated_at", { ascending: false }),
         supabase
           .from("creative_asset_ads" as never)
-          .select("asset_id, ad_id, ad_created_time, ad_name, adset_id, adset_name, campaign_id, campaign_name")
+          .select("asset_id, ad_id, ad_created_time, ad_updated_time, ad_effective_status, ad_configured_status, ad_name, adset_id, adset_name, campaign_id, campaign_name")
           .eq("project_id", projectId),
         metricsQuery,
         supabase
@@ -293,27 +312,39 @@ export function AdsPanel({ projectId, dateRange, allowedAdIds = null, canManage 
       setJobs((jobRows ?? []) as unknown as CreativeAssetJobRow[]);
       setGroups((groupRows ?? []) as unknown as CreativeGroupRow[]);
       setLatestSyncRun(((syncRows ?? [])[0] as SyncRunRow | undefined) ?? null);
-      setVturbEvents(
-        ((vturbMetricRows ?? []) as unknown as Array<{
-          ad_id: string;
-          pageviews: number | null;
-          plays_unicos: number | null;
-          chegaram_pitch: number | null;
-        }>).map((row) => ({
-          payload: {
-            utm_content: row.ad_id,
-            pageviews: row.pageviews ?? 0,
-            plays: row.plays_unicos ?? 0,
-            pitch_reached: row.chegaram_pitch ?? 0,
-          },
-        })),
-      );
+      setAdDimensionMetrics((vturbMetricRows ?? []) as unknown as AdDimensionMetricRow[]);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Erro ao carregar criativos");
     } finally {
       if (showPageLoader) setLoading(false);
     }
-  }, [dateRange?.from, dateRange?.to, projectId]);
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!projectId || analysisPreferenceFor === projectId) return;
+    let storedCutoff = "";
+    try {
+      storedCutoff = window.localStorage.getItem(`infiniteprofit.creativeAnalysis.${projectId}`) ?? "";
+    } catch {
+      // A preferência é opcional.
+    }
+    setAnalysisRoasCutoff(storedCutoff);
+    setAnalysisFrom(dateRange?.from ?? "");
+    setAnalysisTo(dateRange?.to ?? "");
+    setAnalysisPreferenceFor(projectId);
+  }, [analysisPreferenceFor, dateRange?.from, dateRange?.to, projectId]);
+
+  useEffect(() => {
+    if (!projectId || analysisPreferenceFor !== projectId) return;
+    try {
+      window.localStorage.setItem(
+        `infiniteprofit.creativeAnalysis.${projectId}`,
+        analysisRoasCutoff,
+      );
+    } catch {
+      // A preferência é opcional.
+    }
+  }, [analysisPreferenceFor, analysisRoasCutoff, projectId]);
 
   useEffect(() => {
     if (!projectId) return;
@@ -330,6 +361,16 @@ export function AdsPanel({ projectId, dateRange, allowedAdIds = null, canManage 
           event: "*",
           schema: "public",
           table: "creative_asset_analysis",
+          filter: `project_id=eq.${projectId}`,
+        },
+        () => void load(false),
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "creative_asset_jobs",
           filter: `project_id=eq.${projectId}`,
         },
         () => void load(false),
@@ -424,10 +465,7 @@ export function AdsPanel({ projectId, dateRange, allowedAdIds = null, canManage 
     if (!projectId) return;
     setAnalyzingAssetId(card.id);
     try {
-      const reprocessScope =
-        card.mediaType === "video" && card.transcriptStatus !== "ready"
-          ? "transcript"
-          : "analysis";
+      const reprocessScope = card.mediaType === "video" ? "transcript" : "analysis";
       const { data, error } = await supabase.functions.invoke("creative-sync", {
         body: {
           project_id: projectId,
@@ -552,10 +590,76 @@ export function AdsPanel({ projectId, dateRange, allowedAdIds = null, canManage 
     }
   }
 
-  const cards = useMemo(
-    () => buildCreativeAssetCards({ assets, ads: assetAds, metrics, analyses, jobs }),
-    [assets, assetAds, metrics, analyses, jobs],
+  const scopedCreativeMetrics = useMemo(() => {
+    if (allowedAdIds === null) return metrics;
+    return buildCreativeMetricsFromAdDimensions(
+      adDimensionMetrics,
+      assetAds,
+      new Set(allowedAdIds),
+    );
+  }, [adDimensionMetrics, allowedAdIds, assetAds, metrics]);
+
+  const galleryMetrics = useMemo(
+    () => filterCreativeMetricsByRange(
+      scopedCreativeMetrics,
+      dateRange?.from ?? null,
+      dateRange?.to ?? null,
+    ),
+    [dateRange?.from, dateRange?.to, scopedCreativeMetrics],
   );
+
+  const cards = useMemo(
+    () => buildCreativeAssetCards({
+      assets,
+      ads: assetAds,
+      metrics: galleryMetrics,
+      lifecycleMetrics: metrics,
+      analyses,
+      jobs,
+    }),
+    [analyses, assetAds, assets, galleryMetrics, jobs, metrics],
+  );
+
+  const creativePerformanceAnalysis = useMemo(() => {
+    const cutoff = parseLocalizedNumber(analysisRoasCutoff);
+    if (!analysisFrom || !analysisTo || cutoff == null || cutoff < 0) return null;
+    const currentMetrics = filterCreativeMetricsByRange(
+      scopedCreativeMetrics,
+      analysisFrom,
+      analysisTo,
+    );
+    const currentCards = buildCreativeAssetCards({
+      assets,
+      ads: assetAds,
+      metrics: currentMetrics,
+      lifecycleMetrics: metrics,
+      analyses,
+      jobs,
+    });
+    const previousRange = previousEquivalentRange(analysisFrom, analysisTo);
+    const previousCards = previousRange
+      ? buildCreativeAssetCards({
+        assets,
+        ads: assetAds,
+        metrics: filterCreativeMetricsByRange(
+          scopedCreativeMetrics,
+          previousRange.from,
+          previousRange.to,
+        ),
+        lifecycleMetrics: metrics,
+        analyses,
+        jobs,
+      })
+      : [];
+    return {
+      current: summarizeCreativePerformance(currentCards, analysisFrom, analysisTo, cutoff),
+      previous: previousRange
+        ? summarizeCreativePerformance(previousCards, previousRange.from, previousRange.to, cutoff)
+        : null,
+      cards: currentCards,
+      cutoff,
+    };
+  }, [analysisFrom, analysisRoasCutoff, analysisTo, analyses, assetAds, assets, jobs, metrics, scopedCreativeMetrics]);
 
   const activeCustomGroup = useMemo(
     () => groups.find((group) => group.id === activeCustomGroupId) ?? null,
@@ -580,7 +684,7 @@ export function AdsPanel({ projectId, dateRange, allowedAdIds = null, canManage 
       ? cards.filter(
         (card) =>
           card.adIds.length > 0 &&
-          card.adIds.every((adId) => allowed.has(adId)),
+          card.adIds.some((adId) => allowed.has(adId)),
       )
       : cards;
     const base = applyCreativeFilters(scopedCards, { search, rules: composedRules });
@@ -589,12 +693,7 @@ export function AdsPanel({ projectId, dateRange, allowedAdIds = null, canManage 
         // A creative is active when it had any source event in the selected
         // range.  Relying only on spend/purchases hides creatives that only
         // received a refund, a zero-spend impression row, or gateway data.
-        card.hasMetaData
-        || card.hasGatewayData
-        || card.spend > 0
-        || card.purchases > 0
-        || card.impressions > 0
-        || card.refunds > 0,
+        card.spend > 0,
       )
       : base;
     if (activeFixedGroup === "best-hooks") {
@@ -622,9 +721,18 @@ export function AdsPanel({ projectId, dateRange, allowedAdIds = null, canManage 
     [effectiveSortKey, filteredCards],
   );
 
+  const galleryDimensionMetrics = useMemo(() => {
+    const allowed = allowedAdIds === null ? null : new Set(allowedAdIds);
+    return adDimensionMetrics.filter((metric) =>
+      (!dateRange?.from || metric.event_date >= dateRange.from) &&
+      (!dateRange?.to || metric.event_date <= dateRange.to) &&
+      (!allowed || allowed.has(metric.ad_id))
+    );
+  }, [adDimensionMetrics, allowedAdIds, dateRange?.from, dateRange?.to]);
+
   const vturbMetricsByAsset = useMemo(
-    () => buildCreativeVturbMetrics(cards, vturbEvents),
-    [cards, vturbEvents],
+    () => buildCreativeVturbMetrics(cards, galleryDimensionMetrics),
+    [cards, galleryDimensionMetrics],
   );
 
   const metricAverages = useMemo(() => {
@@ -755,6 +863,18 @@ export function AdsPanel({ projectId, dateRange, allowedAdIds = null, canManage 
         </div>
       )}
 
+      {viewMode === "cards" && (
+        <CreativePerformanceAnalysis
+          from={analysisFrom}
+          to={analysisTo}
+          roasCutoff={analysisRoasCutoff}
+          result={creativePerformanceAnalysis}
+          onFromChange={setAnalysisFrom}
+          onToChange={setAnalysisTo}
+          onRoasCutoffChange={setAnalysisRoasCutoff}
+        />
+      )}
+
       {viewMode === "funnel" ? (
         <AdsFunnelView
           projectId={projectId}
@@ -867,17 +987,20 @@ export function AdsPanel({ projectId, dateRange, allowedAdIds = null, canManage 
 
           {/* Toolbar de Filtros */}
           <div className="rounded-2xl border border-border/40 bg-gradient-to-br from-muted/30 to-muted/10 p-4">
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            <div className="grid items-end gap-4 md:grid-cols-2 lg:grid-cols-4">
               {/* Search */}
-              <div className="relative lg:col-span-1">
-                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Buscar criativos..."
-                  aria-label="Buscar criativos"
-                  className="pl-10 h-10 rounded-xl border-border/50 bg-background/60 placeholder:text-muted-foreground/60"
-                />
+              <div className="space-y-1.5 lg:col-span-1">
+                <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">Buscar</Label>
+                <div className="relative">
+                  <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                    placeholder="Buscar criativos..."
+                    aria-label="Buscar criativos"
+                    className="h-10 rounded-xl border-border/50 bg-background/60 pl-10 placeholder:text-muted-foreground/60"
+                  />
+                </div>
               </div>
               {/* Selects */}
               <ToolbarSelect
@@ -886,7 +1009,12 @@ export function AdsPanel({ projectId, dateRange, allowedAdIds = null, canManage 
                 value={sortKey}
                 onValueChange={(value) => setSortKey(value as CreativeSortKey)}
                 options={[
+                  { value: "recent", label: "Mais recentes" },
                   { value: "purchases", label: "Vendas front" },
+                  { value: "order_bump_orders", label: "Vendas order bump" },
+                  { value: "upsell_orders", label: "Vendas upsell" },
+                  { value: "revenue", label: "Faturamento" },
+                  { value: "profit", label: "Lucro" },
                   { value: "roas", label: "ROAS" },
                   { value: "refund_rate", label: "Taxa de reembolso" },
                   { value: "aov", label: "AOV" },
@@ -938,6 +1066,7 @@ export function AdsPanel({ projectId, dateRange, allowedAdIds = null, canManage 
                         expanded={expandedCardId === card.id}
                         metricAverages={metricAverages}
                         vturbMetrics={vturbMetricsByAsset.get(card.id) ?? null}
+                        offerRevenueUnavailable={allowedAdIds !== null}
                         onToggle={() => setExpandedCardId((current) => current === card.id ? null : card.id)}
                         onAnalyze={canManage ? () => analyzeCreative(card) : undefined}
                         analyzing={analyzingAssetId === card.id}
@@ -967,6 +1096,11 @@ export function AdsPanel({ projectId, dateRange, allowedAdIds = null, canManage 
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="purchases">Vendas front</SelectItem>
+                  <SelectItem value="recent">Mais recentes</SelectItem>
+                  <SelectItem value="order_bump_orders">Vendas order bump</SelectItem>
+                  <SelectItem value="upsell_orders">Vendas upsell</SelectItem>
+                  <SelectItem value="revenue">Faturamento</SelectItem>
+                  <SelectItem value="profit">Lucro</SelectItem>
                   <SelectItem value="roas">ROAS</SelectItem>
                   <SelectItem value="refund_rate">Taxa de reembolso</SelectItem>
                   <SelectItem value="aov">AOV</SelectItem>
@@ -1037,6 +1171,303 @@ export function AdsPanel({ projectId, dateRange, allowedAdIds = null, canManage 
   );
 }
 
+type CreativePerformanceSummary = {
+  tested: number;
+  validatedTests: number;
+  accuracy: number | null;
+  testSpend: number;
+  validatedTestSpend: number;
+  testEfficiency: number | null;
+  running: number;
+  validatedRunning: number;
+  generalSpend: number;
+  validatedGeneralSpend: number;
+  generalEfficiency: number | null;
+  averageLifetimeDays: number | null;
+  testedCards: CreativeAssetCard[];
+};
+
+type CreativePerformanceResult = {
+  current: CreativePerformanceSummary;
+  previous: CreativePerformanceSummary | null;
+  cards: CreativeAssetCard[];
+  cutoff: number;
+};
+
+function CreativePerformanceAnalysis({
+  from,
+  to,
+  roasCutoff,
+  result,
+  onFromChange,
+  onToChange,
+  onRoasCutoffChange,
+}: {
+  from: string;
+  to: string;
+  roasCutoff: string;
+  result: CreativePerformanceResult | null;
+  onFromChange: (value: string) => void;
+  onToChange: (value: string) => void;
+  onRoasCutoffChange: (value: string) => void;
+}) {
+  const current = result?.current ?? null;
+  const previous = result?.previous ?? null;
+  const tableCards = current?.testedCards
+    .slice()
+    .sort((left, right) => String(right.firstAdCreatedAt).localeCompare(String(left.firstAdCreatedAt)))
+    .slice(0, 50) ?? [];
+
+  return (
+    <section className="overflow-hidden rounded-2xl border border-border/50 bg-card/70">
+      <div className="border-b border-border/40 p-4 md:p-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <BarChart3 className="h-5 w-5 text-violet-300" />
+              <h3 className="text-base font-semibold">Análise de criativos</h3>
+            </div>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              Testados usam a data de criação da Meta. Eficiência mede a parcela da verba investida acima do corte de ROAS.
+            </p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Field label="Criados de">
+              <Input type="date" value={from} onChange={(event) => onFromChange(event.target.value)} className="h-10 min-w-[150px]" />
+            </Field>
+            <Field label="Até">
+              <Input type="date" value={to} onChange={(event) => onToChange(event.target.value)} className="h-10 min-w-[150px]" />
+            </Field>
+            <Field label="Corte de ROAS">
+              <Input
+                value={roasCutoff}
+                onChange={(event) => onRoasCutoffChange(event.target.value)}
+                inputMode="decimal"
+                placeholder="Ex.: 1,70"
+                className="h-10 min-w-[130px]"
+              />
+            </Field>
+          </div>
+        </div>
+      </div>
+
+      {!current ? (
+        <div className="flex min-h-28 items-center justify-center px-5 py-8 text-center text-sm text-muted-foreground">
+          Informe o período e o corte de ROAS para calcular a análise.
+        </div>
+      ) : (
+        <div className="space-y-5 p-4 md:p-5">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <AnalysisKpi
+              label="Criativos testados"
+              value={fNum(current.tested)}
+              delta={metricDelta(current.tested, previous?.tested)}
+              detail="Criados no período"
+            />
+            <AnalysisKpi
+              label="Criativos validados"
+              value={fNum(current.validatedTests)}
+              delta={metricDelta(current.validatedTests, previous?.validatedTests)}
+              detail={`ROAS ≥ ${result?.cutoff.toFixed(2)}x`}
+              tone="emerald"
+            />
+            <AnalysisKpi
+              label="Taxa de assertividade"
+              value={fPct(current.accuracy, 1)}
+              delta={metricDelta(current.accuracy, previous?.accuracy)}
+              detail="Validados ÷ testados"
+              tone="violet"
+            />
+            <AnalysisKpi
+              label="Eficiência dos testes"
+              value={fPct(current.testEfficiency, 1)}
+              delta={metricDelta(current.testEfficiency, previous?.testEfficiency)}
+              detail={`${fBRL(current.validatedTestSpend)} de ${fBRL(current.testSpend)}`}
+              tone="cyan"
+            />
+            <AnalysisKpi
+              label="Rodaram no período"
+              value={fNum(current.running)}
+              delta={metricDelta(current.running, previous?.running)}
+              detail="Criativos com gasto"
+            />
+            <AnalysisKpi
+              label="Acima do corte"
+              value={fNum(current.validatedRunning)}
+              delta={metricDelta(current.validatedRunning, previous?.validatedRunning)}
+              detail="Entre todos que rodaram"
+              tone="emerald"
+            />
+            <AnalysisKpi
+              label="Eficiência geral"
+              value={fPct(current.generalEfficiency, 1)}
+              delta={metricDelta(current.generalEfficiency, previous?.generalEfficiency)}
+              detail={`${fBRL(current.validatedGeneralSpend)} de ${fBRL(current.generalSpend)}`}
+              tone="cyan"
+            />
+            <AnalysisKpi
+              label="Tempo médio de saturação"
+              value={current.averageLifetimeDays != null ? `${current.averageLifetimeDays.toFixed(1)} dias` : "—"}
+              delta={metricDelta(current.averageLifetimeDays, previous?.averageLifetimeDays)}
+              detail="Criação Meta → último gasto"
+              tone="amber"
+            />
+          </div>
+
+          <SpendEfficiencyBar
+            label="Distribuição da verba geral"
+            validated={current.validatedGeneralSpend}
+            total={current.generalSpend}
+          />
+
+          {tableCards.length > 0 && (
+            <div className="overflow-hidden rounded-xl border border-border/40">
+              <div className="flex items-center justify-between gap-3 border-b border-border/40 px-4 py-3">
+                <div>
+                  <h4 className="text-sm font-medium">Criativos testados no período</h4>
+                  <p className="text-xs text-muted-foreground">Até 50 criativos, ordenados pelos mais recentes.</p>
+                </div>
+                <span className="rounded-full bg-violet-500/10 px-2.5 py-1 text-xs text-violet-200">
+                  {tableCards.length} exibidos
+                </span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[760px] text-left text-xs">
+                  <thead className="bg-muted/30 text-[10px] uppercase tracking-wider text-muted-foreground">
+                    <tr>
+                      <th className="px-4 py-3 font-medium">Criativo</th>
+                      <th className="px-3 py-3 font-medium">Criado</th>
+                      <th className="px-3 py-3 font-medium">Compras</th>
+                      <th className="px-3 py-3 font-medium">Gasto</th>
+                      <th className="px-3 py-3 font-medium">ROAS</th>
+                      <th className="px-3 py-3 font-medium">Situação</th>
+                      <th className="px-3 py-3 font-medium">Saturação</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/30">
+                    {tableCards.map((card) => {
+                      const validated = (card.roas ?? -Infinity) >= (result?.cutoff ?? Infinity);
+                      const status = effectiveCreativeDeliveryStatus(card, to);
+                      return (
+                        <tr key={card.id} className="bg-background/20">
+                          <td className="max-w-[280px] px-4 py-3">
+                            <div className="truncate font-medium" title={card.headline || card.adNames[0] || card.assetKey}>
+                              {card.headline || card.adNames[0] || card.assetKey}
+                            </div>
+                            <div className="mt-0.5 truncate text-muted-foreground" title={card.campaignNames.join(", ")}>
+                              {card.campaignNames.join(", ") || "Sem campanha"}
+                            </div>
+                          </td>
+                          <td className="px-3 py-3 tabular-nums">{formatCreativeDate(card.firstAdCreatedAt)}</td>
+                          <td className="px-3 py-3 tabular-nums">{fNum(card.purchases)}</td>
+                          <td className="px-3 py-3 tabular-nums">{fBRL(card.spend)}</td>
+                          <td className="px-3 py-3">
+                            <span className={cn(
+                              "inline-flex rounded-full px-2 py-1 font-semibold tabular-nums",
+                              validated ? "bg-emerald-500/10 text-emerald-300" : "bg-rose-500/10 text-rose-300",
+                            )}>
+                              {card.roas != null ? `${card.roas.toFixed(2)}x` : "—"}
+                            </span>
+                          </td>
+                          <td className="px-3 py-3">
+                            <span className={cn(
+                              "inline-flex items-center gap-1.5 rounded-full px-2 py-1",
+                              status === "active" ? "bg-emerald-500/10 text-emerald-300" : "bg-muted text-muted-foreground",
+                            )}>
+                              {status === "active" ? <CheckCircle2 className="h-3 w-3" /> : <CalendarDays className="h-3 w-3" />}
+                              {status === "active" ? "Ativo" : "Pausado"}
+                            </span>
+                          </td>
+                          <td className="px-3 py-3 tabular-nums">
+                            {card.firstAdCreatedAt && card.lastSpendAt ? `${creativeLifetimeDays(card)} dias` : "—"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function AnalysisKpi({
+  label,
+  value,
+  detail,
+  delta,
+  tone = "default",
+}: {
+  label: string;
+  value: string;
+  detail: string;
+  delta: number | null;
+  tone?: "default" | "emerald" | "violet" | "cyan" | "amber";
+}) {
+  const tones = {
+    default: "text-foreground",
+    emerald: "text-emerald-300",
+    violet: "text-violet-300",
+    cyan: "text-cyan-300",
+    amber: "text-amber-300",
+  };
+  return (
+    <div className="rounded-xl border border-border/40 bg-background/30 p-3.5">
+      <div className="flex items-start justify-between gap-2">
+        <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{label}</span>
+        {delta != null && (
+          <span className={cn("text-[10px] font-medium tabular-nums", delta >= 0 ? "text-emerald-300" : "text-rose-300")}>
+            {delta >= 0 ? "+" : ""}{delta.toFixed(1)}%
+          </span>
+        )}
+      </div>
+      <div className={cn("mt-2 text-xl font-semibold tabular-nums", tones[tone])}>{value}</div>
+      <p className="mt-1 text-[11px] text-muted-foreground">{detail}</p>
+    </div>
+  );
+}
+
+function SpendEfficiencyBar({ label, validated, total }: { label: string; validated: number; total: number }) {
+  const validPercent = total > 0 ? Math.min(100, Math.max(0, validated / total * 100)) : 0;
+  const invalid = Math.max(0, total - validated);
+  return (
+    <div className="rounded-xl border border-border/40 bg-background/25 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+        <span className="font-medium">{label}</span>
+        <span className="text-muted-foreground">
+          <span className="text-emerald-300">{fBRL(validated)} acima</span>
+          <span className="mx-1.5">·</span>
+          <span className="text-rose-300">{fBRL(invalid)} abaixo</span>
+        </span>
+      </div>
+      <div className="mt-3 flex h-3 overflow-hidden rounded-full bg-rose-500/20">
+        <div className="bg-emerald-400 transition-[width]" style={{ width: `${validPercent}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function CopyTranscriptButton({ transcript }: { transcript: string }) {
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(transcript);
+      toast.success("Transcrição copiada");
+    } catch {
+      toast.error("Não foi possível copiar a transcrição");
+    }
+  };
+  return (
+    <Button type="button" variant="ghost" size="sm" className="h-8 gap-1.5 text-xs" onClick={() => void copy()}>
+      <Copy className="h-3.5 w-3.5" />
+      Copiar
+    </Button>
+  );
+}
+
 function EmptyCardsState({
   latestSyncRun,
   onRetry,
@@ -1077,7 +1508,7 @@ function EmptyCardsState({
           {isRunning
             ? "Processando criativos"
             : filteredByMedia
-              ? "Nenhum criativo exclusivo desta seleção"
+              ? "Nenhum criativo nesta seleção"
               : "Nenhum criativo encontrado"}
         </h3>
 
@@ -1086,7 +1517,7 @@ function EmptyCardsState({
           {isRunning
             ? "A sincronização está em andamento. Os criativos aparecerão em breve."
             : filteredByMedia
-              ? "Criativos reutilizados também fora da campanha ou do conjunto selecionado ficam fora dos Cards para não misturar métricas. Use a visão Funil para analisar cada anúncio."
+              ? "Nenhum anúncio desta seleção possui métricas no período. Ajuste os filtros ou confira a cobertura de atribuição."
             : "Sincronize os criativos do Meta Ads para visualizar a galeria com mídia, análises e métricas. Falhas anteriores ficam em Diagnóstico."}
         </p>
 
@@ -1116,6 +1547,7 @@ function CreativeCard({
   expanded,
   metricAverages,
   vturbMetrics,
+  offerRevenueUnavailable,
   analyzing,
   onAnalyze,
   onToggle,
@@ -1131,6 +1563,7 @@ function CreativeCard({
     aov: number | null;
   };
   vturbMetrics: CreativeVturbMetrics | null;
+  offerRevenueUnavailable: boolean;
   analyzing: boolean;
   onToggle: () => void;
   onAnalyze?: () => void;
@@ -1191,7 +1624,7 @@ function CreativeCard({
 
         {/* Bottom overlay */}
         <div className="absolute inset-x-0 bottom-0 p-4">
-          <h3 className="text-sm font-semibold text-white line-clamp-2 leading-snug drop-shadow-lg">
+          <h3 title={title} className="text-sm font-semibold text-white line-clamp-2 leading-snug drop-shadow-lg">
             {title}
           </h3>
           <div className="flex items-center gap-2 mt-2">
@@ -1246,6 +1679,13 @@ function CreativeCard({
           {card.cta && <InfoPill label="CTA" value={card.cta} />}
           {card.firstAdCreatedAt && (
             <InfoPill label="Criado" value={format(new Date(card.firstAdCreatedAt), "dd/MM/yyyy", { locale: ptBR })} />
+          )}
+          <InfoPill
+            label="Status"
+            value={card.deliveryStatus === "active" ? "Ativo" : card.deliveryStatus === "paused" ? "Pausado" : "Sem status"}
+          />
+          {card.firstAdCreatedAt && card.lastSpendAt && (
+            <InfoPill label="Veiculação" value={`${creativeLifetimeDays(card)} dias`} />
           )}
           <InfoPill label="Ads" value={String(card.adsCount)} />
           <InfoPill label="Campanhas" value={String(card.campaignNames.length)} />
@@ -1330,8 +1770,8 @@ function CreativeCard({
           />
         </div>
 
-        <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2.5">
-          <div className="text-[10px] font-medium uppercase tracking-wide text-amber-300">Reembolsos</div>
+        <div className="rounded-xl border border-rose-500/20 bg-rose-500/5 px-3 py-2.5">
+          <div className="text-[10px] font-medium uppercase tracking-wide text-rose-300">Reembolsos</div>
           <div className="mt-1 flex items-center justify-between gap-3 text-xs">
             <span>{fNum(card.refunds)} pedido{card.refunds === 1 ? "" : "s"}</span>
             <span>{card.refundRate != null ? fPct(card.refundRate, 1) : "—"}</span>
@@ -1343,14 +1783,14 @@ function CreativeCard({
           <MetricTile
             label="Order bump"
             value={`${fNum(card.orderBumpPurchases)} pedidos`}
-            detail={`${fBRL(card.orderBumpRevenue)} · ${fPct(card.orderBumpConversion, 1)} do front`}
+            detail={`${offerRevenueUnavailable ? "Receita —" : fBRL(card.orderBumpRevenue)} · ${fPct(card.orderBumpConversion, 1)} do front`}
             accent="violet"
             highlight={card.orderBumpPurchases > 0}
           />
           <MetricTile
             label="Upsell"
             value={`${fNum(card.upsellPurchases)} pedidos`}
-            detail={`${fBRL(card.upsellRevenue)} · ${fPct(card.upsellConversion, 1)} do front`}
+            detail={`${offerRevenueUnavailable ? "Receita —" : fBRL(card.upsellRevenue)} · ${fPct(card.upsellConversion, 1)} do front`}
             accent="emerald"
             highlight={card.upsellPurchases > 0}
           />
@@ -1422,7 +1862,18 @@ function CreativeCard({
         </div>
 
         {/* Actions */}
-        <div className={cn("grid gap-2", onAnalyze ? "grid-cols-2" : "grid-cols-1")}>
+        <div className="grid grid-cols-2 gap-2">
+          {card.transcript && (
+            <Button
+              type="button"
+              size="sm"
+              onClick={onToggle}
+              className="col-span-2 h-10 gap-2 rounded-xl text-xs"
+            >
+              <Clapperboard className="h-4 w-4" />
+              Ver transcrição
+            </Button>
+          )}
           {onAnalyze && (
             <Button
               type="button"
@@ -1433,7 +1884,9 @@ function CreativeCard({
               className="h-9 gap-2 rounded-xl border-border/60 bg-background/40 text-xs"
             >
               {analyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
-              {analyzeLabel}
+              {card.mediaType === "video" && card.transcript
+                ? "Transcrever novamente"
+                : analyzeLabel}
             </Button>
           )}
           <button
@@ -1545,6 +1998,7 @@ function CreativeCard({
                       {card.campaignNames.map((campaign) => (
                         <span
                           key={campaign}
+                          title={campaign}
                           className="inline-flex items-center rounded-lg bg-violet-500/10 border border-violet-500/20 px-2 py-0.5 text-[10px] text-violet-300"
                         >
                           {campaign}
@@ -1553,6 +2007,7 @@ function CreativeCard({
                       {card.adsetNames.map((adset) => (
                         <span
                           key={adset}
+                          title={adset}
                           className="inline-flex items-center rounded-lg bg-muted/50 px-2 py-0.5 text-[10px] text-muted-foreground"
                         >
                           {adset}
@@ -1588,13 +2043,19 @@ function CreativeCard({
                     ))}
                     {card.transcript && (
                       <div className="rounded-lg border border-dashed border-border/20 px-3 py-2">
-                        <p className="text-xs uppercase tracking-wider text-muted-foreground">Transcript completo</p>
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-xs uppercase tracking-wider text-muted-foreground">Transcrição completa</p>
+                          <CopyTranscriptButton transcript={card.transcript} />
+                        </div>
                         <p className="mt-2 text-sm text-foreground/80 whitespace-pre-line leading-relaxed">{card.transcript}</p>
                       </div>
                     )}
                   </div>
                 ) : card.transcript ? (
                   <div className="rounded-xl border border-border/30 bg-muted/20 p-4 max-h-64 overflow-y-auto">
+                    <div className="mb-3 flex justify-end">
+                      <CopyTranscriptButton transcript={card.transcript} />
+                    </div>
                     <p className="text-sm text-foreground/90 whitespace-pre-line leading-relaxed">{card.transcript}</p>
                   </div>
                 ) : (
@@ -1730,6 +2191,202 @@ function weightedAverage(values: Array<{ value: number | null; weight: number }>
   return weight > 0
     ? valid.reduce((sum, entry) => sum + entry.value * entry.weight, 0) / weight
     : null;
+}
+
+function filterCreativeMetricsByRange(
+  metrics: CreativeAssetMetricRow[],
+  from: string | null,
+  to: string | null,
+) {
+  return metrics.filter((metric) =>
+    (!from || metric.event_date >= from) && (!to || metric.event_date <= to)
+  );
+}
+
+function buildCreativeMetricsFromAdDimensions(
+  dimensionMetrics: AdDimensionMetricRow[],
+  assetAds: CreativeAssetAdRow[],
+  allowedAdIds: Set<string>,
+): CreativeAssetMetricRow[] {
+  const assetIdsByAd = new Map<string, Set<string>>();
+  for (const link of assetAds) {
+    const assetIds = assetIdsByAd.get(link.ad_id) ?? new Set<string>();
+    assetIds.add(link.asset_id);
+    assetIdsByAd.set(link.ad_id, assetIds);
+  }
+
+  type Accumulator = {
+    assetId: string;
+    eventDate: string;
+    spend: number;
+    impressions: number;
+    clicks: number;
+    hookCount: number;
+    purchases: number;
+    revenue: number;
+    netRevenue: number;
+    refunds: number;
+    refundValue: number;
+    orderBumpOrders: number;
+    upsellOrders: number;
+  };
+
+  const byAssetDate = new Map<string, Accumulator>();
+  for (const row of dimensionMetrics) {
+    if (!allowedAdIds.has(row.ad_id)) continue;
+    const assetIds = assetIdsByAd.get(row.ad_id);
+    if (!assetIds) continue;
+    for (const assetId of assetIds) {
+      const key = `${assetId}:${row.event_date}`;
+      const current = byAssetDate.get(key) ?? {
+        assetId,
+        eventDate: row.event_date,
+        spend: 0,
+        impressions: 0,
+        clicks: 0,
+        hookCount: 0,
+        purchases: 0,
+        revenue: 0,
+        netRevenue: 0,
+        refunds: 0,
+        refundValue: 0,
+        orderBumpOrders: 0,
+        upsellOrders: 0,
+      };
+      current.spend += numericMetric(row.investimento);
+      current.impressions += numericMetric(row.impressoes);
+      current.clicks += numericMetric(row.cliques);
+      current.hookCount += numericMetric(row.hook_count);
+      current.purchases += numericMetric(row.vendas_front);
+      current.revenue += numericMetric(row.fat_bruto);
+      current.netRevenue += numericMetric(row.fat_liquido);
+      current.refunds += numericMetric(row.reembolsos);
+      current.refundValue += numericMetric(row.valor_reembolsado);
+      current.orderBumpOrders += numericMetric(row.order_bump_orders);
+      current.upsellOrders += numericMetric(row.upsell_orders);
+      byAssetDate.set(key, current);
+    }
+  }
+
+  return [...byAssetDate.values()].map((row) => ({
+    asset_id: row.assetId,
+    event_date: row.eventDate,
+    spend: row.spend,
+    impressions: row.impressions,
+    clicks: row.clicks,
+    outbound_clicks: row.clicks,
+    ctr: row.impressions > 0 ? row.clicks / row.impressions * 100 : null,
+    link_ctr: row.impressions > 0 ? row.clicks / row.impressions * 100 : null,
+    cpm: row.impressions > 0 ? row.spend / row.impressions * 1_000 : null,
+    purchases: row.purchases,
+    revenue: row.revenue,
+    net_revenue: row.netRevenue,
+    profit: row.netRevenue - row.spend - row.spend * 0.1215,
+    refunds: row.refunds,
+    refund_value: row.refundValue,
+    order_bump_purchases: row.orderBumpOrders,
+    order_bump_revenue: 0,
+    upsell_purchases: row.upsellOrders,
+    upsell_revenue: 0,
+    order_bump_conversion: row.purchases > 0 ? row.orderBumpOrders / row.purchases * 100 : null,
+    upsell_conversion: row.purchases > 0 ? row.upsellOrders / row.purchases * 100 : null,
+    refund_rate: row.purchases > 0 ? row.refunds / row.purchases * 100 : null,
+    roas: row.spend > 0 ? row.revenue / row.spend : null,
+    cpa: row.purchases > 0 ? row.spend / row.purchases : null,
+    hook_rate: row.impressions > 0 ? row.hookCount / row.impressions * 100 : null,
+    has_meta_data: row.spend > 0 || row.impressions > 0 || row.clicks > 0,
+    has_gateway_data: row.purchases > 0 || row.revenue > 0 || row.refunds > 0,
+  }));
+}
+
+function numericMetric(value: number | null | undefined) {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function parseLocalizedNumber(value: string) {
+  const normalized = value.trim().replace(/\s/g, "").replace(",", ".");
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function previousEquivalentRange(from: string, to: string) {
+  const fromDate = parseISO(from);
+  const toDate = parseISO(to);
+  if (!Number.isFinite(fromDate.getTime()) || !Number.isFinite(toDate.getTime()) || toDate < fromDate) {
+    return null;
+  }
+  const days = differenceInCalendarDays(toDate, fromDate) + 1;
+  const previousTo = subDays(fromDate, 1);
+  const previousFrom = subDays(previousTo, days - 1);
+  return {
+    from: format(previousFrom, "yyyy-MM-dd"),
+    to: format(previousTo, "yyyy-MM-dd"),
+  };
+}
+
+function summarizeCreativePerformance(
+  cards: CreativeAssetCard[],
+  from: string,
+  to: string,
+  cutoff: number,
+): CreativePerformanceSummary {
+  const testedCards = cards.filter((card) => {
+    const created = card.firstAdCreatedAt?.slice(0, 10) ?? null;
+    return Boolean(created && created >= from && created <= to);
+  });
+  const runningCards = cards.filter((card) => card.spend > 0);
+  const validatedTests = testedCards.filter((card) => (card.roas ?? -Infinity) >= cutoff);
+  const validatedRunning = runningCards.filter((card) => (card.roas ?? -Infinity) >= cutoff);
+  const testSpend = testedCards.reduce((sum, card) => sum + card.spend, 0);
+  const validatedTestSpend = validatedTests.reduce((sum, card) => sum + card.spend, 0);
+  const generalSpend = runningCards.reduce((sum, card) => sum + card.spend, 0);
+  const validatedGeneralSpend = validatedRunning.reduce((sum, card) => sum + card.spend, 0);
+  const lifetimes = runningCards
+    .map(creativeLifetimeDays)
+    .filter((value): value is number => value != null);
+  return {
+    tested: testedCards.length,
+    validatedTests: validatedTests.length,
+    accuracy: testedCards.length > 0 ? validatedTests.length / testedCards.length * 100 : null,
+    testSpend,
+    validatedTestSpend,
+    testEfficiency: testSpend > 0 ? validatedTestSpend / testSpend * 100 : null,
+    running: runningCards.length,
+    validatedRunning: validatedRunning.length,
+    generalSpend,
+    validatedGeneralSpend,
+    generalEfficiency: generalSpend > 0 ? validatedGeneralSpend / generalSpend * 100 : null,
+    averageLifetimeDays: lifetimes.length > 0
+      ? lifetimes.reduce((sum, value) => sum + value, 0) / lifetimes.length
+      : null,
+    testedCards,
+  };
+}
+
+function creativeLifetimeDays(card: CreativeAssetCard) {
+  if (!card.firstAdCreatedAt || !card.lastSpendAt) return null;
+  const created = parseISO(card.firstAdCreatedAt);
+  const lastSpend = parseISO(card.lastSpendAt);
+  if (!Number.isFinite(created.getTime()) || !Number.isFinite(lastSpend.getTime())) return null;
+  return Math.max(1, differenceInCalendarDays(lastSpend, created) + 1);
+}
+
+function effectiveCreativeDeliveryStatus(card: CreativeAssetCard, rangeEnd: string) {
+  if (card.deliveryStatus !== "unknown") return card.deliveryStatus;
+  return card.lastSpendAt && card.lastSpendAt >= rangeEnd ? "active" : "paused";
+}
+
+function formatCreativeDate(value: string | null) {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) ? format(parsed, "dd/MM/yyyy", { locale: ptBR }) : "—";
+}
+
+function metricDelta(current: number | null | undefined, previous: number | null | undefined) {
+  if (current == null || previous == null || previous === 0) return null;
+  return (current - previous) / Math.abs(previous) * 100;
 }
 
 function formatMetricAverage(label: string, value: number) {
@@ -2027,195 +2684,38 @@ function compactUrlLabel(url: string | null) {
 
 function buildCreativeVturbMetrics(
   cards: CreativeAssetCard[],
-  events: Array<{ payload: RawVturbPayload | null }>,
+  dimensionMetrics: AdDimensionMetricRow[],
 ) {
-  type VturbMetricAccumulator = {
-    pageviews: number;
-    plays: number;
-    pitchReached: number;
-    directPlayRate: number;
-    directPlayRateWeight: number;
-    directPitchRetention: number;
-    directPitchRetentionWeight: number;
-  };
-
-  const metricsByAttribution = new Map<string, VturbMetricAccumulator>();
-
-  for (const event of events) {
-    const payload = (event.payload ?? {}) as RawVturbPayload & Record<string, unknown>;
-    // VTurb has returned both `utm_content` and `grouped_field` over time,
-    // while some accounts expose the same value under a nested UTM object.
-    // Keep every non-empty attribution key so a renamed API field does not
-    // silently make Play Rate/Retenção show as em dashes.
-    const topLevelAttribution = payload.utm_content
-      ?? payload.grouped_field
-      ?? payload.ad_id
-      ?? payload.content;
-    const nestedUtm = asObject(payload.utm);
-    const attributionKeys = [String(
-      topLevelAttribution
-      ?? nestedUtm.content
-      ?? nestedUtm.utm_content
-      ?? "",
-    ).trim()].filter(Boolean);
-    if (attributionKeys.length === 0) continue;
-
-    const pageviews = firstPositiveMetric(
-      payload.total_viewed_session_uniq,
-      payload.total_viewed_device_uniq,
-      payload.total_viewed,
-      payload.pageviews,
-      payload.page_views,
-      payload.page_views_count,
-      payload.landing_page_views,
-      payload.visits,
-      payload.visitors,
-    );
-    const plays = firstPositiveMetric(
-      payload.total_started_session_uniq,
-      payload.total_started_device_uniq,
-      payload.total_started,
-      payload.plays,
-      payload.play,
-      payload.total_plays,
-      payload.started,
-      payload.video_starts,
-      payload.video_started,
-      // Older traffic-origin responses called starts `views`/`sessions`.
-      payload.views,
-      payload.sessions,
-      payload.unique_views,
-    );
-    const pitchReached = firstPositiveMetric(
-      payload.total_over_pitch,
-      payload.pitch_reached,
-      payload.reached_pitch,
-      payload.sales_page_viewers,
-      payload.pitch,
-      payload.conversions,
-    );
-    const directPlayRate = normalizeRate(
-      payload.play_rate ?? payload.playRate ?? payload.playrate,
-    );
-    const directPitchRetention = normalizeRate(
-      payload.ret_pitch ?? payload.pitch_retention ?? payload.pitchRetention ?? payload.retention_pitch,
-    );
-    const directRateWeight = pageviews || plays || 1;
-    const directPitchWeight = plays || pageviews || 1;
-
-    for (const attributionKey of attributionKeys) {
-      const current = metricsByAttribution.get(attributionKey) ?? createVturbMetricAccumulator();
-      current.pageviews += pageviews;
-      current.plays += plays;
-      current.pitchReached += pitchReached;
-      if (directPlayRate != null) {
-        current.directPlayRate += directPlayRate * directRateWeight;
-        current.directPlayRateWeight += directRateWeight;
-      }
-      if (directPitchRetention != null) {
-        current.directPitchRetention += directPitchRetention * directPitchWeight;
-        current.directPitchRetentionWeight += directPitchWeight;
-      }
-      metricsByAttribution.set(attributionKey, current);
-    }
-  }
-
   const result = new Map<string, CreativeVturbMetrics>();
 
   for (const card of cards) {
-    let pageviews = 0;
-    let plays = 0;
-    let pitchReached = 0;
-
-    const attributionTerms = [...card.adIds, ...card.adNames]
-      .map((value) => normalizeAttributionToken(value))
-      .filter((value) => value.length >= 3);
-    let directPlayRate = 0;
-    let directPlayRateWeight = 0;
-    let directPitchRetention = 0;
-    let directPitchRetentionWeight = 0;
-    for (const [content, metrics] of metricsByAttribution) {
-      const normalizedContent = normalizeAttributionToken(content);
-      if (!attributionTerms.some((term) => normalizedContent === term || normalizedContent.includes(term))) continue;
-      pageviews += metrics.pageviews;
-      plays += metrics.plays;
-      pitchReached += metrics.pitchReached;
-      directPlayRate += metrics.directPlayRate;
-      directPlayRateWeight += metrics.directPlayRateWeight;
-      directPitchRetention += metrics.directPitchRetention;
-      directPitchRetentionWeight += metrics.directPitchRetentionWeight;
-    }
+    const adIds = new Set(card.adIds);
+    const rows = dimensionMetrics.filter((row) => adIds.has(row.ad_id));
+    const pageviews = rows.reduce((sum, row) => sum + numericMetric(row.pageviews), 0);
+    const plays = rows.reduce((sum, row) => sum + numericMetric(row.plays_unicos), 0);
+    const pitchReached = rows.reduce((sum, row) => sum + numericMetric(row.chegaram_pitch), 0);
 
     result.set(card.id, {
       pageviews,
       plays,
       pitchReached,
-      playRate: pageviews > 0
-        ? (plays / pageviews) * 100
-        : directPlayRateWeight > 0
-          ? directPlayRate / directPlayRateWeight
-          : null,
-      pitchRetention: plays > 0
-        ? (pitchReached / plays) * 100
-        : directPitchRetentionWeight > 0
-          ? directPitchRetention / directPitchRetentionWeight
-          : null,
+      playRate: pageviews > 0 ? (plays / pageviews) * 100 : null,
+      pitchRetention: plays > 0 ? (pitchReached / plays) * 100 : null,
     });
   }
 
   return result;
 }
 
-function normalizeAttributionToken(value: string) {
-  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
-}
-
-function createVturbMetricAccumulator() {
-  return {
-    pageviews: 0,
-    plays: 0,
-    pitchReached: 0,
-    directPlayRate: 0,
-    directPlayRateWeight: 0,
-    directPitchRetention: 0,
-    directPitchRetentionWeight: 0,
-  };
-}
-
-function asObject(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
-}
-
-function normalizeRate(value: unknown) {
-  const parsed = metricNumber(value);
-  if (parsed <= 0) return null;
-  // VTurb has used both fractions (0.5) and percentages (50) in exports.
-  const percentage = parsed <= 1 ? parsed * 100 : parsed;
-  return percentage <= 100 ? percentage : null;
-}
-
-function firstPositiveMetric(...values: unknown[]) {
-  for (const value of values) {
-    const parsed = metricNumber(value);
-    if (parsed > 0) return parsed;
-  }
-  return 0;
-}
-
-function metricNumber(value: unknown) {
-  const normalized = typeof value === "string"
-    ? value.trim().replace(/%$/, "").replace(",", ".")
-    : value;
-  const parsed = Number(normalized ?? 0);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
 function groupFormFromRow(group: CreativeGroupRow): GroupFormState {
   const rules = parseCreativeGroupRules(group.rules);
   const sortKeys: CreativeSortKey[] = [
     "purchases",
+    "recent",
+    "revenue",
+    "profit",
+    "order_bump_orders",
+    "upsell_orders",
     "roas",
     "refund_rate",
     "aov",

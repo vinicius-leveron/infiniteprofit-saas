@@ -62,6 +62,9 @@ export interface MetaAdDetailsRecord {
   id?: string;
   name?: string;
   created_time?: string;
+  updated_time?: string;
+  effective_status?: string;
+  configured_status?: string;
   creative?: MetaAdCreativeRecord | null;
 }
 

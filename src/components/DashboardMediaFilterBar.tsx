@@ -47,7 +47,10 @@ export function DashboardMediaFilterBar({
     () => uniqueOptions(adsetDimensions, "adset_id", "adset_name"),
     [adsetDimensions],
   );
-  const activeCount = value.accountIds.length + value.campaignIds.length + value.adsetIds.length;
+  const activeCount = value.accountIds.length
+    + value.campaignIds.length
+    + value.adsetIds.length
+    + (value.includeUnattributed ? 1 : 0);
 
   function updateAccounts(accountIds: string[]) {
     const allowedCampaigns = new Set(
@@ -67,6 +70,7 @@ export function DashboardMediaFilterBar({
         .filter(Boolean),
     );
     onChange({
+      ...value,
       accountIds,
       campaignIds,
       adsetIds: value.adsetIds.filter((id) => allowedAdsets.has(id)),
@@ -137,7 +141,13 @@ export function DashboardMediaFilterBar({
           size="sm"
           className="min-h-11 shrink-0 gap-2"
           disabled={activeCount === 0}
-          onClick={() => onChange({ accountIds: [], campaignIds: [], adsetIds: [] })}
+          onClick={() => onChange({
+            ...value,
+            accountIds: [],
+            campaignIds: [],
+            adsetIds: [],
+            includeUnattributed: false,
+          })}
         >
           <RotateCcw className="h-4 w-4" />
           Limpar filtros
@@ -145,6 +155,52 @@ export function DashboardMediaFilterBar({
             <span className="rounded-full bg-primary/15 px-1.5 text-[11px] text-primary">{activeCount}</span>
           )}
         </Button>
+      </div>
+
+      <div className="mt-3 flex flex-col gap-3 border-t border-border/40 pt-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-h-11 items-center gap-1 rounded-xl border border-border/40 bg-background/30 p-1">
+          <span className="px-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+            Campanhas e conjuntos
+          </span>
+          <button
+            type="button"
+            className={cn(
+              "min-h-9 rounded-lg px-3 text-xs font-medium transition-colors",
+              value.activity === "spent_in_period"
+                ? "bg-primary/15 text-primary"
+                : "text-muted-foreground hover:bg-muted/50",
+            )}
+            onClick={() => onChange({ ...value, activity: "spent_in_period" })}
+          >
+            Com gasto no período
+          </button>
+          <button
+            type="button"
+            className={cn(
+              "min-h-9 rounded-lg px-3 text-xs font-medium transition-colors",
+              value.activity === "all"
+                ? "bg-primary/15 text-primary"
+                : "text-muted-foreground hover:bg-muted/50",
+            )}
+            onClick={() => onChange({ ...value, activity: "all" })}
+          >
+            Todos
+          </button>
+        </div>
+
+        <button
+          type="button"
+          className={cn(
+            "flex min-h-11 items-center gap-3 rounded-xl border px-3 text-left text-sm transition-colors",
+            value.includeUnattributed
+              ? "border-amber-500/40 bg-amber-500/10 text-amber-100"
+              : "border-border/40 bg-background/30 text-muted-foreground hover:bg-muted/40",
+          )}
+          onClick={() => onChange({ ...value, includeUnattributed: !value.includeUnattributed })}
+        >
+          <Checkbox checked={value.includeUnattributed} aria-label="Incluir orgânico e não atribuído" />
+          Orgânico / não atribuído
+        </button>
       </div>
 
       {activeCount > 0 && (
@@ -167,6 +223,19 @@ export function DashboardMediaFilterBar({
             ids={value.adsetIds}
             onRemove={(id) => onChange({ ...value, adsetIds: value.adsetIds.filter((item) => item !== id) })}
           />
+          {value.includeUnattributed && (
+            <span className="inline-flex min-h-8 items-center gap-1 rounded-full bg-amber-500/10 px-2.5 text-xs text-amber-200">
+              Orgânico / não atribuído
+              <button
+                type="button"
+                onClick={() => onChange({ ...value, includeUnattributed: false })}
+                className="rounded-full p-1 hover:bg-amber-500/10"
+                aria-label="Remover orgânico e não atribuído"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          )}
         </div>
       )}
     </div>
@@ -209,6 +278,9 @@ function FilterMultiSelect({
                 : `${selected.length} selecionado${selected.length === 1 ? "" : "s"}`
             }`}
             className="min-h-11 w-full justify-between rounded-xl bg-background/60 px-3 font-normal"
+            title={selected.length === 1
+              ? options.find((option) => option.id === selected[0])?.label
+              : undefined}
           >
             <span className="truncate text-left text-sm">
               {loading
@@ -254,6 +326,7 @@ function FilterMultiSelect({
                 <button
                   key={option.id}
                   type="button"
+                  title={option.label}
                   className={cn(
                     "flex min-h-11 w-full items-center gap-3 rounded-lg px-2 text-left text-sm hover:bg-muted",
                     checked && "bg-primary/5",
@@ -290,7 +363,11 @@ function FilterChips({
   onRemove: (id: string) => void;
 }) {
   return ids.map((id) => (
-    <span key={id} className="inline-flex min-h-8 items-center gap-1 rounded-full bg-primary/10 px-2.5 text-xs text-primary">
+    <span
+      key={id}
+      title={options.find((option) => option.id === id)?.label ?? id}
+      className="inline-flex min-h-8 max-w-full items-center gap-1 rounded-full bg-primary/10 px-2.5 text-xs text-primary"
+    >
       {prefix}: {options.find((option) => option.id === id)?.label ?? id}
       <button type="button" onClick={() => onRemove(id)} className="rounded-full p-1 hover:bg-primary/10" aria-label={`Remover ${prefix}`}>
         <X className="h-3 w-3" />

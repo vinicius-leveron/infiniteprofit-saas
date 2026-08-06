@@ -109,10 +109,22 @@ const tableData: Record<string, unknown> = {
   ],
   daily_ad_dimension_metrics: [
     {
+      event_date: "2026-06-01",
       ad_id: "ad-1",
+      investimento: 100,
+      impressoes: 1000,
+      cliques: 30,
+      hook_count: 400,
       pageviews: 20,
       plays_unicos: 10,
       chegaram_pitch: 5,
+      vendas_front: 4,
+      fat_bruto: 320,
+      fat_liquido: 240,
+      reembolsos: 1,
+      valor_reembolsado: 80,
+      order_bump_orders: 2,
+      upsell_orders: 1,
     },
   ],
 };
@@ -259,10 +271,47 @@ describe("AdsPanel", () => {
           project_id: "project-1",
           asset_id: "asset-1",
           reprocess: true,
-          reprocess_scope: "analysis",
+          reprocess_scope: "transcript",
           enqueue_analysis: true,
         },
       });
     });
+  });
+
+  it("uses only the selected ad dimensions when one asset runs in multiple ads", async () => {
+    const ads = tableData.creative_asset_ads as Array<Record<string, unknown>>;
+    const dimensions = tableData.daily_ad_dimension_metrics as Array<Record<string, unknown>>;
+    ads.push({
+      ...ads[0],
+      ad_id: "ad-2",
+      ad_name: "Anúncio fora do filtro",
+    });
+    dimensions.push({
+      ...dimensions[0],
+      ad_id: "ad-2",
+      investimento: 900,
+      vendas_front: 9,
+      fat_bruto: 9_000,
+      fat_liquido: 8_000,
+    });
+
+    try {
+      render(
+        <AdsPanel
+          projectId="project-1"
+          dateRange={{ from: "2026-06-01", to: "2026-06-03" }}
+          allowedAdIds={["ad-1"]}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("Hook criativo forte")).toBeInTheDocument();
+      });
+      expect(screen.getAllByText((text) => text.includes("320,00")).length).toBeGreaterThan(0);
+      expect(screen.queryByText((text) => text.includes("9.320,00"))).not.toBeInTheDocument();
+    } finally {
+      ads.pop();
+      dimensions.pop();
+    }
   });
 });

@@ -23,6 +23,8 @@ describe("dashboard filter storage", () => {
       accountIds: ["act_123"],
       campaignIds: undefined,
       adsetIds: undefined,
+      activity: "spent_in_period",
+      includeUnattributed: false,
       accountFilter: "act_123",
     });
     expect(readStoredDashboardFilters("project-2")).toEqual({});
@@ -42,6 +44,8 @@ describe("dashboard filter storage", () => {
       accountIds: ["act_123"],
       campaignIds: undefined,
       adsetIds: undefined,
+      activity: "spent_in_period",
+      includeUnattributed: false,
       accountFilter: "act_123",
     });
   });
@@ -63,6 +67,8 @@ describe("dashboard filter storage", () => {
       accountIds: ["act_1", "act_2"],
       campaignIds: ["campaign-1"],
       adsetIds: ["adset-1", "adset-2"],
+      activity: "spent_in_period",
+      includeUnattributed: false,
       accountFilter: undefined,
     });
   });

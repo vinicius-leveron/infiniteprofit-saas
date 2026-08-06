@@ -70,6 +70,8 @@ const ads: CreativeAssetAdRow[] = [
   {
     asset_id: "asset-1",
     ad_id: "ad-1",
+    ad_created_time: "2026-05-30T12:00:00Z",
+    ad_effective_status: "ACTIVE",
     ad_name: "Anúncio 1",
     adset_id: "adset-1",
     adset_name: "Adset Escala",
@@ -79,6 +81,7 @@ const ads: CreativeAssetAdRow[] = [
   {
     asset_id: "asset-1",
     ad_id: "ad-2",
+    ad_created_time: "2026-06-01T12:00:00Z",
     ad_name: "Anúncio 2",
     adset_id: "adset-1",
     adset_name: "Adset Escala",
@@ -88,6 +91,8 @@ const ads: CreativeAssetAdRow[] = [
   {
     asset_id: "asset-2",
     ad_id: "ad-3",
+    ad_created_time: "2026-06-02T12:00:00Z",
+    ad_effective_status: "PAUSED",
     ad_name: "Anúncio 3",
     adset_id: "adset-2",
     adset_name: "Adset Teste",
@@ -227,6 +232,9 @@ describe("creative assets view helpers", () => {
     expect(first?.scores.potencial_de_escala).toBe(88);
     expect(first?.tags).toContain("hook");
     expect(first?.pipelineStatus).toBe("ready");
+    expect(first?.firstAdCreatedAt).toBe("2026-05-30T12:00:00Z");
+    expect(first?.lastSpendAt).toBe("2026-06-02");
+    expect(first?.deliveryStatus).toBe("active");
     expect(first?.transcriptSegments).toHaveLength(1);
   });
 
@@ -245,6 +253,16 @@ describe("creative assets view helpers", () => {
     expect(sorted).toHaveLength(1);
     expect(sorted[0].id).toBe("asset-1");
     expect(resolveSortKey("best-roas", "spend", null)).toBe("roas");
+  });
+
+  it("supports the new commercial and recency sort options", () => {
+    const cards = buildCreativeAssetCards({ assets, ads, metrics, analyses });
+
+    expect(sortCreativeCards(cards, "recent")[0].id).toBe("asset-2");
+    expect(sortCreativeCards(cards, "revenue")[0].id).toBe("asset-1");
+    expect(sortCreativeCards(cards, "profit")[0].id).toBe("asset-1");
+    expect(sortCreativeCards(cards, "order_bump_orders")[0].id).toBe("asset-1");
+    expect(sortCreativeCards(cards, "upsell_orders")[0].id).toBe("asset-1");
   });
 
   it("groups cards by campaign and adset labels", () => {
@@ -278,6 +296,17 @@ describe("creative assets view helpers", () => {
       transcriptErrorMessage: null,
       analysisErrorMessage: null,
     })).toBe("pending");
+
+    expect(derivePipelineStatus({
+      mediaType: "video",
+      analysisStatus: "processing",
+      transcriptStatus: "processing",
+      analysisCoverage: "pending",
+      activeJobStatus: "running",
+      transcript: "Texto já persistido",
+      transcriptErrorMessage: null,
+      analysisErrorMessage: null,
+    })).toBe("analyzing");
 
     expect(derivePipelineStatus({
       mediaType: "video",

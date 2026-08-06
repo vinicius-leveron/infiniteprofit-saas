@@ -50,7 +50,7 @@ export function SalesHeatmap({ projectId, dateRange, mediaFilters }: Props) {
       setError(null);
 
       const result = await supabase.rpc(
-        "get_dashboard_sales_heatmap",
+        "get_dashboard_sales_heatmap_v2",
         {
           _project_id: projectId,
           _from: dateRange.from,
@@ -58,6 +58,7 @@ export function SalesHeatmap({ projectId, dateRange, mediaFilters }: Props) {
           _account_ids: mediaFilters?.accountIds ?? [],
           _campaign_ids: mediaFilters?.campaignIds ?? [],
           _adset_ids: mediaFilters?.adsetIds ?? [],
+          _include_unattributed: mediaFilters?.includeUnattributed ?? false,
         },
       );
 
@@ -81,6 +82,7 @@ export function SalesHeatmap({ projectId, dateRange, mediaFilters }: Props) {
     mediaFilters?.accountIds,
     mediaFilters?.adsetIds,
     mediaFilters?.campaignIds,
+    mediaFilters?.includeUnattributed,
     projectId,
   ]);
 

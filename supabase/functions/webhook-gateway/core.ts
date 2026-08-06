@@ -189,6 +189,7 @@ export function normalizeHotmart(
       ? platformFee * (conversionRate ?? 0)
       : platformFee;
   const providerTransactionId = `hotmart:${externalId}`;
+  const hotmartBuyer = asRecord(data?.buyer ?? purchase?.buyer);
 
   return [{
     event_type: type,
@@ -220,6 +221,8 @@ export function normalizeHotmart(
               ? "cart_abandonment_is_operational"
               : null,
       payment_method: method,
+      buyer_provider_id: firstString([hotmartBuyer.id, hotmartBuyer.ucode]) || null,
+      buyer_email: firstString([hotmartBuyer.email]) || null,
       recurrence_number:
         Number.isFinite(Number(purchase?.recurrence_number))
           ? Number(purchase.recurrence_number)
@@ -620,6 +623,13 @@ export function normalizeHubla(raw: any): NormalizedEvent[] {
       object.billing_reason,
     ]).toLowerCase(),
     buyer_email: firstString([object.customer_email, customer.email, payer.email, object.email, user.email]) || null,
+    buyer_provider_id: firstString([
+      object.payer_id,
+      object.payerId,
+      payer.id,
+      user.id,
+      eventRecord.user_id,
+    ]) || null,
     product_id: firstString([object.product_id, product.id, getPath(object, "plan.product")]),
     items: normalizedItems,
     is_front: !isOfferEvent && !object.is_upsell && !object.upsell_id && !paymentSessionUrl.includes("/upsell"),
@@ -715,6 +725,8 @@ function normalizeKiwify(raw: any): NormalizedEvent[] {
       total,
       net,
       payment_method: method,
+      buyer_provider_id: String(raw?.Customer?.id ?? raw?.customer_id ?? "") || null,
+      buyer_email: String(raw?.Customer?.email ?? raw?.customer_email ?? raw?.email ?? "") || null,
       product_id: mainProductId,
       items: normalizedItems,
       is_front: !raw?.is_upsell && !raw?.upsell_order_id,
@@ -784,23 +796,63 @@ function normalizeHublaProductItems(eventRecord: Record<string, any>, fallbackPr
     eventRecord.products,
     eventRecord.product ? [eventRecord.product] : null,
   ]);
+  const mainOfferId = firstString([getPath(eventRecord, "product.id")]);
 
-  return products.map((product: any, index: number) => {
+  return products.flatMap((product: any, index: number) => {
     const productRecord = asRecord(product);
     const productId = firstString([productRecord.id, productRecord.product_id, `product-${index + 1}`]);
-    return {
-      external_id: productId,
-      name: firstString([productRecord.name, productRecord.title, productId]),
-      price: firstMoney(productRecord, [
-        { path: "amount", autoCents: true },
-        { path: "amountCents", cents: true },
-        { path: "price", autoCents: true },
-        { path: "priceCents", cents: true },
-        { path: "value", autoCents: true },
-      ]) || (index === 0 ? fallbackPrice : 0),
-      type: "main",
-      is_bump: false,
-    };
+    const offers = firstNonEmptyArray([productRecord.offers]);
+    if (offers.length === 0) {
+      const isBump = index > 0 && Boolean(mainOfferId && productId !== mainOfferId);
+      return [{
+        external_id: productId,
+        product_id: productId,
+        name: firstString([productRecord.name, productRecord.title, productId]),
+        price: firstMoney(productRecord, [
+          { path: "amount", autoCents: true },
+          { path: "amountCents", cents: true },
+          { path: "price", autoCents: true },
+          { path: "priceCents", cents: true },
+          { path: "value", autoCents: true },
+        ]) || (index === 0 ? fallbackPrice : 0),
+        type: isBump ? "orderbump" : "main",
+        is_bump: isBump,
+      }];
+    }
+
+    return offers.map((offer: any, offerIndex: number) => {
+      const offerRecord = asRecord(offer);
+      const offerId = firstString([
+        offerRecord.id,
+        offerRecord.offer_id,
+        `${productId}-offer-${offerIndex + 1}`,
+      ]);
+      const explicitBump = typeof offerRecord.isOrderBump === "boolean"
+        ? offerRecord.isOrderBump
+        : typeof offerRecord.is_order_bump === "boolean"
+          ? offerRecord.is_order_bump
+          : null;
+      const isBump = explicitBump ?? (Boolean(mainOfferId) && offerId !== mainOfferId);
+      return {
+        external_id: offerId,
+        product_id: productId,
+        name: firstString([
+          productRecord.name,
+          productRecord.title,
+          offerRecord.name,
+          offerId,
+        ]),
+        price: firstMoney(offerRecord, [
+          { path: "amountCents", cents: true },
+          { path: "amount", autoCents: true },
+          { path: "priceCents", cents: true },
+          { path: "price", autoCents: true },
+          { path: "value", autoCents: true },
+        ]) || (!isBump && index === 0 && offerIndex === 0 ? fallbackPrice : 0),
+        type: isBump ? "orderbump" : "main",
+        is_bump: isBump,
+      };
+    });
   });
 }
 

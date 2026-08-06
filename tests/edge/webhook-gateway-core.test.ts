@@ -271,6 +271,72 @@ describe("webhook gateway core", () => {
     expect(approved?.payload.raw_payload).toBe(raw);
   });
 
+  it("normalizes the recommended Hubla invoice format as one sale with nested offers", () => {
+    const events = normalizeHubla({
+      type: "invoice.payment_succeeded",
+      version: "2.0.0",
+      event: {
+        product: { id: "product-front", name: "Produto principal" },
+        products: [
+          {
+            id: "product-front",
+            name: "Produto principal anual",
+            offers: [{
+              id: "offer-front",
+              name: "Principal",
+              amountCents: 19700,
+              isOrderBump: false,
+            }],
+          },
+          {
+            id: "product-bump-a",
+            name: "Templates",
+            offers: [{
+              id: "offer-bump-a",
+              name: "Oferta única",
+              amountCents: 4700,
+              isOrderBump: true,
+            }],
+          },
+          {
+            id: "product-bump-b",
+            name: "Mentoria",
+            offers: [{
+              id: "offer-bump-b",
+              name: "Oferta única",
+              amountCents: 9700,
+              isOrderBump: true,
+            }],
+          },
+        ],
+        hasOrderBump: true,
+        invoice: {
+          id: "invoice-recommended-1",
+          status: "paid",
+          payerId: "payer-1",
+          amount: { subtotalCents: 34100, totalCents: 34100 },
+          paymentMethod: "credit_card",
+          createdAt: "2026-08-06T12:00:00.000Z",
+          receivers: [
+            { role: "platform", totalCents: 4100 },
+            { role: "seller", totalCents: 30000 },
+          ],
+        },
+      },
+    });
+
+    expect(events).toHaveLength(1);
+    expect(events[0].event_type).toBe("purchase.approved");
+    expect(events[0].external_id).toBe("invoice-recommended-1");
+    expect(events[0].payload.total).toBe(341);
+    expect(events[0].payload.buyer_provider_id).toBe("payer-1");
+    expect(events[0].payload.items).toEqual([
+      expect.objectContaining({ external_id: "offer-front", product_id: "product-front", price: 197, is_bump: false }),
+      expect.objectContaining({ external_id: "offer-bump-a", product_id: "product-bump-a", price: 47, is_bump: true }),
+      expect.objectContaining({ external_id: "offer-bump-b", product_id: "product-bump-b", price: 97, is_bump: true }),
+    ]);
+  });
+
   it("keeps Hubla v2 unpaid invoice.created as checkout only", () => {
     const events = normalizeHubla({
       type: "invoice.created",

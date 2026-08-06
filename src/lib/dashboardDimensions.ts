@@ -40,10 +40,28 @@ export type DashboardAttributionCoverage = {
   vslPercent: number;
 };
 
-export async function listDashboardAdDimensions(projectId: string) {
+export type DashboardAttributionSummary = DashboardAttributionCoverage & {
+  unattributedFrontSales: number;
+  unattributedRevenue: number;
+  unattributedVsl: number;
+};
+
+export async function listDashboardAdDimensions(
+  projectId: string,
+  options?: {
+    from?: string | null;
+    to?: string | null;
+    activity?: DashboardFilterState["activity"];
+  },
+) {
   const { data, error } = await supabase.rpc(
-    "list_dashboard_ad_dimensions",
-    { _project_id: projectId },
+    "list_dashboard_ad_dimensions_v2",
+    {
+      _project_id: projectId,
+      _from: options?.from ?? null,
+      _to: options?.to ?? null,
+      _activity: options?.activity ?? "all",
+    },
   );
   if (error) throw error;
   return (data ?? []) satisfies DashboardAdDimension[];
@@ -54,7 +72,7 @@ export async function getDashboardDimensionMetrics(
   filters: DashboardFilterState,
 ) {
   const { data, error } = await supabase.rpc(
-    "get_dashboard_dimension_metrics",
+    "get_dashboard_dimension_metrics_v2",
     {
       _project_id: projectId,
       _from: null,
@@ -62,6 +80,7 @@ export async function getDashboardDimensionMetrics(
       _account_ids: filters.accountIds,
       _campaign_ids: filters.campaignIds,
       _adset_ids: filters.adsetIds,
+      _include_unattributed: filters.includeUnattributed,
     },
   );
   if (error) throw error;
@@ -69,7 +88,10 @@ export async function getDashboardDimensionMetrics(
 }
 
 export function hasDashboardMediaFilters(filters: DashboardFilterState) {
-  return filters.accountIds.length > 0 || filters.campaignIds.length > 0 || filters.adsetIds.length > 0;
+  return filters.accountIds.length > 0
+    || filters.campaignIds.length > 0
+    || filters.adsetIds.length > 0
+    || filters.includeUnattributed;
 }
 
 export function filterDashboardAdDimensions(
@@ -127,7 +149,34 @@ export function reconcileDashboardMediaFilters(
     return filters;
   }
 
-  return { accountIds, campaignIds, adsetIds };
+  return {
+    accountIds,
+    campaignIds,
+    adsetIds,
+    activity: filters.activity,
+    includeUnattributed: filters.includeUnattributed,
+  };
+}
+
+export async function getDashboardAttributionSummary(
+  projectId: string,
+  from: string | null,
+  to: string | null,
+) {
+  const { data, error } = await supabase.rpc(
+    "get_dashboard_attribution_summary",
+    { _project_id: projectId, _from: from, _to: to },
+  );
+  if (error) throw error;
+  const row = data?.[0];
+  return {
+    frontSalesPercent: number(row?.front_sales_percent),
+    revenuePercent: number(row?.revenue_percent),
+    vslPercent: number(row?.vsl_percent),
+    unattributedFrontSales: number(row?.unattributed_front_sales),
+    unattributedRevenue: number(row?.unattributed_revenue),
+    unattributedVsl: number(row?.unattributed_vsl),
+  } satisfies DashboardAttributionSummary;
 }
 
 export function applyDashboardDimensionMetrics(

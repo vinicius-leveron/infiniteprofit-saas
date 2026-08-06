@@ -264,6 +264,24 @@ Deno.serve(async (req) => {
 
         inserted++;
         datesTouched.add(event.event_date);
+        if (event.event_type === "purchase.approved" || event.event_type === "purchase.refused") {
+          try {
+            await persistPaymentAttemptShadow(sb, {
+              projectId: project.id,
+              workspaceId: project.workspace_id,
+              provider,
+              event,
+            });
+          } catch (shadowError) {
+            console.error(JSON.stringify({
+              event: "payment_attempt_shadow_failed",
+              trace_id: traceId,
+              project_id: project.id,
+              provider,
+              error: shadowError instanceof Error ? shadowError.message : "shadow write failed",
+            }));
+          }
+        }
         if (
           provider === "hotmart"
           && binding.checkout_integration_id
@@ -675,6 +693,70 @@ async function hmacHex(algo: "SHA-1" | "SHA-256", secret: string, body: string) 
   return Array.from(new Uint8Array(signature))
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
+}
+
+async function persistPaymentAttemptShadow(
+  sb: SupabaseClientAny,
+  args: {
+    projectId: string;
+    workspaceId: string;
+    provider: "hubla" | "hotmart" | "kiwify";
+    event: {
+      event_type: string;
+      external_id: string;
+      event_occurred_at: string;
+      payload: Record<string, any>;
+    };
+  },
+) {
+  const method = normalizePaymentMethod(args.event.payload?.payment_method);
+  if (!method) return;
+
+  const providerId = stringValue(
+    args.event.payload?.buyer_provider_id
+      ?? args.event.payload?.buyer_id
+      ?? args.event.payload?.customer_id,
+  );
+  const email = stringValue(args.event.payload?.buyer_email)?.toLowerCase();
+  const orderId = stringValue(
+    args.event.payload?.transaction_id ?? args.event.external_id,
+  ) ?? args.event.external_id;
+  const identitySource = providerId ? "provider_id" : email ? "email" : "invoice";
+  const identityValue = providerId ?? email ?? orderId;
+  const hashSecret = Deno.env.get("PAYMENT_ATTEMPT_HASH_SECRET")?.trim() || SERVICE_KEY;
+  const buyerKey = await hmacHex(
+    "SHA-256",
+    hashSecret,
+    `${args.workspaceId}:${args.projectId}:${args.provider}:${identitySource}:${identityValue}`,
+  );
+
+  const { error } = await sb.from("payment_attempt_signals").upsert({
+    project_id: args.projectId,
+    workspace_id: args.workspaceId,
+    provider: args.provider,
+    provider_event_key: `${args.event.event_type}:${args.event.external_id}`,
+    buyer_key: buyerKey,
+    identity_source: identitySource,
+    order_id: orderId,
+    front_product_id: stringValue(args.event.payload?.product_id),
+    method,
+    outcome: args.event.event_type === "purchase.approved" ? "approved" : "refused",
+    occurred_at: args.event.event_occurred_at,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: "project_id,provider,provider_event_key" });
+  if (error) throw new Error(error.message);
+}
+
+function normalizePaymentMethod(value: unknown): "card" | "pix" | null {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized.includes("card") || normalized.includes("cart")) return "card";
+  if (normalized.includes("pix")) return "pix";
+  return null;
+}
+
+function stringValue(value: unknown) {
+  const normalized = String(value ?? "").trim();
+  return normalized || null;
 }
 
 function safeEqual(a: string, b: string) {

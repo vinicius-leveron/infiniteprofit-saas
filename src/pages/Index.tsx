@@ -31,8 +31,8 @@ import { getDashboardPeriodRows, getDashboardSelectedDateRange } from "@/lib/das
 import { writeLastDashboardPreference } from "@/lib/lastDashboard";
 import {
   applyDashboardDimensionMetrics,
-  calculateAttributionCoverage,
   filterDashboardAdDimensions,
+  getDashboardAttributionSummary,
   getDashboardDimensionMetrics,
   hasDashboardMediaFilters,
   listDashboardAdDimensions,
@@ -121,6 +121,8 @@ const Index = () => {
     accountIds: [],
     campaignIds: [],
     adsetIds: [],
+    activity: "spent_in_period",
+    includeUnattributed: false,
   });
   const [adDimensions, setAdDimensions] = useState<DashboardAdDimension[]>([]);
   const [dimensionsLoading, setDimensionsLoading] = useState(false);
@@ -207,6 +209,8 @@ const Index = () => {
       accountIds: stored.accountIds ?? [],
       campaignIds: stored.campaignIds ?? [],
       adsetIds: stored.adsetIds ?? [],
+      activity: stored.activity ?? "spent_in_period",
+      includeUnattributed: stored.includeUnattributed ?? false,
     });
     setFiltersHydratedFor(currentProjectId);
   }, [currentProjectId]);
@@ -220,6 +224,8 @@ const Index = () => {
       accountIds: mediaFilters.accountIds,
       campaignIds: mediaFilters.campaignIds,
       adsetIds: mediaFilters.adsetIds,
+      activity: mediaFilters.activity,
+      includeUnattributed: mediaFilters.includeUnattributed,
     });
   }, [currentProjectId, customFrom, customTo, filtersHydratedFor, mediaFilters, period]);
 
@@ -383,7 +389,17 @@ const Index = () => {
     let cancelled = false;
     setDimensionsLoading(true);
     setDimensionFilterError(null);
-    void listDashboardAdDimensions(currentProjectId)
+    const selectedRange = getDashboardSelectedDateRange(
+      rawApiRows,
+      period,
+      customFrom,
+      customTo,
+    );
+    void listDashboardAdDimensions(currentProjectId, {
+      from: selectedRange.from,
+      to: selectedRange.to,
+      activity: mediaFilters.activity,
+    })
       .then((dimensions) => {
         if (!cancelled) {
           setAdDimensions(dimensions);
@@ -402,7 +418,16 @@ const Index = () => {
         if (!cancelled) setDimensionsLoading(false);
       });
     return () => { cancelled = true; };
-  }, [currentProjectId, dimensionRetryKey, projectSource]);
+  }, [
+    currentProjectId,
+    customFrom,
+    customTo,
+    dimensionRetryKey,
+    mediaFilters.activity,
+    period,
+    projectSource,
+    rawApiRows,
+  ]);
 
   // A mesma agregação dimensional alimenta todas as abas do Dashboard.
   useEffect(() => {
@@ -416,27 +441,20 @@ const Index = () => {
     if (!currentProjectId) return;
     let cancelled = false;
     setDimensionsLoading(true);
-    void getDashboardDimensionMetrics(currentProjectId, mediaFilters)
-      .then((dimensionRows) => {
+    const selectedRange = getDashboardSelectedDateRange(
+      rawApiRows,
+      period,
+      customFrom,
+      customTo,
+    );
+    void Promise.all([
+      getDashboardDimensionMetrics(currentProjectId, mediaFilters),
+      getDashboardAttributionSummary(currentProjectId, selectedRange.from, selectedRange.to),
+    ])
+      .then(([dimensionRows, coverage]) => {
         if (cancelled) return;
-        const selectedBaseRows = getDashboardPeriodRows(
-          rawApiRows,
-          period,
-          customFrom,
-          customTo,
-        ).current;
-        const selectedRange = getDashboardSelectedDateRange(
-          rawApiRows,
-          period,
-          customFrom,
-          customTo,
-        );
-        const selectedDimensionRows = dimensionRows.filter((row) =>
-          (!selectedRange.from || row.event_date >= selectedRange.from) &&
-          (!selectedRange.to || row.event_date <= selectedRange.to)
-        );
         setRows(applyDashboardDimensionMetrics(rawApiRows, dimensionRows));
-        setAttributionCoverage(calculateAttributionCoverage(selectedBaseRows, selectedDimensionRows));
+        setAttributionCoverage(coverage);
         setDimensionFilterError(null);
       })
       .catch((error) => {
@@ -742,7 +760,9 @@ const Index = () => {
             {hasMediaFilters && attributionCoverage && (
               <div className="flex flex-col gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100 sm:flex-row sm:items-center sm:justify-between">
                 <span>
-                  Resultado atribuído aos anúncios selecionados. Eventos sem identificação confiável ficam fora.
+                  {mediaFilters.includeUnattributed
+                    ? "O resultado inclui também o agrupamento Orgânico / não atribuído."
+                    : "Resultado atribuído aos anúncios selecionados. Eventos sem identificação confiável ficam fora."}
                 </span>
                 <span className="shrink-0 text-xs font-medium tabular-nums">
                   Cobertura: vendas {attributionCoverage.frontSalesPercent.toFixed(0)}% · faturamento {attributionCoverage.revenuePercent.toFixed(0)}% · VSL {attributionCoverage.vslPercent.toFixed(0)}%

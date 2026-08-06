@@ -1291,12 +1291,74 @@ export type Database = {
           vendas_totais: number
         }[]
       }
+      get_dashboard_dimension_metrics_v2: {
+        Args: {
+          _account_ids?: string[]
+          _adset_ids?: string[]
+          _campaign_ids?: string[]
+          _from?: string | null
+          _include_unattributed?: boolean
+          _project_id: string
+          _to?: string | null
+        }
+        Returns: {
+          checkouts: number
+          cliques: number
+          event_date: string
+          fat_bruto: number
+          fat_liquido: number
+          chegaram_pitch: number
+          impressoes: number
+          investimento: number
+          landing_pageviews: number
+          order_bump_orders: number
+          pageviews: number
+          plays_unicos: number
+          reembolsos: number
+          upsell_orders: number
+          valor_reembolsado: number
+          vendas_front: number
+          vendas_totais: number
+        }[]
+      }
+      get_dashboard_attribution_summary: {
+        Args: {
+          _from?: string | null
+          _project_id: string
+          _to?: string | null
+        }
+        Returns: {
+          front_sales_percent: number
+          revenue_percent: number
+          unattributed_front_sales: number
+          unattributed_revenue: number
+          unattributed_vsl: number
+          vsl_percent: number
+        }[]
+      }
       get_dashboard_sales_heatmap: {
         Args: {
           _account_ids?: string[]
           _adset_ids?: string[]
           _campaign_ids?: string[]
           _from: string
+          _project_id: string
+          _to: string
+        }
+        Returns: {
+          hour: number
+          revenue: number
+          sales: number
+          weekday: number
+        }[]
+      }
+      get_dashboard_sales_heatmap_v2: {
+        Args: {
+          _account_ids?: string[]
+          _adset_ids?: string[]
+          _campaign_ids?: string[]
+          _from: string
+          _include_unattributed?: boolean
           _project_id: string
           _to: string
         }
@@ -1331,6 +1393,24 @@ export type Database = {
       }
       list_dashboard_ad_dimensions: {
         Args: { _project_id: string }
+        Returns: {
+          account_id: string | null
+          account_label: string | null
+          ad_id: string
+          ad_name: string | null
+          adset_id: string | null
+          adset_name: string | null
+          campaign_id: string | null
+          campaign_name: string | null
+        }[]
+      }
+      list_dashboard_ad_dimensions_v2: {
+        Args: {
+          _activity?: string
+          _from?: string | null
+          _project_id: string
+          _to?: string | null
+        }
         Returns: {
           account_id: string | null
           account_label: string | null
