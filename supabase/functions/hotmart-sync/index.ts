@@ -459,7 +459,27 @@ async function syncBackfill(
       const hotmartEvent = hotmartEventForStatus(purchaseStatus);
       if (!hotmartEvent) continue;
       const transaction = String(sale?.purchase?.transaction ?? "");
-      const commissionDetail = commissionsByTransaction.get(transaction);
+      let commissionDetail = commissionsByTransaction.get(transaction);
+      // Some Hotmart accounts omit isolated COMPLETE transactions from a
+      // date-window commissions response even though sales/history returns
+      // them. The official endpoint supports transaction lookup, so retry the
+      // missing split narrowly before leaving the financial result pending.
+      if (!Array.isArray(commissionDetail?.commissions) && transaction) {
+        const targetedUrl = new URL(SALES_COMMISSIONS_URL);
+        targetedUrl.searchParams.set("transaction", transaction);
+        targetedUrl.searchParams.set(
+          "transaction_status",
+          String(purchaseStatus).toUpperCase(),
+        );
+        const targetedDetails = await fetchAllPages<any>(
+          admin,
+          args.integrationId,
+          targetedUrl.toString(),
+        );
+        commissionDetail = targetedDetails.find(
+          (detail) => String(detail?.transaction ?? "") === transaction,
+        );
+      }
       const authoritativeCommissions = Array.isArray(
         commissionDetail?.commissions,
       );
