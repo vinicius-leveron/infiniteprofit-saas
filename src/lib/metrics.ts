@@ -27,12 +27,13 @@ export interface KpiTotals {
   vendasTotais: number;
   vendasFront: number;
   fatBruto: number;
-  fatLiquido: number;
+  fatLiquido: number | null;
+  financialPendingCount: number;
   impostoMeta: number;
   fatFront: number;
   fatOrderbump: number;
   fatFunil: number;
-  lucro: number;
+  lucro: number | null;
   reembolsos: number;
   valorReembolsado: number;
   impressoes: number;
@@ -73,11 +74,17 @@ const avgK = (rows: DailyRow[], k: keyof DailyRow): number | null => {
 };
 
 export function computeTotals(rows: DailyRow[]): KpiTotals {
+  const financialPendingCount = rows.reduce(
+    (sum, row) => sum + Math.max(0, row.financialPendingCount ?? 0),
+    0,
+  );
+  const financialPending = financialPendingCount > 0;
   const investimento = sumK(rows, "investimento");
   const vendasTotais = sumK(rows, "vendasTotais");
   const vendasFront = sumK(rows, "vendasFront");
   const fatBruto = sumK(rows, "fatBruto");
-  const fatLiquido = sumK(rows, "fatLiquido");
+  const resolvedFatLiquido = sumK(rows, "fatLiquido");
+  const fatLiquido = financialPending ? null : resolvedFatLiquido;
   const impostoMeta = rows.reduce((sum, row) => {
     const rowInvestimento = typeof row.investimento === "number" && !isNaN(row.investimento) ? row.investimento : 0;
     const rowImposto = typeof row.impostoMeta === "number" && !isNaN(row.impostoMeta)
@@ -88,7 +95,7 @@ export function computeTotals(rows: DailyRow[]): KpiTotals {
   const fatFront = sumK(rows, "fatFront");
   const fatOrderbump = sumK(rows, "fatOrderbump");
   const fatFunil = sumK(rows, "fatFunil");
-  const lucro = rows.reduce((sum, row) => {
+  const resolvedLucro = rows.reduce((sum, row) => {
     if (typeof row.lucro === "number" && !isNaN(row.lucro)) return sum + row.lucro;
     const rowFatLiquido = typeof row.fatLiquido === "number" && !isNaN(row.fatLiquido) ? row.fatLiquido : 0;
     const rowInvestimento = typeof row.investimento === "number" && !isNaN(row.investimento) ? row.investimento : 0;
@@ -97,6 +104,7 @@ export function computeTotals(rows: DailyRow[]): KpiTotals {
       : rowInvestimento * META_TAX_RATE;
     return sum + rowFatLiquido - rowInvestimento - rowImposto;
   }, 0);
+  const lucro = financialPending ? null : resolvedLucro;
   const reembolsos = sumK(rows, "reembolsos");
   const valorReembolsado = sumK(rows, "valorReembolsado");
   const impressoes = sumK(rows, "impressoes");
@@ -119,6 +127,7 @@ export function computeTotals(rows: DailyRow[]): KpiTotals {
     vendasFront,
     fatBruto,
     fatLiquido,
+    financialPendingCount,
     impostoMeta,
     fatFront,
     fatOrderbump,
@@ -133,7 +142,7 @@ export function computeTotals(rows: DailyRow[]): KpiTotals {
     playsUnicos,
     checkouts,
     roas: safeDiv(fatBruto, investimento),
-    roi: safeDiv(fatLiquido - impostoMeta, investimento),
+    roi: fatLiquido == null ? null : safeDiv(fatLiquido - impostoMeta, investimento),
     cac: safeDiv(investimento, vendasTotais),
     aov: safeDiv(fatBruto, vendasFront),
     cpm: impressoes ? (investimento / impressoes) * 1000 : null,

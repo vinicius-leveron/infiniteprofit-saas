@@ -342,16 +342,29 @@ function rowToHotmartRaw(
             sck,
           },
         },
-        commissions: canonicalNet > 0
-          ? [{
-            source: "PRODUCER",
-            commission: {
-              value: canonicalNet,
-              currency_value: currency,
-            },
-          }]
-          : [],
+        // Keep every economic receiver separate. normalizeHotmart applies the
+        // same producer + affiliate + coproducer rule used by the API path.
+        commissions: [
+          hotmartSpreadsheetCommission("PRODUCER", producerNet, currency),
+          hotmartSpreadsheetCommission("AFFILIATE", affiliateNet, currency),
+          hotmartSpreadsheetCommission("COPRODUCER", coproducerNet, currency),
+        ].filter(Boolean),
       },
+    },
+  };
+}
+
+function hotmartSpreadsheetCommission(
+  source: "PRODUCER" | "AFFILIATE" | "COPRODUCER",
+  value: number,
+  currency: string,
+) {
+  if (value <= 0) return null;
+  return {
+    source,
+    commission: {
+      value,
+      currency_value: currency,
     },
   };
 }

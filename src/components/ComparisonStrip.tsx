@@ -31,6 +31,7 @@ interface Metric {
   format: Format;
   /** Métricas onde "menor é melhor" (CAC, CPM, CPC, custos, reembolso) */
   inverse?: boolean;
+  updating?: boolean;
 }
 
 const Delta = ({ cur, prev, inverse }: { cur: number | null; prev: number | null; inverse?: boolean }) => {
@@ -73,13 +74,13 @@ const MetricCell = ({ m }: { m: Metric }) => (
       <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium truncate">
         {m.label}
       </span>
-      <Delta cur={m.cur} prev={m.prev} inverse={m.inverse} />
+      {m.updating ? null : <Delta cur={m.cur} prev={m.prev} inverse={m.inverse} />}
     </div>
     <div className="text-base font-bold text-foreground tabular-nums leading-tight">
-      {fmt(m.cur, m.format)}
+      {m.updating ? "Atualizando" : fmt(m.cur, m.format)}
     </div>
     <div className="text-[11px] text-muted-foreground tabular-nums mt-0.5">
-      vs {fmt(m.prev, m.format)}
+      {m.updating ? "Aguardando comissões da Hotmart" : `vs ${fmt(m.prev, m.format)}`}
     </div>
   </div>
 );
@@ -220,9 +221,9 @@ export const ComparisonStrip = ({ current, previous }: Props) => {
       metrics: [
         { label: "Investimento", cur: c.investimento, prev: p.investimento, format: "brl" },
         { label: "Imposto Meta", cur: c.impostoMeta, prev: p.impostoMeta, format: "brl", inverse: true },
-        { label: "Faturamento Líquido", cur: c.fatLiquido, prev: p.fatLiquido, format: "brl" },
-        { label: "Lucro", cur: c.lucro, prev: p.lucro, format: "brl" },
-        { label: "ROI", cur: c.roi, prev: p.roi, format: "mult" },
+        { label: "Faturamento Líquido", cur: c.fatLiquido, prev: p.fatLiquido, format: "brl", updating: c.financialPendingCount > 0 },
+        { label: "Lucro", cur: c.lucro, prev: p.lucro, format: "brl", updating: c.financialPendingCount > 0 },
+        { label: "ROI", cur: c.roi, prev: p.roi, format: "mult", updating: c.financialPendingCount > 0 },
         { label: "ROAS", cur: c.roas, prev: p.roas, format: "mult" },
         { label: "Vendas Totais", cur: c.vendasTotais, prev: p.vendasTotais, format: "num" },
         { label: "Vendas Front", cur: c.vendasFront, prev: p.vendasFront, format: "num" },

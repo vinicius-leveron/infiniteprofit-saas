@@ -15,6 +15,7 @@ export interface DailyMetricsRow {
   cpa_front: number | null; cac: number | null; aov: number | null; roi: number | null; lucro: number | null;
   imposto_meta?: number | null;
   fat_bruto: number | null; fat_liquido: number | null;
+  financial_pending_count?: number | null;
   fat_front: number | null; fat_orderbump: number | null; fat_funil: number | null;
   reembolsos: number | null; taxa_reembolso: number | null; valor_reembolsado: number | null;
   aprov_cartao: number | null; aprov_pix: number | null;
@@ -66,6 +67,11 @@ export function dailyMetricsToDailyRows(rows: DailyMetricsRow[]): DailyRow[] {
         revenue: b.revenue ?? null,
         rate: b.rate ?? null,
       }));
+      const financialPendingCount = Math.max(
+        0,
+        Number(r.financial_pending_count ?? 0),
+      );
+      const financialPending = financialPendingCount > 0;
       return {
         data: fmtBR(date),
         date,
@@ -75,10 +81,11 @@ export function dailyMetricsToDailyRows(rows: DailyMetricsRow[]): DailyRow[] {
         vendasTotais: r.vendas_totais,
         cpaFront: r.cpa_front,
         fatBruto: r.fat_bruto,
-        fatLiquido: r.fat_liquido,
+        fatLiquido: financialPending ? null : r.fat_liquido,
+        financialPendingCount,
         impostoMeta: r.imposto_meta ?? null,
-        roi: r.roi,
-        lucro: r.lucro,
+        roi: financialPending ? null : r.roi,
+        lucro: financialPending ? null : r.lucro,
         cac: r.cac,
         aov: r.aov,
         fatFront: r.fat_front,

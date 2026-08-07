@@ -22,6 +22,12 @@ export type HotmartNormalizationContext = {
   requireProductBinding?: boolean;
   priceDetail?: Record<string, any> | null;
   source?: "webhook" | "api" | "spreadsheet";
+  /**
+   * True only when the Hotmart commissions endpoint returned the complete
+   * receiver split for this transaction. Sales-history values alone are not
+   * authoritative because they can contain only the producer's share.
+   */
+  commissionsAuthoritative?: boolean;
 };
 
 type MoneyPath = {
@@ -77,14 +83,21 @@ export function normalizeHotmart(
     priceDetail?.total?.currency_code,
     "BRL",
   ]).toUpperCase();
-  const platformFee = hotmartPlatformFee(purchase, priceDetail, currency);
+  const reportedPlatformFee = hotmartPlatformFee(purchase, priceDetail, currency);
   const commissionAmounts = hotmartCommissionAmounts(
     data?.commissions,
     currency,
   );
-  const nativeNet = platformFee != null
-    ? Math.max(0, total - platformFee)
-    : commissionAmounts.nativeNet;
+  const source = context.source ?? "webhook";
+  const isAuthoritativeCommissionSource =
+    source === "spreadsheet"
+    || (source === "api" && context.commissionsAuthoritative === true);
+  // For Hotmart, gross - a fee reported by sales/history is only a fallback
+  // estimate. The economic result of the operation is the complete receiver
+  // split: producer + affiliate + every coproducer/other non-Hotmart receiver.
+  const nativeNet = isAuthoritativeCommissionSource
+    ? commissionAmounts.nativeNet
+    : null;
   const method = String(
     purchase?.payment?.type ?? purchase?.payment_type ?? purchase?.payment?.method ?? "",
   ).toLowerCase();
@@ -153,25 +166,23 @@ export function normalizeHotmart(
   else if (event === "PURCHASE_OUT_OF_SHOPPING_CART") type = "checkout.abandoned";
   if (!type) return [];
 
-  const hasReliableFinancials =
-    type !== "purchase.approved"
-    && type !== "purchase.refunded"
-      ? true
-      : eventTotal > 0
-        && eventNativeNet != null
-        && (!isPartialRefund || explicitRefund > 0);
+  const isFinancialEvent =
+    type === "purchase.approved" || type === "purchase.refunded";
+  const hasReliableFinancials = !isFinancialEvent
+    ? true
+    : eventTotal > 0
+      && eventNativeNet != null
+      && (!isPartialRefund || explicitRefund > 0);
   const conversionRate = commissionAmounts.brlRate;
   const convertedCurrency = currency === "BRL" || (
     conversionRate != null
     && (
       commissionAmounts.brlNet != null
-      || platformFee != null
     )
   );
   const metricsReady =
     type !== "checkout.abandoned"
     && productIsBound
-    && hasReliableFinancials
     && convertedCurrency;
   const canonicalTotal = currency !== "BRL" && convertedCurrency
     ? eventTotal * (conversionRate ?? 0)
@@ -180,14 +191,27 @@ export function normalizeHotmart(
     ? commissionAmounts.brlNet
       ?? (nativeNet != null ? nativeNet * (conversionRate ?? 0) : null)
     : nativeNet;
-  const canonicalNet =
+  const canonicalNetRaw =
     isPartialRefund && total > 0 && fullConvertedNet != null
       ? fullConvertedNet * (eventTotal / total)
       : fullConvertedNet;
-  const canonicalPlatformFee =
-    platformFee != null && currency !== "BRL" && convertedCurrency
-      ? platformFee * (conversionRate ?? 0)
-      : platformFee;
+  const canonicalNet = canonicalNetRaw == null
+    ? null
+    : roundMoneyValue(canonicalNetRaw);
+  const canonicalPlatformFee = canonicalNet != null
+    ? roundMoneyValue(Math.max(0, canonicalTotal - canonicalNet))
+    : null;
+  const originalPlatformFee = commissionAmounts.platformNative
+    ?? reportedPlatformFee;
+  const financialMetricsReady = !isFinancialEvent || hasReliableFinancials;
+  const scale = isPartialRefund && total > 0 ? eventTotal / total : 1;
+  const receiverAmounts = canonicalReceiverAmounts(
+    commissionAmounts,
+    currency,
+    convertedCurrency,
+    conversionRate,
+    scale,
+  );
   const providerTransactionId = `hotmart:${externalId}`;
   const hotmartBuyer = asRecord(data?.buyer ?? purchase?.buyer);
 
@@ -207,19 +231,28 @@ export function normalizeHotmart(
       total: canonicalTotal,
       platform_fee: canonicalPlatformFee,
       net: canonicalNet,
-      original_platform_fee: platformFee,
+      producer_net: financialMetricsReady ? receiverAmounts.producer : null,
+      affiliate_net: financialMetricsReady ? receiverAmounts.affiliate : null,
+      coproducer_net: financialMetricsReady ? receiverAmounts.coproducer : null,
+      other_receiver_net: financialMetricsReady ? receiverAmounts.other : null,
+      consolidated_net: canonicalNet,
+      original_platform_fee: originalPlatformFee,
       original_currency: currency,
       currency: convertedCurrency ? "BRL" : currency,
       metrics_ready: metricsReady,
+      financial_metrics_ready: financialMetricsReady,
+      financial_state: financialMetricsReady ? "ready" : "pending",
+      financial_exclusion_reason:
+        isFinancialEvent && !financialMetricsReady
+          ? "financial_enrichment_required"
+          : null,
       exclusion_reason: !productIsBound
         ? "unbound_product"
         : !convertedCurrency
           ? "unsupported_currency"
-          : !hasReliableFinancials
-            ? "financial_enrichment_required"
-            : type === "checkout.abandoned"
-              ? "cart_abandonment_is_operational"
-              : null,
+          : type === "checkout.abandoned"
+            ? "cart_abandonment_is_operational"
+            : null,
       payment_method: method,
       buyer_provider_id: firstString([hotmartBuyer.id, hotmartBuyer.ucode]) || null,
       buyer_email: firstString([hotmartBuyer.email]) || null,
@@ -244,7 +277,7 @@ export function normalizeHotmart(
       is_upsell: effectiveRole === "upsell",
       transaction_id: externalId,
       is_offer_event: effectiveRole !== "front",
-      ingestion_source: context.source ?? "webhook",
+      ingestion_source: source,
       ...utm,
     },
   }];
@@ -293,6 +326,10 @@ function hotmartCommissionAmounts(
       nativeNet: null,
       brlNet: null,
       brlRate: null,
+      platformNative: null,
+      platformBrl: null,
+      nativeBreakdown: emptyReceiverBreakdown(),
+      brlBreakdown: emptyReceiverBreakdown(),
     };
   }
   let nativeNet = 0;
@@ -300,12 +337,16 @@ function hotmartCommissionAmounts(
   let brlNet = 0;
   let brlMatched = false;
   let brlRate: number | null = null;
+  let platformNative = 0;
+  let platformNativeMatched = false;
+  let platformBrl = 0;
+  let platformBrlMatched = false;
+  const nativeBreakdown = emptyReceiverBreakdown();
+  const brlBreakdown = emptyReceiverBreakdown();
   for (const commission of commissions) {
     const source = String(
       commission?.source ?? commission?.commission?.source ?? "",
     ).toUpperCase();
-    if (source === "HOTMART" || source === "MARKETPLACE") continue;
-
     const amount = commission?.commission ?? commission;
     const value = amount?.value;
     const valueCurrency = firstString([
@@ -317,17 +358,30 @@ function hotmartCommissionAmounts(
       ?? commission?.currency_conversion
       ?? {};
     const numericValue = num(value);
+    const isPlatformCommission = isHotmartPlatformCommission(source);
     if (valueCurrency === originalCurrency && numericValue > 0) {
-      nativeNet += numericValue;
-      nativeMatched = true;
+      if (isPlatformCommission) {
+        platformNative += numericValue;
+        platformNativeMatched = true;
+      } else {
+        nativeNet += numericValue;
+        nativeMatched = true;
+        addReceiverAmount(nativeBreakdown, source, numericValue);
+      }
     }
     if (
       String(conversion?.converted_to_currency ?? "").toUpperCase() === "BRL"
       && num(conversion?.converted_value) > 0
     ) {
       const convertedValue = num(conversion.converted_value);
-      brlNet += convertedValue;
-      brlMatched = true;
+      if (isPlatformCommission) {
+        platformBrl += convertedValue;
+        platformBrlMatched = true;
+      } else {
+        brlNet += convertedValue;
+        brlMatched = true;
+        addReceiverAmount(brlBreakdown, source, convertedValue);
+      }
       const providerRate = num(conversion?.conversion_rate);
       const inferredRate = numericValue > 0
         ? convertedValue / numericValue
@@ -340,7 +394,85 @@ function hotmartCommissionAmounts(
     nativeNet: nativeMatched ? nativeNet : null,
     brlNet: brlMatched ? brlNet : null,
     brlRate,
+    platformNative: platformNativeMatched ? platformNative : null,
+    platformBrl: platformBrlMatched ? platformBrl : null,
+    nativeBreakdown,
+    brlBreakdown,
   };
+}
+
+type ReceiverBreakdown = {
+  producer: number;
+  affiliate: number;
+  coproducer: number;
+  other: number;
+};
+
+function emptyReceiverBreakdown(): ReceiverBreakdown {
+  return { producer: 0, affiliate: 0, coproducer: 0, other: 0 };
+}
+
+function isHotmartPlatformCommission(source: string) {
+  const normalized = source.replace(/[^A-Z0-9]+/g, "_");
+  return normalized.includes("HOTMART")
+    || normalized.includes("MARKETPLACE")
+    || normalized.includes("MARKET_PLACE")
+    || normalized === "PLATFORM"
+    || normalized === "PLATFORM_FEE";
+}
+
+function addReceiverAmount(
+  breakdown: ReceiverBreakdown,
+  source: string,
+  value: number,
+) {
+  const normalized = source.replace(/[^A-Z0-9]+/g, "_");
+  if (normalized.includes("AFFILIATE") || normalized.includes("AFILIAD")) {
+    breakdown.affiliate += value;
+  } else if (
+    normalized.includes("COPRODUCER")
+    || normalized.includes("CO_PRODUCER")
+    || normalized.includes("COPRODUTOR")
+    || normalized.includes("CO_PRODUTOR")
+  ) {
+    breakdown.coproducer += value;
+  } else if (normalized.includes("PRODUCER") || normalized.includes("PRODUTOR")) {
+    breakdown.producer += value;
+  } else {
+    // Hotmart can introduce receiver labels without changing the economic
+    // rule. Every non-platform receiver remains part of consolidated net.
+    breakdown.other += value;
+  }
+}
+
+function canonicalReceiverAmounts(
+  amounts: ReturnType<typeof hotmartCommissionAmounts>,
+  originalCurrency: string,
+  convertedCurrency: boolean,
+  conversionRate: number | null,
+  scale: number,
+) {
+  const source = originalCurrency === "BRL"
+    ? amounts.nativeBreakdown
+    : amounts.brlNet != null
+      ? amounts.brlBreakdown
+      : amounts.nativeBreakdown;
+  const fallbackScale = originalCurrency !== "BRL"
+      && convertedCurrency
+      && amounts.brlNet == null
+      && conversionRate != null
+    ? conversionRate
+    : 1;
+  return {
+    producer: roundMoneyValue(source.producer * fallbackScale * scale),
+    affiliate: roundMoneyValue(source.affiliate * fallbackScale * scale),
+    coproducer: roundMoneyValue(source.coproducer * fallbackScale * scale),
+    other: roundMoneyValue(source.other * fallbackScale * scale),
+  };
+}
+
+function roundMoneyValue(value: number) {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
 function firstPositive(values: unknown[]) {

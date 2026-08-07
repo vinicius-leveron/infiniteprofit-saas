@@ -33,6 +33,8 @@ export interface DailyRow {
   cpaFront: number | null;
   fatBruto: number | null;
   fatLiquido: number | null;
+  /** Hotmart transactions whose complete receiver split is still pending. */
+  financialPendingCount?: number;
   impostoMeta: number | null;
   roi: number | null;
   lucro: number | null;

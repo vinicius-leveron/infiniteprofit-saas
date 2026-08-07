@@ -285,8 +285,11 @@ Deno.serve(async (req) => {
         if (
           provider === "hotmart"
           && binding.checkout_integration_id
-          && event.payload?.exclusion_reason
-            === "financial_enrichment_required"
+          && (
+            event.payload?.financial_metrics_ready === false
+            || event.payload?.financial_exclusion_reason
+              === "financial_enrichment_required"
+          )
         ) {
           hotmartEnrichmentDates.add(event.event_date);
         }

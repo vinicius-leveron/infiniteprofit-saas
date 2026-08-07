@@ -265,6 +265,7 @@ async function executeBackfillWithSplit(
 
     let imported = 0;
     let excluded = 0;
+    let financialPending = 0;
     const dates = new Set<string>();
     for (const day of splitHotmartWindows(args.startDate, args.endDate, 1)) {
       const result = await syncBackfill(admin, {
@@ -274,6 +275,7 @@ async function executeBackfillWithSplit(
       });
       imported += result.imported;
       excluded += result.excluded;
+      financialPending += result.financial_pending;
       result.dates.forEach((date) => dates.add(date));
     }
     return {
@@ -281,6 +283,7 @@ async function executeBackfillWithSplit(
       project_id: args.projectId,
       imported,
       excluded,
+      financial_pending: financialPending,
       dates: [...dates].sort(),
       start_date: args.startDate,
       end_date: args.endDate,
@@ -414,6 +417,7 @@ async function syncBackfill(
 
   let imported = 0;
   let excluded = 0;
+  let financialPending = 0;
   const dates = new Set<string>();
   for (const status of HOTMART_BACKFILL_STATUSES) {
     const historyUrl = hotmartSalesUrl(
@@ -455,6 +459,10 @@ async function syncBackfill(
       const hotmartEvent = hotmartEventForStatus(purchaseStatus);
       if (!hotmartEvent) continue;
       const transaction = String(sale?.purchase?.transaction ?? "");
+      const commissionDetail = commissionsByTransaction.get(transaction);
+      const authoritativeCommissions = Array.isArray(
+        commissionDetail?.commissions,
+      );
       const events = normalizeHotmart({
         id: `api-${transaction}-${purchaseStatus}`,
         event: hotmartEvent,
@@ -466,7 +474,7 @@ async function syncBackfill(
           product: sale?.product,
           purchase: sale?.purchase,
           commissions:
-            commissionsByTransaction.get(transaction)?.commissions
+            commissionDetail?.commissions
             ?? sale?.commissions,
         },
       }, {
@@ -474,6 +482,7 @@ async function syncBackfill(
         requireProductBinding: true,
         priceDetail: priceByTransaction.get(transaction) ?? null,
         source: "api",
+        commissionsAuthoritative: authoritativeCommissions,
       });
 
       for (const event of events) {
@@ -494,6 +503,9 @@ async function syncBackfill(
         dates.add(event.event_date);
         if (metricsReady) imported++;
         else excluded++;
+        if (event.payload?.financial_metrics_ready === false) {
+          financialPending++;
+        }
       }
     }
   }
@@ -515,6 +527,7 @@ async function syncBackfill(
     project_id: args.projectId,
     imported,
     excluded,
+    financial_pending: financialPending,
     dates: [...dates].sort(),
     start_date: args.startDate,
     end_date: args.endDate,

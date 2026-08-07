@@ -104,8 +104,10 @@ export interface CreativeAssetMetricRow {
   revenue: number | null;
   net_revenue?: number | null;
   profit?: number | null;
+  financial_pending_count?: number | null;
   refunds: number | null;
   refund_value?: number | null;
+  refund_net_value?: number | null;
   order_bump_purchases?: number | null;
   order_bump_revenue?: number | null;
   upsell_purchases?: number | null;
@@ -231,6 +233,7 @@ export interface CreativeAssetCard {
   revenue: number;
   netRevenue: number;
   profit: number;
+  financialPendingCount: number;
   refunds: number;
   refundValue: number;
   refundRate: number | null;
@@ -580,6 +583,7 @@ function aggregateMetrics(metrics: CreativeAssetMetricRow[]) {
   let revenue = 0;
   let netRevenue = 0;
   let profit = 0;
+  let financialPendingCount = 0;
   let refunds = 0;
   let refundValue = 0;
   let orderBumpPurchases = 0;
@@ -611,11 +615,18 @@ function aggregateMetrics(metrics: CreativeAssetMetricRow[]) {
     outboundClicks += rowOutboundClicks;
     purchases += rowPurchases;
     revenue += rowRevenue;
-    netRevenue += numberOrZero(row.net_revenue ?? row.revenue) - rowRefundValue;
-    profit += numberOrZero(
-      row.profit
-        ?? (numberOrZero(row.net_revenue ?? row.revenue) - rowRefundValue - rowSpend - rowSpend * 0.1215),
-    );
+    const rowFinancialPending = numberOrZero(row.financial_pending_count);
+    financialPendingCount += rowFinancialPending;
+    if (rowFinancialPending === 0) {
+      const rowRefundNetValue = Math.abs(
+        numberOrZero(row.refund_net_value ?? row.refund_value),
+      );
+      netRevenue += numberOrZero(row.net_revenue ?? row.revenue) - rowRefundNetValue;
+      profit += numberOrZero(
+        row.profit
+          ?? (numberOrZero(row.net_revenue ?? row.revenue) - rowRefundNetValue - rowSpend - rowSpend * 0.1215),
+      );
+    }
     refunds += rowRefunds;
     refundValue += rowRefundValue;
     orderBumpPurchases += numberOrZero(row.order_bump_purchases);
@@ -652,6 +663,7 @@ function aggregateMetrics(metrics: CreativeAssetMetricRow[]) {
     revenue,
     netRevenue,
     profit,
+    financialPendingCount,
     refunds,
     refundValue,
     refundRate,

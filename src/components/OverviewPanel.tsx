@@ -15,7 +15,7 @@ import {
   ComposedChart,
 } from "recharts";
 import { format } from "date-fns";
-import { TrendingUp, DollarSign, ShoppingCart, Target, Wallet, Receipt, Percent, Activity, CreditCard, QrCode, CalendarDays, ShoppingBag, RotateCcw, BadgeDollarSign } from "lucide-react";
+import { TrendingUp, DollarSign, ShoppingCart, Target, Wallet, Receipt, Percent, Activity, CreditCard, QrCode, CalendarDays, ShoppingBag, RotateCcw, BadgeDollarSign, RefreshCw } from "lucide-react";
 import type { DailyRow } from "@/lib/csv";
 import { computeTotals } from "@/lib/metrics";
 import { fBRL, fNum, fMult, fPct } from "@/lib/metrics";
@@ -35,6 +35,7 @@ const fmtDay = (d: Date | null) => (d ? format(d, "dd/MM") : "");
 
 export const OverviewPanel = ({ rows, previous, onDayClick }: Props) => {
   const t = useMemo(() => computeTotals(rows), [rows]);
+  const financialPending = t.financialPendingCount > 0;
   const tPrev = useMemo(
     () => (previous && previous.length ? computeTotals(previous) : null),
     [previous],
@@ -126,42 +127,46 @@ export const OverviewPanel = ({ rows, previous, onDayClick }: Props) => {
         <KpiCard
           featured
           label="Faturamento Líquido"
-          value={fBRL(t.fatLiquido)}
-          hint={`Bruto: ${fBRL(t.fatBruto)}`}
+          value={financialPending ? "Atualizando" : fBRL(t.fatLiquido)}
+          hint={financialPending ? "Aguardando comissões da Hotmart" : `Bruto: ${fBRL(t.fatBruto)}`}
           icon={DollarSign}
           tone="emerald"
-          spark={sparks.fatLiquido}
-          deltaPct={delta(t.fatLiquido, tPrev?.fatLiquido)}
+          spark={financialPending ? undefined : sparks.fatLiquido}
+          deltaPct={financialPending ? null : delta(t.fatLiquido, tPrev?.fatLiquido)}
         />
         <KpiCard
           featured
           label="Lucro"
-          value={fBRL(t.lucro)}
+          value={financialPending ? "Atualizando" : fBRL(t.lucro)}
           hint={
-            t.fatLiquido && t.investimento
+            financialPending
+              ? "Aguardando comissões da Hotmart"
+              : t.fatLiquido && t.investimento && t.lucro != null
               ? `Margem: ${fPct((t.lucro / t.fatLiquido) * 100)}`
               : undefined
           }
           icon={TrendingUp}
           tone="green"
-          spark={sparks.lucro}
-          deltaPct={delta(t.lucro, tPrev?.lucro)}
+          spark={financialPending ? undefined : sparks.lucro}
+          deltaPct={financialPending ? null : delta(t.lucro, tPrev?.lucro)}
         />
         <KpiCard
           featured
           label="ROI"
-          value={fMult(t.roi)}
+          value={financialPending ? "Atualizando" : fMult(t.roi)}
           hint={
-            t.roi != null
+            financialPending
+              ? "Aguardando comissões da Hotmart"
+              : t.roi != null
               ? t.roi >= 1
                 ? "Acima do break-even"
                 : "Abaixo do break-even"
               : undefined
           }
           icon={Activity}
-          tone={t.roi != null && t.roi >= 1 ? "green" : "red"}
-          spark={sparks.roi}
-          deltaPct={delta(t.roi, tPrev?.roi)}
+          tone={financialPending ? "orange" : t.roi != null && t.roi >= 1 ? "green" : "red"}
+          spark={financialPending ? undefined : sparks.roi}
+          deltaPct={financialPending ? null : delta(t.roi, tPrev?.roi)}
         />
       </div>
 
@@ -339,10 +344,13 @@ export const OverviewPanel = ({ rows, previous, onDayClick }: Props) => {
       </ChartSection>
 
       {/* ROI chart */}
-      <ChartSection
-        title="ROI Diário"
-        description="Linha vermelha = break-even (1.0x) · Linha tracejada = média móvel 7 dias"
-      >
+      {financialPending ? (
+        <FinancialUpdatingState label="ROI diário" />
+      ) : (
+        <ChartSection
+          title="ROI Diário"
+          description="Linha vermelha = break-even (1.0x) · Linha tracejada = média móvel 7 dias"
+        >
         <div className="h-72">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={roiWithMA} margin={{ top: 8, right: 12, left: -10, bottom: 0 }} barCategoryGap="25%" onClick={handleChartClick}>
@@ -376,7 +384,8 @@ export const OverviewPanel = ({ rows, previous, onDayClick }: Props) => {
             </ComposedChart>
           </ResponsiveContainer>
         </div>
-      </ChartSection>
+        </ChartSection>
+      )}
 
       <div className="grid lg:grid-cols-2 gap-6">
         <ChartSection title="Vendas por Dia">
@@ -411,7 +420,10 @@ export const OverviewPanel = ({ rows, previous, onDayClick }: Props) => {
         </ChartSection>
       </div>
 
-      <ChartSection title="Investimento vs Faturamento">
+      {financialPending ? (
+        <FinancialUpdatingState label="Investimento vs faturamento líquido" />
+      ) : (
+        <ChartSection title="Investimento vs Faturamento">
         <div className="h-72">
           <ResponsiveContainer>
             <BarChart data={series} margin={{ top: 8, right: 8, left: -10, bottom: 0 }} barGap={4} barCategoryGap="20%" onClick={handleChartClick}>
@@ -425,9 +437,13 @@ export const OverviewPanel = ({ rows, previous, onDayClick }: Props) => {
             </BarChart>
           </ResponsiveContainer>
         </div>
-      </ChartSection>
+        </ChartSection>
+      )}
 
-      <div className="grid lg:grid-cols-2 gap-6">
+      {financialPending ? (
+        <FinancialUpdatingState label="Lucro diário e acumulado" />
+      ) : (
+        <div className="grid lg:grid-cols-2 gap-6">
         <ChartSection title="Lucro por Dia">
           <div className="h-64">
             <ResponsiveContainer>
@@ -475,10 +491,25 @@ export const OverviewPanel = ({ rows, previous, onDayClick }: Props) => {
             </ResponsiveContainer>
           </div>
         </ChartSection>
-      </div>
+        </div>
+      )}
     </div>
   );
 };
+
+function FinancialUpdatingState({ label }: { label: string }) {
+  return (
+    <div className="section-card flex min-h-40 items-center justify-center px-6 py-10 text-center">
+      <div className="max-w-md">
+        <RefreshCw className="mx-auto h-5 w-5 animate-spin text-kpi-orange" aria-hidden="true" />
+        <h3 className="mt-3 text-sm font-semibold text-foreground">{label} em atualização</h3>
+        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+          A venda e o faturamento bruto já foram recebidos. Este resultado aparece assim que a Hotmart confirmar produtor, afiliado e coprodutores.
+        </p>
+      </div>
+    </div>
+  );
+}
 
 function RefundTooltip({
   active,

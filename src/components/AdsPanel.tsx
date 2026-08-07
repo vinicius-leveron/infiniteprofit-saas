@@ -186,7 +186,7 @@ async function loadAllCreativeMetricRows(projectId: string) {
   while (true) {
     const { data, error } = await supabase
       .from("creative_asset_daily_metrics")
-      .select("asset_id, event_date, spend, impressions, clicks, outbound_clicks, ctr, link_ctr, cpm, purchases, revenue, net_revenue, profit, refunds, refund_value, refund_rate, order_bump_purchases, order_bump_revenue, upsell_purchases, upsell_revenue, order_bump_conversion, upsell_conversion, roas, cpa, hook_rate, has_meta_data, has_gateway_data")
+      .select("asset_id, event_date, spend, impressions, clicks, outbound_clicks, ctr, link_ctr, cpm, purchases, revenue, net_revenue, profit, financial_pending_count, refunds, refund_value, refund_net_value, refund_rate, order_bump_purchases, order_bump_revenue, upsell_purchases, upsell_revenue, order_bump_conversion, upsell_conversion, roas, cpa, hook_rate, has_meta_data, has_gateway_data")
       .eq("project_id", projectId)
       .order("event_date", { ascending: true })
       .order("asset_id", { ascending: true })
@@ -1600,6 +1600,7 @@ function CreativeCard({
   const facebookLabel = compactUrlLabel(card.facebookPostUrl) || "Facebook";
   const instagramLabel = compactUrlLabel(card.instagramPostUrl) || "Instagram";
   const analyzeLabel = card.mediaType === "video" ? "Transcrever" : "Analisar imagem";
+  const financialPending = card.financialPendingCount > 0;
   const actionDisabled =
     analyzing ||
     card.mediaType === "unknown" ||
@@ -1790,8 +1791,9 @@ function CreativeCard({
           />
           <MetricTile
             label="Lucro"
-            value={fBRL(card.profit)}
-            accent={card.profit >= 0 ? "emerald" : "amber"}
+            value={financialPending ? "Atualizando" : fBRL(card.profit)}
+            detail={financialPending ? "Aguardando comissões da Hotmart" : undefined}
+            accent={financialPending ? "amber" : card.profit >= 0 ? "emerald" : "amber"}
             highlight
           />
           <MetricTile

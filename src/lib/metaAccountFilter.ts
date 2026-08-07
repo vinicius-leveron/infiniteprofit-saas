@@ -53,8 +53,13 @@ export async function applyMetaAccountFilter(
     const cpaFront = r.vendasFront && r.vendasFront > 0 ? (investimento ?? 0) / r.vendasFront : null;
     const cac = r.vendasTotais && r.vendasTotais > 0 ? (investimento ?? 0) / r.vendasTotais : null;
     const impostoMeta = investimento == null ? null : investimento * META_TAX_RATE;
-    const lucro = (r.fatLiquido ?? 0) - (investimento ?? 0) - (impostoMeta ?? 0);
-    const roi = investimento && investimento > 0 ? ((r.fatLiquido ?? 0) - (impostoMeta ?? 0)) / investimento : null;
+    const financialPending = (r.financialPendingCount ?? 0) > 0;
+    const lucro = financialPending || r.fatLiquido == null
+      ? null
+      : r.fatLiquido - (investimento ?? 0) - (impostoMeta ?? 0);
+    const roi = !financialPending && investimento && investimento > 0 && r.fatLiquido != null
+      ? (r.fatLiquido - (impostoMeta ?? 0)) / investimento
+      : null;
     return {
       ...r,
       investimento,

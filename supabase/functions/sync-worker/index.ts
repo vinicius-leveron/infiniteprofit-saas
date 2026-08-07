@@ -369,12 +369,32 @@ async function processJob(
     if (result?.ok === false || result?.error) {
       throw new Error(String(result?.error ?? "Falha no histórico Hotmart"));
     }
+    if (Number(result?.financial_pending ?? 0) > 0) {
+      throw new Error(
+        `Hotmart ainda não retornou a divisão completa de comissões para ${Number(result.financial_pending)} transação(ões)`,
+      );
+    }
     const aggregate = await enqueueAggregateForJob(
       sb,
       job,
       extractDates(result, job),
     );
-    return { source_result: compactResult(result), aggregate };
+    const creative = await enqueueSyncJob(sb, {
+      workspaceId: job.workspace_id,
+      projectId: job.project_id,
+      source: "creative",
+      entityType: "creative_project",
+      entityId: job.project_id,
+      dateStart: job.date_start,
+      dateEnd: job.date_end,
+      priority: Math.max(1, job.priority - 2),
+      maxAttempts: 4,
+      payload: { reason: "hotmart_financial_enrichment" },
+    }, {
+      requeueSucceededAfterMinutes: 0,
+      reviveDeadLetter: true,
+    });
+    return { source_result: compactResult(result), aggregate, creative };
   }
 
   if (job.source === "creative" && job.entity_type === "creative_project") {

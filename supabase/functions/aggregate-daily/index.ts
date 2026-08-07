@@ -105,6 +105,18 @@ Deno.serve(async (req) => {
         `dashboard dimension refresh failed: ${dimensionError.message}`,
       );
     }
+    const { error: hotmartDimensionError } = await sb.rpc(
+      "apply_hotmart_consolidated_dimension_financials",
+      {
+        _project_id: project_id,
+        _dates: normalizedDates,
+      },
+    );
+    if (hotmartDimensionError) {
+      throw new Error(
+        `Hotmart dimension financial refresh failed: ${hotmartDimensionError.message}`,
+      );
+    }
 
     return json({
       ok: true,

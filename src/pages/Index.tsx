@@ -545,6 +545,10 @@ const Index = () => {
     if (!rows) return { current: [] as DailyRow[], previous: [] as DailyRow[] };
     return getDashboardPeriodRows(rows, period, customFrom, customTo);
   }, [rows, period, customFrom, customTo]);
+  const financialPendingCount = filtered.reduce(
+    (sum, row) => sum + Math.max(0, row.financialPendingCount ?? 0),
+    0,
+  );
 
   const selectedDateRange = useMemo(() => {
     if (!rows) return { from: null, to: null };
@@ -855,6 +859,17 @@ const Index = () => {
           </div>
         ) : (
           <div ref={dashboardRef} className="space-y-6">
+            {financialPendingCount > 0 && (
+              <div className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-amber-100">
+                <RefreshCw className="mt-0.5 h-4 w-4 shrink-0 animate-spin" aria-hidden="true" />
+                <div>
+                  <p className="text-sm font-medium">Financeiro da Hotmart em atualização</p>
+                  <p className="mt-0.5 text-xs leading-5 text-amber-100/80">
+                    Vendas, faturamento bruto, AOV e ROAS já estão disponíveis. Líquido, lucro, margem e ROI aparecem quando a Hotmart confirmar todas as comissões.
+                  </p>
+                </div>
+              </div>
+            )}
             {showOperationalActions && (
               <div className="section-card border-primary/20 bg-primary/5">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">

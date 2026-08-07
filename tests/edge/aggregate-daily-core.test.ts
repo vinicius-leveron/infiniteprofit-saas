@@ -929,7 +929,7 @@ describe("aggregate daily core", () => {
     expect(metrics.bumps).toEqual([]);
   });
 
-  it("does not aggregate Hotmart events awaiting enrichment or cart abandonment", () => {
+  it("does not aggregate unbound Hotmart events or cart abandonment", () => {
     const metrics = aggregateOneDay([
       {
         source: "gateway",
@@ -958,5 +958,60 @@ describe("aggregate daily core", () => {
     expect(metrics.vendas_totais).toBeNull();
     expect(metrics.fat_bruto).toBeNull();
     expect(metrics.checkouts).toBeNull();
+  });
+
+  it("keeps Hotmart sale and gross visible while masking unresolved financial metrics", () => {
+    const metrics = aggregateOneDay([
+      {
+        source: "gateway",
+        event_type: "purchase.approved",
+        external_id: "hotmart:HP-PENDING",
+        payload: {
+          provider: "hotmart",
+          transaction_id: "HP-PENDING",
+          total: 297,
+          gross: 297,
+          net: null,
+          is_front: true,
+          metrics_ready: true,
+          financial_metrics_ready: false,
+        },
+      },
+    ]);
+
+    expect(metrics.vendas_front).toBe(1);
+    expect(metrics.vendas_totais).toBe(1);
+    expect(metrics.fat_bruto).toBe(297);
+    expect(metrics.aov).toBe(297);
+    expect(metrics.financial_pending_count).toBe(1);
+    expect(metrics.fat_liquido).toBeNull();
+    expect(metrics.lucro).toBeNull();
+    expect(metrics.roi).toBeNull();
+  });
+
+  it("uses the consolidated Hotmart net after enrichment without duplicating the sale", () => {
+    const metrics = aggregateOneDay([
+      {
+        source: "gateway",
+        event_type: "purchase.approved",
+        external_id: "hotmart:HP-READY",
+        payload: {
+          provider: "hotmart",
+          transaction_id: "HP-READY",
+          total: 297,
+          gross: 297,
+          net: 270.05,
+          consolidated_net: 270.05,
+          is_front: true,
+          metrics_ready: true,
+          financial_metrics_ready: true,
+        },
+      },
+    ]);
+
+    expect(metrics.vendas_front).toBe(1);
+    expect(metrics.fat_bruto).toBe(297);
+    expect(metrics.fat_liquido).toBeCloseTo(270.05);
+    expect(metrics.financial_pending_count).toBe(0);
   });
 });

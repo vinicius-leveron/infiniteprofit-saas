@@ -217,6 +217,7 @@ export function applyDashboardDimensionMetrics(
       const orderBumpOrders = number(metric.order_bump_orders);
       const upsellOrders = number(metric.upsell_orders);
       const impostoMeta = investimento * META_TAX_RATE;
+      const financialPending = (base.financialPendingCount ?? 0) > 0;
 
       return {
         ...base,
@@ -231,9 +232,9 @@ export function applyDashboardDimensionMetrics(
         vendasFront,
         vendasTotais,
         fatBruto,
-        fatLiquido,
+        fatLiquido: financialPending ? null : fatLiquido,
         impostoMeta,
-        lucro: fatLiquido - investimento - impostoMeta,
+        lucro: financialPending ? null : fatLiquido - investimento - impostoMeta,
         reembolsos,
         valorReembolsado,
         taxaReembolso: ratio(reembolsos, vendasFront),
@@ -252,7 +253,11 @@ export function applyDashboardDimensionMetrics(
         cpaFront: vendasFront > 0 ? investimento / vendasFront : null,
         cac: vendasTotais > 0 ? investimento / vendasTotais : null,
         aov: vendasFront > 0 ? fatBruto / vendasFront : null,
-        roi: investimento > 0 ? (fatLiquido - impostoMeta) / investimento : null,
+        roi: financialPending
+          ? null
+          : investimento > 0
+            ? (fatLiquido - impostoMeta) / investimento
+            : null,
         orderBumpOrders,
         upsellOrders,
         convGeralOrderbump: ratio(orderBumpOrders, vendasFront),

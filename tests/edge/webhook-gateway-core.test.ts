@@ -390,7 +390,7 @@ describe("webhook gateway core", () => {
     expect(events).toEqual([]);
   });
 
-  it("normalizes a bound Hotmart approval with gross, fee, net, UTM and front role", () => {
+  it("publishes a bound Hotmart webhook sale and gross while commissions are enriching", () => {
     const [event] = normalizeHotmart({
       id: "evt-hot-1",
       event: "PURCHASE_APPROVED",
@@ -424,8 +424,8 @@ describe("webhook gateway core", () => {
       provider: "hotmart",
       gross: 297,
       total: 297,
-      platform_fee: 27,
-      net: 270,
+      platform_fee: null,
+      net: null,
       currency: "BRL",
       payment_method: "credit_card",
       product_id: "101",
@@ -435,10 +435,53 @@ describe("webhook gateway core", () => {
       is_front: true,
       is_upsell: false,
       metrics_ready: true,
+      financial_metrics_ready: false,
+      financial_state: "pending",
+      financial_exclusion_reason: "financial_enrichment_required",
       utm_source: "meta",
       utm_content: "ad-07",
     }));
     expect(event.payload).not.toHaveProperty("raw_payload");
+  });
+
+  it("consolidates producer, affiliate and all coproducers from authoritative Hotmart commissions", () => {
+    const [event] = normalizeHotmart({
+      id: "api-HP-CONSOLIDATED-APPROVED",
+      event: "PURCHASE_APPROVED",
+      creation_date: 1785258000000,
+      data: {
+        product: { id: "front", name: "Produto principal" },
+        purchase: {
+          transaction: "HP-CONSOLIDATED",
+          approved_date: 1785258000000,
+          full_price: { value: 297, currency_value: "BRL" },
+        },
+        commissions: [
+          { source: "PRODUCER", commission: { value: 243.04, currency_value: "BRL" } },
+          { source: "AFFILIATE", commission: { value: 0, currency_value: "BRL" } },
+          { source: "COPRODUCER", commission: { value: 17.01, currency_value: "BRL" } },
+          { source: "CO_PRODUCER", commission: { value: 10, currency_value: "BRL" } },
+          { source: "HOTMART", commission: { value: 26.95, currency_value: "BRL" } },
+        ],
+      },
+    }, {
+      productRoles: { front: "front" },
+      requireProductBinding: true,
+      source: "api",
+      commissionsAuthoritative: true,
+    });
+
+    expect(event.payload).toEqual(expect.objectContaining({
+      gross: 297,
+      producer_net: 243.04,
+      affiliate_net: 0,
+      coproducer_net: 27.01,
+      consolidated_net: 270.05,
+      net: 270.05,
+      platform_fee: 26.95,
+      financial_metrics_ready: true,
+      financial_state: "ready",
+    }));
   });
 
   it("classifies Hotmart bump and upsell products from the funnel binding", () => {
@@ -541,6 +584,8 @@ describe("webhook gateway core", () => {
     }, {
       productRoles: { "front-usd": "front" },
       requireProductBinding: true,
+      source: "api",
+      commissionsAuthoritative: true,
     });
 
     expect(event.payload).toEqual(expect.objectContaining({
@@ -565,10 +610,16 @@ describe("webhook gateway core", () => {
           hotmart_fee: { value: 30, currency_value: "BRL" },
           refund_value: { value: 50 },
         },
+        commissions: [{
+          source: "PRODUCER",
+          commission: { value: 270, currency_value: "BRL" },
+        }],
       },
     }, {
       productRoles: { front: "front" },
       requireProductBinding: true,
+      source: "api",
+      commissionsAuthoritative: true,
     });
 
     expect(event.event_type).toBe("purchase.refunded");

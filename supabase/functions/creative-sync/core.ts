@@ -109,8 +109,10 @@ export interface CreativeMetricUpsertRow {
   revenue: number;
   net_revenue: number;
   profit: number;
+  financial_pending_count: number;
   refunds: number;
   refund_value: number;
+  refund_net_value: number;
   order_bump_purchases: number;
   order_bump_revenue: number;
   upsell_purchases: number;
@@ -306,6 +308,7 @@ export function buildCreativeDailyMetrics(args: {
   const countedUpsellOrders = new Set<string>();
   const grossByOrder = new Map<string, number>();
   const netByOrder = new Map<string, number>();
+  const pendingFinancialOrders = new Set<string>();
   const orderBumpRevenueByOrder = new Map<string, number>();
   const upsellRevenueByOrder = new Map<string, number>();
 
@@ -322,7 +325,8 @@ export function buildCreativeDailyMetrics(args: {
     const key = `${assetId}:${row.event_date}`;
     const target = aggregate.get(key) ?? createAccumulator(assetId, row.event_date);
     const saleValue = numberOrZero(payload.total) || numberOrZero(payload.net);
-    const netValue = numberOrZero(payload.net) || saleValue;
+    const financialPending = payload.financial_metrics_ready === false;
+    const netValue = financialPending ? 0 : numberOrZero(payload.net) || saleValue;
     const funnelBreakdown = classifyGatewayPurchase(payload, saleValue);
     const orderIdentity = `${key}:${normalizeTransactionId(transactionId ?? `${adId}:${row.event_date}:${grossByOrder.size}`)}`;
 
@@ -340,7 +344,14 @@ export function buildCreativeDailyMetrics(args: {
     }
 
     addMaximumAmount(target, grossByOrder, orderIdentity, saleValue, "revenue");
-    addMaximumAmount(target, netByOrder, orderIdentity, netValue, "net_revenue");
+    if (financialPending) {
+      if (!pendingFinancialOrders.has(orderIdentity)) {
+        pendingFinancialOrders.add(orderIdentity);
+        target.financial_pending_count += 1;
+      }
+    } else {
+      addMaximumAmount(target, netByOrder, orderIdentity, netValue, "net_revenue");
+    }
     addMaximumAmount(
       target,
       orderBumpRevenueByOrder,
@@ -381,8 +392,20 @@ export function buildCreativeDailyMetrics(args: {
 
     const key = `${assetId}:${row.event_date}`;
     const target = aggregate.get(key) ?? createAccumulator(assetId, row.event_date);
+    const financialPending = payload.financial_metrics_ready === false;
     target.refunds += 1;
     target.refund_value += gatewayAmount(payload, "refund");
+    if (financialPending) {
+      const pendingKey = `refund:${key}:${refundKey}`;
+      if (!pendingFinancialOrders.has(pendingKey)) {
+        pendingFinancialOrders.add(pendingKey);
+        target.financial_pending_count += 1;
+      }
+    } else {
+      target.refund_net_value += Math.abs(
+        numberOrZero(payload.net) || gatewayAmount(payload, "refund"),
+      );
+    }
     target.has_gateway_data = true;
     aggregate.set(key, target);
   }
@@ -637,7 +660,7 @@ function finalizeAccumulator(row: CreativeMetricAccumulator): CreativeMetricUpse
   const roas = row.spend > 0 && row.revenue > 0 ? row.revenue / row.spend : null;
   const cpa = row.spend > 0 && row.purchases > 0 ? row.spend / row.purchases : null;
   const refundRate = row.purchases > 0 ? (row.refunds / row.purchases) * 100 : null;
-  const adjustedNetRevenue = Math.max(0, row.net_revenue - row.refund_value);
+  const adjustedNetRevenue = Math.max(0, row.net_revenue - row.refund_net_value);
   const profit = adjustedNetRevenue - row.spend - row.spend * 0.1215;
   const orderBumpConversion = row.purchases > 0 ? (row.order_bump_purchases / row.purchases) * 100 : null;
   const upsellConversion = row.purchases > 0 ? (row.upsell_purchases / row.purchases) * 100 : null;
@@ -660,8 +683,10 @@ function finalizeAccumulator(row: CreativeMetricAccumulator): CreativeMetricUpse
     revenue: row.revenue,
     net_revenue: adjustedNetRevenue,
     profit,
+    financial_pending_count: row.financial_pending_count,
     refunds: row.refunds,
     refund_value: row.refund_value,
+    refund_net_value: row.refund_net_value,
     order_bump_purchases: row.order_bump_purchases,
     order_bump_revenue: row.order_bump_revenue,
     upsell_purchases: row.upsell_purchases,
@@ -689,8 +714,10 @@ function createAccumulator(assetId: string, eventDate: string): CreativeMetricAc
     revenue: 0,
     net_revenue: 0,
     profit: 0,
+    financial_pending_count: 0,
     refunds: 0,
     refund_value: 0,
+    refund_net_value: 0,
     order_bump_purchases: 0,
     order_bump_revenue: 0,
     upsell_purchases: 0,
@@ -908,8 +935,10 @@ type CreativeMetricAccumulator = {
   revenue: number;
   net_revenue: number;
   profit: number;
+  financial_pending_count: number;
   refunds: number;
   refund_value: number;
+  refund_net_value: number;
   order_bump_purchases: number;
   order_bump_revenue: number;
   upsell_purchases: number;

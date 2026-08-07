@@ -45,6 +45,10 @@ describe("Hotmart spreadsheet import", () => {
     });
     expect(front?.payload.net).toBeCloseTo(270.05);
     expect(front?.payload.platform_fee).toBeCloseTo(26.95);
+    expect(front?.payload.producer_net).toBeCloseTo(243.04);
+    expect(front?.payload.affiliate_net).toBe(0);
+    expect(front?.payload.coproducer_net).toBeCloseTo(27.01);
+    expect(front?.payload.financial_metrics_ready).toBe(true);
 
     const bump = result.events.find(
       (event) => event.external_id === "hotmart:HP-BUMP-1",

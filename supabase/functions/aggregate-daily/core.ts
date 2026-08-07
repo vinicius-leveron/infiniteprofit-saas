@@ -52,6 +52,7 @@ export function aggregateOneDay(events: RawEvent[]) {
   let reembolsos = 0;
   let valorReembolsado = 0;
   let valorReembolsadoLiquido = 0;
+  const pendingFinancialKeys = new Set<string>();
   const refundKeys = new Set<string>();
   let refundFallbackIndex = 0;
   const cardApprovedKeys = new Set<string>();
@@ -142,7 +143,11 @@ export function aggregateOneDay(events: RawEvent[]) {
       if (refundKeys.has(refundKey)) continue;
       refundKeys.add(refundKey);
       const refundGross = Math.abs(eventGross(event));
-      const refundNet = Math.abs(eventNet(event) || refundGross);
+      const financialPending = payload.financial_metrics_ready === false;
+      const refundNet = financialPending
+        ? 0
+        : Math.abs(eventNet(event) || refundGross);
+      if (financialPending) pendingFinancialKeys.add(`refund:${refundKey}`);
       reembolsos++;
       valorReembolsado += refundGross;
       valorReembolsadoLiquido += refundNet;
@@ -170,6 +175,9 @@ export function aggregateOneDay(events: RawEvent[]) {
     const mainPaymentEvent = group.find((event) => !isOfferEvent(event)) ?? group[0];
     const orderKey = transactionKey(mainPaymentEvent) || `approved-${groupIndex}`;
     const revenue = purchaseGroupRevenue(group);
+    const financialPending = group.some(
+      (event) => event.payload?.financial_metrics_ready === false,
+    );
     const isFront = purchaseGroupIsFront(group, frontIdentity);
     const countStandaloneFunnelMain = !isFront && shouldCountStandaloneFunnelMain(group);
     const realBumpItems = realBumpItemsForGroup(group, frontIdentity);
@@ -181,7 +189,11 @@ export function aggregateOneDay(events: RawEvent[]) {
     let groupHasUpsell = false;
 
     fatBruto += revenue.total;
-    fatLiquido += revenue.net;
+    if (financialPending) {
+      pendingFinancialKeys.add(`purchase:${orderKey}`);
+    } else {
+      fatLiquido += revenue.net;
+    }
     if (isFront) {
       vendasFront++;
       fatFront += Math.max(0, revenue.total - realBumpRevenue);
@@ -292,6 +304,8 @@ export function aggregateOneDay(events: RawEvent[]) {
   }
 
   const adjustedFatLiquido = Math.max(0, fatLiquido - valorReembolsadoLiquido);
+  const financialPendingCount = pendingFinancialKeys.size;
+  const hasFinancialPending = financialPendingCount > 0;
   const cpm = impressoes > 0 ? (investimento / impressoes) * 1000 : null;
   const ctr = impressoes > 0 ? (cliques / impressoes) * 100 : null;
   const cpc = cliques > 0 ? investimento / cliques : null;
@@ -360,11 +374,16 @@ export function aggregateOneDay(events: RawEvent[]) {
     cpa_front: cpaFront,
     cac,
     aov,
-    roi,
-    lucro: orNull(lucro),
+    roi: hasFinancialPending ? null : roi,
+    lucro: hasFinancialPending ? null : orNull(lucro),
     imposto_meta: orNull(impostoMeta),
     fat_bruto: orNull(fatBruto),
-    fat_liquido: adjustedFatLiquido === 0 && (fatBruto > 0 || reembolsos > 0) ? 0 : orNull(adjustedFatLiquido),
+    fat_liquido: hasFinancialPending
+      ? null
+      : adjustedFatLiquido === 0 && (fatBruto > 0 || reembolsos > 0)
+        ? 0
+        : orNull(adjustedFatLiquido),
+    financial_pending_count: financialPendingCount,
     fat_front: orNull(fatFront),
     fat_orderbump: orNull(fatOrderbump),
     fat_funil: orNull(fatFunil),
@@ -549,6 +568,7 @@ function recomputeDerivedMetrics<T extends Record<string, unknown>>(metrics: T) 
   const fatFunil = metricNumber(out.fat_funil);
   const reembolsos = metricNumber(out.reembolsos);
   const valorReembolsado = metricNumber(out.valor_reembolsado);
+  const financialPendingCount = metricNumber(out.financial_pending_count) ?? 0;
   const storedPlays = metricNumber(out.plays_unicos);
   const plays = storedPlays != null
     ? storedPlays
@@ -577,10 +597,18 @@ function recomputeDerivedMetrics<T extends Record<string, unknown>>(metrics: T) 
 
   const impostoMeta = investimento != null ? investimento * META_TAX_RATE : null;
   out.imposto_meta = impostoMeta != null && impostoMeta !== 0 ? impostoMeta : null;
-  out.lucro = fatLiquido != null ? fatLiquido - (investimento ?? 0) - (impostoMeta ?? 0) : null;
-  out.roi = investimento && investimento > 0 && fatLiquido != null
-    ? (fatLiquido - (impostoMeta ?? 0)) / investimento
-    : null;
+  if (financialPendingCount > 0) {
+    out.fat_liquido = null;
+    out.lucro = null;
+    out.roi = null;
+  } else {
+    out.lucro = fatLiquido != null
+      ? fatLiquido - (investimento ?? 0) - (impostoMeta ?? 0)
+      : null;
+    out.roi = investimento && investimento > 0 && fatLiquido != null
+      ? (fatLiquido - (impostoMeta ?? 0)) / investimento
+      : null;
+  }
 
   const legacyOrderBumpCount = Array.isArray(out.bumps)
     ? out.bumps

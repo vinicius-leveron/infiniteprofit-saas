@@ -210,6 +210,7 @@ export type Database = {
           fat_front: number | null
           fat_funil: number | null
           fat_liquido: number | null
+          financial_pending_count: number
           fat_orderbump: number | null
           impressoes: number | null
           imposto_meta: number | null
@@ -262,6 +263,7 @@ export type Database = {
           fat_front?: number | null
           fat_funil?: number | null
           fat_liquido?: number | null
+          financial_pending_count?: number
           fat_orderbump?: number | null
           impressoes?: number | null
           imposto_meta?: number | null
@@ -314,6 +316,7 @@ export type Database = {
           fat_front?: number | null
           fat_funil?: number | null
           fat_liquido?: number | null
+          financial_pending_count?: number
           fat_orderbump?: number | null
           impressoes?: number | null
           imposto_meta?: number | null
@@ -876,6 +879,8 @@ export type Database = {
           link_ctr: number | null
           net_revenue: number
           profit: number
+          financial_pending_count: number
+          refund_net_value: number
           order_bump_conversion: number | null
           upsell_conversion: number | null
         }
@@ -910,6 +915,8 @@ export type Database = {
           link_ctr?: number | null
           net_revenue?: number
           profit?: number
+          financial_pending_count?: number
+          refund_net_value?: number
           order_bump_conversion?: number | null
           upsell_conversion?: number | null
         }
@@ -944,6 +951,8 @@ export type Database = {
           link_ctr?: number | null
           net_revenue?: number
           profit?: number
+          financial_pending_count?: number
+          refund_net_value?: number
           order_bump_conversion?: number | null
           upsell_conversion?: number | null
         }

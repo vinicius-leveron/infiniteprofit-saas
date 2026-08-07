@@ -511,6 +511,20 @@ export const SimulatorPanel = ({ rows }: Props) => {
     );
   }
 
+  if (totals.financialPendingCount > 0) {
+    return (
+      <div className="section-card flex min-h-64 items-center justify-center px-6 py-12 text-center animate-fade-in">
+        <div className="max-w-md">
+          <Loader2 className="mx-auto h-6 w-6 animate-spin text-kpi-orange" aria-hidden="true" />
+          <h2 className="mt-4 text-base font-semibold text-foreground">Financeiro em atualização</h2>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">
+            O simulador será liberado assim que a Hotmart confirmar a divisão entre produtor, afiliado e coprodutores. Vendas e faturamento bruto continuam disponíveis nas outras abas.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="grid lg:grid-cols-[minmax(0,1fr)_420px] gap-6">

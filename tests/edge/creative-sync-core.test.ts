@@ -200,6 +200,38 @@ describe("creative sync core", () => {
     });
   });
 
+  it("keeps creative gross metrics while masking consolidated net during Hotmart enrichment", () => {
+    const rows = buildCreativeDailyMetrics({
+      metaRows: [{
+        event_date: "2026-08-07",
+        payload: { ad_id: "ad-hotmart", spend: 100, impressions: 1000 },
+      }],
+      gatewayRows: [{
+        event_date: "2026-08-07",
+        event_type: "purchase.approved",
+        payload: {
+          provider: "hotmart",
+          utm_content: "ad-hotmart",
+          transaction_id: "HP-PENDING",
+          total: 297,
+          net: null,
+          financial_metrics_ready: false,
+          is_front: true,
+        },
+      }],
+      assetIdByAdId: new Map([["ad-hotmart", "asset-hotmart"]]),
+      mediaTypeByAssetId: new Map([["asset-hotmart", "video"]]),
+    });
+
+    expect(rows[0]).toMatchObject({
+      purchases: 1,
+      revenue: 297,
+      roas: 2.97,
+      financial_pending_count: 1,
+      net_revenue: 0,
+    });
+  });
+
   it("keeps a late refund linked when only the approved event has UTM", () => {
     const rows = buildCreativeDailyMetrics({
       metaRows: [],
