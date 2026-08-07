@@ -507,6 +507,32 @@ async function syncBackfill(
 
       for (const event of events) {
         const metricsReady = event.payload?.metrics_ready !== false;
+        if (event.payload?.financial_metrics_ready === false) {
+          const { data: existing, error: existingError } = await admin
+            .from("raw_events")
+            .select("payload")
+            .eq("project_id", args.projectId)
+            .eq("source", "gateway")
+            .eq("event_type", event.event_type)
+            .eq("external_id", event.external_id)
+            .maybeSingle();
+          if (existingError) throw new Error(existingError.message);
+          const existingPayload = existing?.payload as Record<string, any> | null;
+          // Never downgrade a transaction already reconciled by an
+          // authoritative API response or spreadsheet to a partial API row.
+          if (
+            existingPayload?.financial_metrics_ready === true
+            || (
+              existingPayload?.ingestion_source === "spreadsheet"
+              && finiteNumber(existingPayload?.net) != null
+            )
+          ) {
+            dates.add(event.event_date);
+            if (metricsReady) imported++;
+            else excluded++;
+            continue;
+          }
+        }
         const { error } = await admin.from("raw_events").upsert({
           project_id: args.projectId,
           workspace_id: args.workspaceId,
