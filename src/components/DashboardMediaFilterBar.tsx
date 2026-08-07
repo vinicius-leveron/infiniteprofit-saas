@@ -188,19 +188,24 @@ export function DashboardMediaFilterBar({
           </button>
         </div>
 
-        <button
-          type="button"
+        <label
           className={cn(
-            "flex min-h-11 items-center gap-3 rounded-xl border px-3 text-left text-sm transition-colors",
+            "flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border px-3 text-left text-sm transition-colors",
             value.includeUnattributed
               ? "border-amber-500/40 bg-amber-500/10 text-amber-100"
               : "border-border/40 bg-background/30 text-muted-foreground hover:bg-muted/40",
           )}
-          onClick={() => onChange({ ...value, includeUnattributed: !value.includeUnattributed })}
         >
-          <Checkbox checked={value.includeUnattributed} aria-label="Incluir orgânico e não atribuído" />
+          <Checkbox
+            checked={value.includeUnattributed}
+            onCheckedChange={(checked) => onChange({
+              ...value,
+              includeUnattributed: checked === true,
+            })}
+            aria-label="Incluir orgânico e não atribuído"
+          />
           Orgânico / não atribuído
-        </button>
+        </label>
       </div>
 
       {activeCount > 0 && (
