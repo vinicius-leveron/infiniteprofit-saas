@@ -177,6 +177,54 @@ interface CreativeAssetSignedUrlResponse {
   assets?: CreativeAssetSignedUrl[];
 }
 
+const DATA_PAGE_SIZE = 1_000;
+
+async function loadAllCreativeMetricRows(projectId: string) {
+  const rows: CreativeAssetMetricRow[] = [];
+  let from = 0;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from("creative_asset_daily_metrics")
+      .select("asset_id, event_date, spend, impressions, clicks, outbound_clicks, ctr, link_ctr, cpm, purchases, revenue, net_revenue, profit, refunds, refund_value, refund_rate, order_bump_purchases, order_bump_revenue, upsell_purchases, upsell_revenue, order_bump_conversion, upsell_conversion, roas, cpa, hook_rate, has_meta_data, has_gateway_data")
+      .eq("project_id", projectId)
+      .order("event_date", { ascending: true })
+      .order("asset_id", { ascending: true })
+      .range(from, from + DATA_PAGE_SIZE - 1);
+
+    if (error) throw error;
+    const page = (data ?? []) as unknown as CreativeAssetMetricRow[];
+    rows.push(...page);
+    if (page.length < DATA_PAGE_SIZE) break;
+    from += DATA_PAGE_SIZE;
+  }
+
+  return rows;
+}
+
+async function loadAllAdDimensionMetricRows(projectId: string) {
+  const rows: AdDimensionMetricRow[] = [];
+  let from = 0;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from("daily_ad_dimension_metrics")
+      .select("event_date, ad_id, investimento, impressoes, cliques, hook_count, pageviews, plays_unicos, chegaram_pitch, vendas_front, fat_bruto, fat_liquido, reembolsos, valor_reembolsado, order_bump_orders, upsell_orders")
+      .eq("project_id", projectId)
+      .order("event_date", { ascending: true })
+      .order("ad_id", { ascending: true })
+      .range(from, from + DATA_PAGE_SIZE - 1);
+
+    if (error) throw error;
+    const page = (data ?? []) as unknown as AdDimensionMetricRow[];
+    rows.push(...page);
+    if (page.length < DATA_PAGE_SIZE) break;
+    from += DATA_PAGE_SIZE;
+  }
+
+  return rows;
+}
+
 async function loadSignedCreativeAssetUrls(projectId: string, assets: CreativeAssetRow[]) {
   const assetIds = assets
     .filter((asset) => asset.media_storage_path || asset.poster_storage_path)
@@ -230,8 +278,8 @@ export function AdsPanel({ projectId, dateRange, allowedAdIds = null, canManage 
   const [groupForm, setGroupForm] = useState<GroupFormState>(EMPTY_GROUP_FORM);
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   const [groupToDelete, setGroupToDelete] = useState<CreativeGroupRow | null>(null);
-  const [analysisFrom, setAnalysisFrom] = useState("");
-  const [analysisTo, setAnalysisTo] = useState("");
+  const analysisFrom = dateRange?.from ?? "";
+  const analysisTo = dateRange?.to ?? "";
   const [analysisRoasCutoff, setAnalysisRoasCutoff] = useState("");
   const [analysisPreferenceFor, setAnalysisPreferenceFor] = useState<string | null>(null);
 
@@ -239,29 +287,16 @@ export function AdsPanel({ projectId, dateRange, allowedAdIds = null, canManage 
     if (!projectId) return;
     if (showPageLoader) setLoading(true);
     try {
-      const metricsQuery = supabase
-        .from("creative_asset_daily_metrics")
-        .select("asset_id, event_date, spend, impressions, clicks, outbound_clicks, ctr, link_ctr, cpm, purchases, revenue, net_revenue, profit, refunds, refund_value, refund_rate, order_bump_purchases, order_bump_revenue, upsell_purchases, upsell_revenue, order_bump_conversion, upsell_conversion, roas, cpa, hook_rate, has_meta_data, has_gateway_data")
-        .eq("project_id", projectId)
-        .order("event_date", { ascending: true })
-        .limit(10_000);
-
-      const vturbMetricQuery = supabase
-        .from("daily_ad_dimension_metrics")
-        .select("event_date, ad_id, investimento, impressoes, cliques, hook_count, pageviews, plays_unicos, chegaram_pitch, vendas_front, fat_bruto, fat_liquido, reembolsos, valor_reembolsado, order_bump_orders, upsell_orders")
-        .eq("project_id", projectId)
-        .order("event_date", { ascending: true });
-
       const [
         { data: projectRow },
         { data: assetRows },
         { data: adRows },
-        { data: metricRows },
+        metricRows,
         { data: analysisRows },
         { data: jobRows },
         { data: groupRows },
         { data: syncRows },
-        { data: vturbMetricRows },
+        vturbMetricRows,
       ] = await Promise.all([
         supabase
           .from("projects")
@@ -277,7 +312,7 @@ export function AdsPanel({ projectId, dateRange, allowedAdIds = null, canManage 
           .from("creative_asset_ads" as never)
           .select("asset_id, ad_id, ad_created_time, ad_updated_time, ad_effective_status, ad_configured_status, ad_name, adset_id, adset_name, campaign_id, campaign_name")
           .eq("project_id", projectId),
-        metricsQuery,
+        loadAllCreativeMetricRows(projectId),
         supabase
           .from("creative_asset_analysis" as never)
           .select("asset_id, status, transcript_status, transcript, transcript_segments, transcript_language, transcript_provider, transcript_model, transcript_error_message, summary, hook, hook_timestamps, angle, copy, cta, visual, visual_evidence, tags, scores, analysis_coverage, analysis_error_message, error_message, processed_at")
@@ -298,7 +333,7 @@ export function AdsPanel({ projectId, dateRange, allowedAdIds = null, canManage 
           .eq("source", "creative")
           .order("created_at", { ascending: false })
           .limit(1),
-        vturbMetricQuery.limit(10_000),
+        loadAllAdDimensionMetricRows(projectId),
       ]);
 
       const loadedAssets = (assetRows ?? []) as unknown as CreativeAssetRow[];
@@ -307,12 +342,12 @@ export function AdsPanel({ projectId, dateRange, allowedAdIds = null, canManage 
       setWorkspaceId((projectRow as { workspace_id?: string } | null)?.workspace_id ?? null);
       setAssets(assetsWithSignedUrls);
       setAssetAds((adRows ?? []) as unknown as CreativeAssetAdRow[]);
-      setMetrics((metricRows ?? []) as unknown as CreativeAssetMetricRow[]);
+      setMetrics(metricRows);
       setAnalyses((analysisRows ?? []) as unknown as CreativeAssetAnalysisRow[]);
       setJobs((jobRows ?? []) as unknown as CreativeAssetJobRow[]);
       setGroups((groupRows ?? []) as unknown as CreativeGroupRow[]);
       setLatestSyncRun(((syncRows ?? [])[0] as SyncRunRow | undefined) ?? null);
-      setAdDimensionMetrics((vturbMetricRows ?? []) as unknown as AdDimensionMetricRow[]);
+      setAdDimensionMetrics(vturbMetricRows);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Erro ao carregar criativos");
     } finally {
@@ -329,10 +364,8 @@ export function AdsPanel({ projectId, dateRange, allowedAdIds = null, canManage 
       // A preferência é opcional.
     }
     setAnalysisRoasCutoff(storedCutoff);
-    setAnalysisFrom(dateRange?.from ?? "");
-    setAnalysisTo(dateRange?.to ?? "");
     setAnalysisPreferenceFor(projectId);
-  }, [analysisPreferenceFor, dateRange?.from, dateRange?.to, projectId]);
+  }, [analysisPreferenceFor, projectId]);
 
   useEffect(() => {
     if (!projectId || analysisPreferenceFor !== projectId) return;
@@ -869,8 +902,6 @@ export function AdsPanel({ projectId, dateRange, allowedAdIds = null, canManage 
           to={analysisTo}
           roasCutoff={analysisRoasCutoff}
           result={creativePerformanceAnalysis}
-          onFromChange={setAnalysisFrom}
-          onToChange={setAnalysisTo}
           onRoasCutoffChange={setAnalysisRoasCutoff}
         />
       )}
@@ -1199,16 +1230,12 @@ function CreativePerformanceAnalysis({
   to,
   roasCutoff,
   result,
-  onFromChange,
-  onToChange,
   onRoasCutoffChange,
 }: {
   from: string;
   to: string;
   roasCutoff: string;
   result: CreativePerformanceResult | null;
-  onFromChange: (value: string) => void;
-  onToChange: (value: string) => void;
   onRoasCutoffChange: (value: string) => void;
 }) {
   const current = result?.current ?? null;
@@ -1231,12 +1258,11 @@ function CreativePerformanceAnalysis({
               Testados usam a data de criação da Meta. Eficiência mede a parcela da verba investida acima do corte de ROAS.
             </p>
           </div>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <Field label="Criados de">
-              <Input type="date" value={from} onChange={(event) => onFromChange(event.target.value)} className="h-10 min-w-[150px]" />
-            </Field>
-            <Field label="Até">
-              <Input type="date" value={to} onChange={(event) => onToChange(event.target.value)} className="h-10 min-w-[150px]" />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Período do dashboard">
+              <div className="flex h-10 min-w-[230px] items-center rounded-md border border-input bg-background/50 px-3 text-sm tabular-nums text-foreground">
+                {formatDashboardRange(from, to)}
+              </div>
             </Field>
             <Field label="Corte de ROAS">
               <Input
@@ -1253,7 +1279,7 @@ function CreativePerformanceAnalysis({
 
       {!current ? (
         <div className="flex min-h-28 items-center justify-center px-5 py-8 text-center text-sm text-muted-foreground">
-          Informe o período e o corte de ROAS para calcular a análise.
+          Selecione um período no Dashboard e informe o corte de ROAS para calcular a análise.
         </div>
       ) : (
         <div className="space-y-5 p-4 md:p-5">
@@ -1768,15 +1794,20 @@ function CreativeCard({
             accent={card.profit >= 0 ? "emerald" : "amber"}
             highlight
           />
-        </div>
-
-        <div className="rounded-xl border border-rose-500/20 bg-rose-500/5 px-3 py-2.5">
-          <div className="text-[10px] font-medium uppercase tracking-wide text-rose-300">Reembolsos</div>
-          <div className="mt-1 flex items-center justify-between gap-3 text-xs">
-            <span>{fNum(card.refunds)} pedido{card.refunds === 1 ? "" : "s"}</span>
-            <span>{card.refundRate != null ? fPct(card.refundRate, 1) : "—"}</span>
-            <span className="font-semibold">{fBRL(card.refundValue)}</span>
-          </div>
+          <MetricTile
+            label="ROAS"
+            value={card.roas != null ? `${card.roas.toFixed(2)}x` : "—"}
+            detail="Faturamento ÷ gasto"
+            accent="violet"
+            highlight={card.roas != null && card.roas > 0}
+          />
+          <MetricTile
+            label="Reembolso"
+            value={`${fNum(card.refunds)} pedido${card.refunds === 1 ? "" : "s"}`}
+            detail={`${card.refundRate != null ? fPct(card.refundRate, 1) : "—"} · ${fBRL(card.refundValue)}`}
+            accent="rose"
+            highlight={card.refunds > 0}
+          />
         </div>
 
         <div className="grid grid-cols-2 gap-2 rounded-xl border border-violet-500/20 bg-violet-500/5 p-2">
@@ -2132,7 +2163,7 @@ function MetricTile({
   label: string;
   value: string;
   detail?: string;
-  accent?: "default" | "emerald" | "violet" | "amber";
+  accent?: "default" | "emerald" | "violet" | "amber" | "rose";
   highlight?: boolean;
 }) {
   return (
@@ -2143,9 +2174,11 @@ function MetricTile({
         accent === "emerald" && "border-emerald-500/20 bg-emerald-500/5",
         accent === "violet" && "border-violet-500/20 bg-violet-500/5",
         accent === "amber" && "border-amber-500/20 bg-amber-500/5",
+        accent === "rose" && "border-rose-500/20 bg-rose-500/5",
         highlight && accent === "emerald" && "border-emerald-500/40 bg-emerald-500/10",
         highlight && accent === "violet" && "border-violet-500/40 bg-violet-500/10",
         highlight && accent === "amber" && "border-amber-500/40 bg-amber-500/10",
+        highlight && accent === "rose" && "border-rose-500/40 bg-rose-500/10",
       )}
     >
       {highlight && (
@@ -2155,6 +2188,7 @@ function MetricTile({
             accent === "emerald" && "bg-gradient-to-br from-emerald-500/20 to-transparent",
             accent === "violet" && "bg-gradient-to-br from-violet-500/20 to-transparent",
             accent === "amber" && "bg-gradient-to-br from-amber-500/20 to-transparent",
+            accent === "rose" && "bg-gradient-to-br from-rose-500/20 to-transparent",
           )}
         />
       )}
@@ -2166,6 +2200,7 @@ function MetricTile({
             highlight && accent === "emerald" && "text-emerald-300",
             highlight && accent === "violet" && "text-violet-300",
             highlight && accent === "amber" && "text-amber-300",
+            highlight && accent === "rose" && "text-rose-300",
           )}
         >
           {value}
@@ -2382,6 +2417,16 @@ function formatCreativeDate(value: string | null) {
   if (!value) return "—";
   const parsed = new Date(value);
   return Number.isFinite(parsed.getTime()) ? format(parsed, "dd/MM/yyyy", { locale: ptBR }) : "—";
+}
+
+function formatDashboardRange(from: string, to: string) {
+  if (!from || !to) return "Selecione um período";
+  const parsedFrom = parseISO(from);
+  const parsedTo = parseISO(to);
+  if (!Number.isFinite(parsedFrom.getTime()) || !Number.isFinite(parsedTo.getTime())) {
+    return "Período inválido";
+  }
+  return `${format(parsedFrom, "dd/MM/yyyy")} → ${format(parsedTo, "dd/MM/yyyy")}`;
 }
 
 function metricDelta(current: number | null | undefined, previous: number | null | undefined) {

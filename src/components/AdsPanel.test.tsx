@@ -131,6 +131,7 @@ const tableData: Record<string, unknown> = {
 
 function createQuery(tableName: string) {
   const response = { data: tableData[tableName] ?? [], error: null };
+  let requestedRange: [number, number] | null = null;
   return {
     select: vi.fn().mockReturnThis(),
     eq: vi.fn().mockReturnThis(),
@@ -139,6 +140,10 @@ function createQuery(tableName: string) {
     lte: vi.fn().mockReturnThis(),
     order: vi.fn().mockReturnThis(),
     limit: vi.fn().mockReturnThis(),
+    range: vi.fn(function (this: unknown, from: number, to: number) {
+      requestedRange = [from, to];
+      return this;
+    }),
     insert: vi.fn().mockReturnThis(),
     maybeSingle: vi.fn().mockResolvedValue({
       data: Array.isArray(response.data) ? response.data[0] ?? null : response.data,
@@ -149,7 +154,10 @@ function createQuery(tableName: string) {
       error: null,
     }),
     then(onFulfilled: (value: typeof response) => unknown, onRejected?: (reason: unknown) => unknown) {
-      return Promise.resolve(response).then(onFulfilled, onRejected);
+      const data = Array.isArray(response.data) && requestedRange
+        ? response.data.slice(requestedRange[0], requestedRange[1] + 1)
+        : response.data;
+      return Promise.resolve({ ...response, data }).then(onFulfilled, onRejected);
     },
   };
 }
@@ -212,6 +220,10 @@ describe("AdsPanel", () => {
 
     expect(screen.getByText("Order bump")).toBeInTheDocument();
     expect(screen.getByText("Upsell")).toBeInTheDocument();
+    expect(screen.getByText("ROAS")).toBeInTheDocument();
+    expect(screen.getByText("Reembolso")).toBeInTheDocument();
+    expect(screen.getByText("Período do dashboard")).toBeInTheDocument();
+    expect(screen.getByText("01/06/2026 → 03/06/2026")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /Detalhes/i }));
     expect(screen.getByRole("tab", { name: "Transcrição" })).toBeInTheDocument();
@@ -312,6 +324,60 @@ describe("AdsPanel", () => {
     } finally {
       ads.pop();
       dimensions.pop();
+    }
+  });
+
+  it("loads current metrics after the first 1000 rows", async () => {
+    const originalCreativeMetrics = tableData.creative_asset_daily_metrics;
+    const originalDimensionMetrics = tableData.daily_ad_dimension_metrics;
+    const oldCreativeMetric = (originalCreativeMetrics as Array<Record<string, unknown>>)[0];
+    const oldDimensionMetric = (originalDimensionMetrics as Array<Record<string, unknown>>)[0];
+
+    tableData.creative_asset_daily_metrics = [
+      ...Array.from({ length: 1_000 }, () => ({
+        ...oldCreativeMetric,
+        event_date: "2026-05-01",
+      })),
+      {
+        ...oldCreativeMetric,
+        event_date: "2026-08-06",
+        spend: 100,
+        purchases: 3,
+        revenue: 999,
+        roas: 9.99,
+      },
+    ];
+    tableData.daily_ad_dimension_metrics = [
+      ...Array.from({ length: 1_000 }, () => ({
+        ...oldDimensionMetric,
+        event_date: "2026-05-01",
+      })),
+      {
+        ...oldDimensionMetric,
+        event_date: "2026-08-06",
+        investimento: 100,
+        vendas_front: 3,
+        fat_bruto: 999,
+        fat_liquido: 900,
+      },
+    ];
+
+    try {
+      render(
+        <AdsPanel
+          projectId="project-1"
+          dateRange={{ from: "2026-08-06", to: "2026-08-06" }}
+          allowedAdIds={["ad-1"]}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("Hook criativo forte")).toBeInTheDocument();
+      });
+      expect(screen.getAllByText((text) => text.includes("999,00")).length).toBeGreaterThan(0);
+    } finally {
+      tableData.creative_asset_daily_metrics = originalCreativeMetrics;
+      tableData.daily_ad_dimension_metrics = originalDimensionMetrics;
     }
   });
 });
