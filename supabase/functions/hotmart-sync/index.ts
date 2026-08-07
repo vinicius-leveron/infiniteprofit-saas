@@ -549,7 +549,13 @@ async function syncBackfill(
         dates.add(event.event_date);
         if (metricsReady) imported++;
         else excluded++;
-        if (event.payload?.financial_metrics_ready === false) {
+        // Unsupported currencies and unbound products are intentionally
+        // preserved outside dashboard metrics. They must not keep a backfill
+        // retrying just because no BRL financial split is available.
+        if (
+          metricsReady
+          && event.payload?.financial_metrics_ready === false
+        ) {
           financialPending++;
         }
       }
