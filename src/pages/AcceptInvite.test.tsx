@@ -107,6 +107,10 @@ describe("AcceptInvite", () => {
 
   it("opens account creation with the invited email for unauthenticated users", async () => {
     mocks.auth.user = null;
+    sessionStorage.setItem(
+      "infiniteprofit.pendingEmailConfirmation",
+      JSON.stringify({ email: "stale@example.com", nextPath: "/clients" }),
+    );
 
     render(
       <MemoryRouter initialEntries={["/accept-invite?kind=workspace&token=invite-token"]}>
@@ -126,6 +130,9 @@ describe("AcceptInvite", () => {
       email: "member@example.com",
       nextPath: "/accept-invite?kind=workspace&token=invite-token",
     });
+    expect(
+      sessionStorage.getItem("infiniteprofit.pendingEmailConfirmation"),
+    ).toBeNull();
     expect(mocks.invoke).toHaveBeenCalledOnce();
   });
 });

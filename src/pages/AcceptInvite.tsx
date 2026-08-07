@@ -89,6 +89,7 @@ export default function AcceptInvite() {
         if (!userId) {
           const invitePath =
             `/accept-invite?kind=${kind}&token=${encodeURIComponent(token)}`;
+          sessionStorage.removeItem("infiniteprofit.pendingEmailConfirmation");
           writePendingInviteAuth({ email: invite.email, nextPath: invitePath });
           navigate(buildAuthRedirect(invitePath, { mode: "signup" }), {
             replace: true,
