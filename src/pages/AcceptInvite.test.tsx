@@ -2,11 +2,19 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AcceptInvite from "./AcceptInvite";
+import { readPendingInviteAuth } from "@/lib/authRedirect";
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
   refreshAccess: vi.fn(),
   setCurrentWorkspaceId: vi.fn(),
+  auth: {
+    user: { id: "user-1", email: "member@example.com" } as {
+      id: string;
+      email: string;
+    } | null,
+    loading: false,
+  },
 }));
 
 vi.mock("@/integrations/supabase/client", () => ({
@@ -19,8 +27,8 @@ vi.mock("@/integrations/supabase/client", () => ({
 
 vi.mock("@/hooks/useAuth", () => ({
   useAuth: () => ({
-    user: { id: "user-1", email: "member@example.com" },
-    loading: false,
+    user: mocks.auth.user,
+    loading: mocks.auth.loading,
   }),
 }));
 
@@ -33,14 +41,17 @@ vi.mock("@/hooks/useWorkspace", () => ({
 
 function LocationProbe() {
   const location = useLocation();
-  return <p data-testid="location">{location.pathname}</p>;
+  return <p data-testid="location">{location.pathname}{location.search}</p>;
 }
 
 describe("AcceptInvite", () => {
   beforeEach(() => {
+    sessionStorage.clear();
     mocks.invoke.mockReset();
     mocks.refreshAccess.mockReset();
     mocks.setCurrentWorkspaceId.mockReset();
+    mocks.auth.user = { id: "user-1", email: "member@example.com" };
+    mocks.auth.loading = false;
     mocks.refreshAccess.mockResolvedValue(undefined);
     mocks.invoke.mockImplementation(
       async (_name: string, options: { body: { action: "preview" | "accept" } }) => {
@@ -92,5 +103,29 @@ describe("AcceptInvite", () => {
     expect(mocks.refreshAccess).toHaveBeenCalledOnce();
     expect(mocks.setCurrentWorkspaceId).toHaveBeenCalledWith("client-1");
     expect(screen.getByTestId("location")).toHaveTextContent("/clients/client-1/funnels");
+  });
+
+  it("opens account creation with the invited email for unauthenticated users", async () => {
+    mocks.auth.user = null;
+
+    render(
+      <MemoryRouter initialEntries={["/accept-invite?kind=workspace&token=invite-token"]}>
+        <Routes>
+          <Route path="/accept-invite" element={<AcceptInvite />} />
+          <Route path="*" element={<LocationProbe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("location")).toHaveTextContent(
+        "/auth?next=%2Faccept-invite%3Fkind%3Dworkspace%26token%3Dinvite-token&mode=signup",
+      );
+    });
+    expect(readPendingInviteAuth()).toEqual({
+      email: "member@example.com",
+      nextPath: "/accept-invite?kind=workspace&token=invite-token",
+    });
+    expect(mocks.invoke).toHaveBeenCalledOnce();
   });
 });

@@ -26,6 +26,14 @@ Deno.serve(async (req) => {
   }
 
   try {
+    const body = await req.json().catch(() => ({}));
+    const token = stringOrNull(body.token);
+    const kind = normalizeKind(body.kind);
+    const action = normalizeAction(body.action);
+    if (!token) {
+      return json({ error: "Token obrigatorio" }, 400);
+    }
+
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
       return json({ error: "Missing Authorization header" }, 401);
@@ -36,18 +44,7 @@ Deno.serve(async (req) => {
       auth: { persistSession: false },
     });
     const { data: userData, error: userError } = await userClient.auth.getUser();
-    const user = userData.user;
-    if (userError || !user?.id || !user.email) {
-      return json({ error: "Not authenticated" }, 401);
-    }
-
-    const body = await req.json().catch(() => ({}));
-    const token = stringOrNull(body.token);
-    const kind = normalizeKind(body.kind);
-    const action = normalizeAction(body.action);
-    if (!token) {
-      return json({ error: "Token obrigatorio" }, 400);
-    }
+    const user = userError ? null : userData.user;
 
     const admin = createClient(SUPABASE_URL, SERVICE_KEY, {
       auth: { persistSession: false },
@@ -55,9 +52,13 @@ Deno.serve(async (req) => {
 
     if (action === "preview") {
       const invite = kind === "organization"
-        ? await previewOrganizationInvite(admin, token, user.email)
-        : await previewWorkspaceInvite(admin, token, user.email);
+        ? await previewOrganizationInvite(admin, token, user?.email ?? null)
+        : await previewWorkspaceInvite(admin, token, user?.email ?? null);
       return json({ ok: true, action, kind, invite });
+    }
+
+    if (!user?.id || !user.email) {
+      return json({ error: "Not authenticated" }, 401);
     }
 
     const id = kind === "organization"
@@ -80,7 +81,7 @@ Deno.serve(async (req) => {
 async function previewOrganizationInvite(
   admin: SupabaseClientAny,
   token: string,
-  userEmail: string,
+  userEmail: string | null,
 ) {
   const { data, error } = await admin
     .from("organization_invites")
@@ -100,7 +101,7 @@ async function previewOrganizationInvite(
     organizations: { name: string } | Array<{ name: string }> | null;
   } | null;
   if (!invite?.organization_id) throw new Error("Invite not found or expired");
-  assertInviteEmail(invite.email, userEmail);
+  if (userEmail) assertInviteEmail(invite.email, userEmail);
 
   const organization = firstRelation(invite.organizations);
   return {
@@ -117,7 +118,7 @@ async function previewOrganizationInvite(
 async function previewWorkspaceInvite(
   admin: SupabaseClientAny,
   token: string,
-  userEmail: string,
+  userEmail: string | null,
 ) {
   const { data, error } = await admin
     .from("workspace_invites")
@@ -150,7 +151,7 @@ async function previewWorkspaceInvite(
       | null;
   } | null;
   if (!invite?.workspace_id) throw new Error("Invite not found or expired");
-  assertInviteEmail(invite.email, userEmail);
+  if (userEmail) assertInviteEmail(invite.email, userEmail);
 
   const workspace = firstRelation(invite.workspaces);
   const organization = firstRelation(workspace?.organizations ?? null);

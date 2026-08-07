@@ -14,7 +14,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { sanitizeNextPath } from "@/lib/authRedirect";
+import {
+  clearPendingInviteAuth,
+  readPendingInviteAuth,
+  sanitizeNextPath,
+} from "@/lib/authRedirect";
 import { publicConfig } from "@/lib/publicConfig";
 
 type AuthMode = "login" | "signup" | "forgot" | "check-email" | "recovery-sent";
@@ -72,24 +76,35 @@ export default function Auth() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const pendingConfirmation = readPendingConfirmation();
-  const [mode, setMode] = useState<AuthMode>(
-    pendingConfirmation ? "check-email" : "login",
-  );
-  const [email, setEmail] = useState(pendingConfirmation?.email ?? "");
-  const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [feedback, setFeedback] = useState<string | null>(null);
   const nextPath = sanitizeNextPath(
     searchParams.get("next") ?? pendingConfirmation?.nextPath,
     "/",
   );
+  const pendingInvite = readPendingInviteAuth();
+  const inviteEmail =
+    pendingInvite?.nextPath === nextPath ? pendingInvite.email : null;
+  const publicSignupEnabled = import.meta.env.VITE_ENABLE_PUBLIC_SIGNUP === "true";
+  const signupEnabled = publicSignupEnabled || nextPath.startsWith("/accept-invite?");
+  const requestedSignup =
+    searchParams.get("mode") === "signup" && signupEnabled;
+  const [mode, setMode] = useState<AuthMode>(
+    pendingConfirmation
+      ? "check-email"
+      : requestedSignup
+        ? "signup"
+        : "login",
+  );
+  const [email, setEmail] = useState(
+    pendingConfirmation?.email ?? inviteEmail ?? "",
+  );
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState<string | null>(null);
   const redirectUrl = `${publicConfig.appUrl}${nextPath}`;
   const emailConfirmationUrl =
     `${publicConfig.appUrl}/auth?next=${encodeURIComponent(nextPath)}`;
   const googleAuthEnabled = import.meta.env.VITE_ENABLE_GOOGLE_AUTH === "true";
-  const publicSignupEnabled = import.meta.env.VITE_ENABLE_PUBLIC_SIGNUP === "true";
-  const signupEnabled = publicSignupEnabled || nextPath.startsWith("/accept-invite?");
 
   useEffect(() => {
     let active = true;
@@ -99,6 +114,7 @@ export default function Auth() {
         if (error) throw error;
         if (!active || !session) return;
         sessionStorage.removeItem(CONFIRMATION_STORAGE_KEY);
+        if (!nextPath.startsWith("/accept-invite?")) clearPendingInviteAuth();
         navigate(nextPath, { replace: true });
       })
       .catch((error: unknown) => {
@@ -274,15 +290,17 @@ export default function Auth() {
                 {busy && <Loader2 className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />}
                 Reenviar email
               </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                className="w-full min-h-11"
-                onClick={changeConfirmationEmail}
-                disabled={busy}
-              >
-                Usar outro email
-              </Button>
+              {!inviteEmail && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="w-full min-h-11"
+                  onClick={changeConfirmationEmail}
+                  disabled={busy}
+                >
+                  Usar outro email
+                </Button>
+              )}
               <Button
                 type="button"
                 variant="ghost"
@@ -304,10 +322,16 @@ export default function Auth() {
                     type="email"
                     value={email}
                     onChange={(event) => setEmail(event.target.value)}
+                    readOnly={Boolean(inviteEmail)}
                     required
                     autoComplete="email"
                     className="mt-1.5 min-h-11"
                   />
+                  {inviteEmail && (
+                    <p className="text-xs text-muted-foreground mt-2">
+                      Este convite foi enviado para este email.
+                    </p>
+                  )}
                 </div>
                 {mode !== "forgot" && (
                   <div>

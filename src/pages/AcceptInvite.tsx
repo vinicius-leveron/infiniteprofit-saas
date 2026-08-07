@@ -1,12 +1,16 @@
 import { useEffect, useState } from "react";
-import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Building2, CircleAlert, Loader2, MailCheck, Users } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorkspace, type WorkspaceRole } from "@/hooks/useWorkspace";
-import { buildAuthRedirect } from "@/lib/authRedirect";
+import {
+  buildAuthRedirect,
+  clearPendingInviteAuth,
+  writePendingInviteAuth,
+} from "@/lib/authRedirect";
 
 type InviteKind = "organization" | "workspace";
 
@@ -67,9 +71,8 @@ export default function AcceptInvite() {
     searchParams.get("kind") === "organization" ? "organization" : "workspace";
 
   useEffect(() => {
-    if (authLoading || !userId || !token) return;
+    if (authLoading || !token) return;
 
-    sessionStorage.removeItem("infiniteprofit.pendingEmailConfirmation");
     let active = true;
     setLoadingPreview(true);
     setError(null);
@@ -82,7 +85,18 @@ export default function AcceptInvite() {
         if (!active) return;
         if (functionError) throw functionError;
         if (!data?.invite) throw new Error("Convite inválido");
-        setPreview(data.invite as InvitePreview);
+        const invite = data.invite as InvitePreview;
+        if (!userId) {
+          const invitePath =
+            `/accept-invite?kind=${kind}&token=${encodeURIComponent(token)}`;
+          writePendingInviteAuth({ email: invite.email, nextPath: invitePath });
+          navigate(buildAuthRedirect(invitePath, { mode: "signup" }), {
+            replace: true,
+          });
+          return;
+        }
+        sessionStorage.removeItem("infiniteprofit.pendingEmailConfirmation");
+        setPreview(invite);
       })
       .catch(async (previewError: unknown) => {
         const message = await inviteErrorMessage(previewError);
@@ -95,7 +109,7 @@ export default function AcceptInvite() {
     return () => {
       active = false;
     };
-  }, [authLoading, kind, token, userId]);
+  }, [authLoading, kind, navigate, token, userId]);
 
   const handleAccept = async () => {
     if (!token) return;
@@ -112,9 +126,11 @@ export default function AcceptInvite() {
       const acceptedId = typeof data?.id === "string" ? data.id : preview?.targetId ?? null;
 
       if (kind === "workspace" && acceptedId) {
+        clearPendingInviteAuth();
         setCurrentWorkspaceId(acceptedId);
         navigate(`/clients/${acceptedId}/funnels`, { replace: true });
       } else {
+        clearPendingInviteAuth();
         navigate("/clients", { replace: true });
       }
     } catch (acceptError) {
@@ -138,11 +154,6 @@ export default function AcceptInvite() {
         onBack={() => navigate("/clients", { replace: true })}
       />
     );
-  }
-
-  if (!user) {
-    const invitePath = `/accept-invite?kind=${kind}&token=${encodeURIComponent(token)}`;
-    return <Navigate to={buildAuthRedirect(invitePath)} replace />;
   }
 
   return (

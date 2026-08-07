@@ -3,6 +3,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Auth from "./Auth";
 import { publicConfig } from "@/lib/publicConfig";
+import { writePendingInviteAuth } from "@/lib/authRedirect";
 
 const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
@@ -112,5 +113,44 @@ describe("Auth", () => {
 
     await waitFor(() => expect(mocks.getSession).toHaveBeenCalled());
     expect(screen.getByRole("button", { name: "Criar conta" })).toBeInTheDocument();
+  });
+
+  it("opens invited users directly in signup with a locked email", async () => {
+    vi.stubEnv("VITE_ENABLE_PUBLIC_SIGNUP", "false");
+    const nextPath = "/accept-invite?kind=workspace&token=invite-token";
+    writePendingInviteAuth({
+      email: "bruna@example.com",
+      nextPath,
+    });
+    mocks.signUp.mockResolvedValue({
+      data: { session: null },
+      error: null,
+    });
+
+    renderAuth(
+      `/auth?next=${encodeURIComponent(nextPath)}&mode=signup`,
+    );
+
+    expect(await screen.findByRole("heading", { name: "Criar conta" })).toBeInTheDocument();
+    const emailInput = screen.getByLabelText("Email");
+    expect(emailInput).toHaveValue("bruna@example.com");
+    expect(emailInput).toHaveAttribute("readonly");
+    expect(screen.getByText("Este convite foi enviado para este email.")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Senha"), {
+      target: { value: "password-123" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Criar conta" }));
+
+    await waitFor(() => {
+      expect(mocks.signUp).toHaveBeenCalledWith({
+        email: "bruna@example.com",
+        password: "password-123",
+        options: {
+          emailRedirectTo:
+            `${publicConfig.appUrl}/auth?next=${encodeURIComponent(nextPath)}`,
+        },
+      });
+    });
   });
 });
