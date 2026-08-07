@@ -461,7 +461,8 @@ describe("webhook gateway core", () => {
           { source: "AFFILIATE", commission: { value: 0, currency_value: "BRL" } },
           { source: "COPRODUCER", commission: { value: 17.01, currency_value: "BRL" } },
           { source: "CO_PRODUCER", commission: { value: 10, currency_value: "BRL" } },
-          { source: "HOTMART", commission: { value: 26.95, currency_value: "BRL" } },
+          { source: "ADDON", commission: { value: 2.49, currency_value: "BRL" } },
+          { source: "HOTMART", commission: { value: 24.46, currency_value: "BRL" } },
         ],
       },
     }, {
@@ -476,6 +477,7 @@ describe("webhook gateway core", () => {
       producer_net: 243.04,
       affiliate_net: 0,
       coproducer_net: 27.01,
+      other_receiver_net: 0,
       consolidated_net: 270.05,
       net: 270.05,
       platform_fee: 26.95,

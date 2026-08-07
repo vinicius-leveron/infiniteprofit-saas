@@ -417,6 +417,11 @@ function isHotmartPlatformCommission(source: string) {
   return normalized.includes("HOTMART")
     || normalized.includes("MARKETPLACE")
     || normalized.includes("MARKET_PLACE")
+    // Hotmart reports ADDON beside participant commissions, but it is not
+    // part of the producer/affiliate/coproducer settlement exported in the
+    // authoritative financial report. Keep it with the provider fees so API
+    // and spreadsheet reconciliation produce the same consolidated net.
+    || normalized === "ADDON"
     || normalized === "PLATFORM"
     || normalized === "PLATFORM_FEE";
 }
