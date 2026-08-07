@@ -1,22 +1,6 @@
-alter table public.daily_metrics
-  add column if not exists financial_pending_count integer not null default 0;
-
-comment on column public.daily_metrics.financial_pending_count is
-  'Hotmart financial signals awaiting the complete receiver commission split.';
-
-alter table public.creative_asset_daily_metrics
-  add column if not exists financial_pending_count integer not null default 0,
-  add column if not exists refund_net_value numeric not null default 0;
-
-comment on column public.creative_asset_daily_metrics.financial_pending_count is
-  'Attributed Hotmart signals whose consolidated net is still being enriched.';
-comment on column public.creative_asset_daily_metrics.refund_net_value is
-  'Consolidated net portion reversed by refunds; refund_value remains gross.';
-
--- The existing dimensional refresh historically treated gross as net when a
--- provider did not send a trustworthy net amount. Correct only the Hotmart
--- contribution after the regular refresh, preserving Hubla and all traffic/VSL
--- dimensions. This function is intentionally service-role only.
+-- COALESCE, NULLIF and GREATEST are SQL expressions rather than ordinary
+-- pg_catalog functions. Recreate the reconciliation routine without schema
+-- qualification so the worker can refresh historical ad dimensions.
 create or replace function public.apply_hotmart_consolidated_dimension_financials(
   _project_id uuid,
   _dates date[] default null

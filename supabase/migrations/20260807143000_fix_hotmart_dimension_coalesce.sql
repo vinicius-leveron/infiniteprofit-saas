@@ -21,7 +21,7 @@ begin
       event.event_date,
       coalesce(
         attribution.ad_id,
-        pg_catalog.nullif(event.payload->>'ad_id', '')
+        nullif(event.payload->>'ad_id', '')
       ) as ad_id,
       pg_catalog.regexp_replace(
         coalesce(
@@ -35,9 +35,9 @@ begin
       ) as order_id,
       event.event_type,
       coalesce(
-        pg_catalog.nullif(event.payload->>'net', '')::numeric,
-        pg_catalog.nullif(event.payload->>'total', '')::numeric,
-        pg_catalog.nullif(event.payload->>'gross', '')::numeric,
+        nullif(event.payload->>'net', '')::numeric,
+        nullif(event.payload->>'total', '')::numeric,
+        nullif(event.payload->>'gross', '')::numeric,
         0
       ) as legacy_approved_net,
       case
@@ -45,15 +45,15 @@ begin
           coalesce(event.payload->>'financial_metrics_ready', 'true')
         ) = 'false' then 0
         else coalesce(
-          pg_catalog.nullif(event.payload->>'net', '')::numeric,
+          nullif(event.payload->>'net', '')::numeric,
           0
         )
       end as consolidated_net,
       pg_catalog.abs(coalesce(
-        pg_catalog.nullif(event.payload->>'refund_value', '')::numeric,
-        pg_catalog.nullif(event.payload->>'refunded_amount', '')::numeric,
-        pg_catalog.nullif(event.payload->>'total', '')::numeric,
-        pg_catalog.nullif(event.payload->>'gross', '')::numeric,
+        nullif(event.payload->>'refund_value', '')::numeric,
+        nullif(event.payload->>'refunded_amount', '')::numeric,
+        nullif(event.payload->>'total', '')::numeric,
+        nullif(event.payload->>'gross', '')::numeric,
         0
       )) as legacy_refund_net
     from public.raw_events event
@@ -95,12 +95,12 @@ begin
     select
       event_date,
       ad_id,
-      pg_catalog.greatest(
+      greatest(
         0,
         pg_catalog.sum(coalesce(legacy_approved_net, 0))
           - pg_catalog.sum(coalesce(legacy_refund_net, 0))
       ) as legacy_net,
-      pg_catalog.greatest(
+      greatest(
         0,
         pg_catalog.sum(coalesce(consolidated_approved_net, 0))
           - pg_catalog.sum(coalesce(consolidated_refund_net, 0))
@@ -109,7 +109,7 @@ begin
     group by event_date, ad_id
   )
   update public.daily_ad_dimension_metrics metric
-  set fat_liquido = pg_catalog.greatest(
+  set fat_liquido = greatest(
         0,
         metric.fat_liquido - correction.legacy_net + correction.consolidated_net
       ),
